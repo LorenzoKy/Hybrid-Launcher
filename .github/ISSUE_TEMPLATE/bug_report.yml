@@ -1,110 +1,63 @@
 name: Bug report
-description: Something does not work as it should. Detailed reports with the log and screenshots only.
+description: Something does not work as it should.
 title: "[Bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        **Read before you write.** This is a personal project made in limited free time. A report is only considered when it
-        is detailed, understandable and makes sense, **with the log and screenshots**. Reports without them are closed.
-        One problem per issue.
+        Thanks for taking the time to report this. Hybrid Launcher is a personal project made in free time, so the more
+        a report shows, the sooner it gets fixed: **a log and a screenshot are worth more than any description.**
+        One problem per issue helps too.
 
-        **The quickest way:** in the app, Settings → About → **Report on GitHub**. It opens this form with the version, your
-        system and the log already filled in, and shows the whole log file to drag in.
+        **The quickest way:** in the app, Settings → About → **Report on GitHub**. It opens this form with the version,
+        your system and the log already filled in.
 
         Otherwise the logs are in `%LOCALAPPDATA%\HybridLauncher\logs` (paste that in the Explorer address bar): one file
-        per session of the app, named after the date and time it started. Attach the one where the problem happened.
-  - type: checkboxes
-    id: checks
+        per session, named after the date and time it started.
+
+        If it is about a mod itself (OptiScaler, ReShade, RenoDX, Luma) rather than how the app installs it, its own wiki
+        or forum is usually the faster place to ask.
+  - type: textarea
+    id: what
     attributes:
-      label: Before reporting
-      options:
-        - label: I am on the latest version of Hybrid Launcher and the problem is still there.
-          required: true
-        - label: I searched the open and closed issues and this is not a duplicate.
-          required: true
-        - label: If it is about a mod (OptiScaler, ReShade, RenoDX, Luma), I checked its own wiki and it is not a problem of the mod or the game.
-          required: true
+      label: What happened
+      description: |
+        Tell it your way. Useful things to mention: what you were doing, what you saw, what you expected instead,
+        and whether it happens every time.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      description: If you know how, the steps from opening the app. Skip it if it happened out of the blue.
+      placeholder: |
+        1. Open the page of …
+        2. Click …
   - type: input
     id: version
     attributes:
       label: App version
       description: Settings → About.
       placeholder: "1.0.0"
-    validations:
-      required: true
   - type: input
     id: system
     attributes:
-      label: Windows version, graphics card and driver
+      label: Windows, graphics card and driver
       placeholder: "Windows 11 24H2, Radeon RX 9070 XT, Adrenalin 25.10.1"
-    validations:
-      required: true
   - type: input
     id: game
     attributes:
-      label: Game and store, if the problem is about a game
+      label: Game and store, if it is about a game
       placeholder: "Cyberpunk 2077, Steam"
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area
-      options:
-        - Library / game list
-        - Game page
-        - OptiScaler
-        - ReShade / RenoDX / Luma
-        - Downloads / accounts
-        - Cloud saves
-        - Smart HDR
-        - Achievements
-        - My PC
-        - Settings
-        - Updates
-        - Other
-    validations:
-      required: true
-  - type: textarea
-    id: what
-    attributes:
-      label: What happened
-      description: What did you see, and what did you expect instead?
-    validations:
-      required: true
-  - type: dropdown
-    id: frequency
-    attributes:
-      label: How often
-      options:
-        - Every time
-        - Often
-        - Sometimes
-        - Once
-    validations:
-      required: true
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      description: Numbered steps that make the problem happen again, starting from opening the app.
-      placeholder: |
-        1. Open the page of …
-        2. Click …
-        3. …
-    validations:
-      required: true
   - type: textarea
     id: log
     attributes:
       label: Log
-      description: Drag the session's log file here (Settings → About → Report on GitHub fills this in, or take it from `%LOCALAPPDATA%\HybridLauncher\logs`).
-    validations:
-      required: true
+      description: Drag the session's log file here. It is the most useful thing you can add.
   - type: textarea
     id: screenshots
     attributes:
       label: Screenshots or video
-      description: Drag images or a short video here.
-    validations:
-      required: true
+      description: Drag images or a short clip here.

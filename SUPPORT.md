@@ -13,11 +13,9 @@ Please do not use them for bug reports or support requests: those go to GitHub I
 
 ## Report a bug or ask for a feature: GitHub Issues
 
-Open an issue from the [templates](https://github.com/LorenzoKy/Hybrid-Launcher/issues/new/choose). They walk you
-through what to include; please fill in every field.
-
-A report is only considered when it is **detailed, understandable and makes sense, with logs and screenshots**. Anything
-else is closed and ignored, permanently. Before you open one:
+Open an issue from the [templates](https://github.com/LorenzoKy/Hybrid-Launcher/issues/new/choose). Only the
+description is required; the other fields are there to help, and the more you fill in, the sooner it can be looked at.
+**A log and a screenshot make the biggest difference.** A few things that help:
 
 1. Update to the latest version and check that the problem is still there.
 2. Search the [existing issues](https://github.com/LorenzoKy/Hybrid-Launcher/issues?q=is%3Aissue), open and closed.

@@ -1,70 +1,26 @@
 name: Feature request
-description: A concrete idea for something new or better. Well-argued requests only.
+description: An idea for something new or better.
 title: "[Request] "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        **Read before you write.** This is a personal project made in limited free time, and updates come at random times.
-        A request is only considered when it is concrete, understandable and makes sense: one idea per issue, described
-        step by step. Vague requests ("add more features", "make it like X") are closed.
-  - type: checkboxes
-    id: checks
-    attributes:
-      label: Before requesting
-      options:
-        - label: I searched the open and closed issues and this was not requested already.
-          required: true
-        - label: I checked the user guide and the app cannot do this already.
-          required: true
+        Ideas are welcome. Updates come when there is free time, so a request that is concrete (what you want to do and
+        how you picture it) is much easier to pick up than a general wish. One idea per issue, and a quick search of the
+        existing issues and the [user guide](https://github.com/LorenzoKy/Hybrid-Launcher/blob/main/docs/user-guide.md)
+        first, in case it is already there.
   - type: textarea
-    id: problem
+    id: idea
     attributes:
-      label: The problem
-      description: What are you trying to do, and what stops you today?
+      label: The idea
+      description: |
+        Describe it however you like. Useful things to mention: what you are trying to do, what gets in the way today,
+        and how you picture it working in the app.
     validations:
       required: true
   - type: textarea
-    id: proposal
+    id: references
     attributes:
-      label: Your proposal
-      description: How should it work, step by step? Where in the app would it live?
-    validations:
-      required: true
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area
-      options:
-        - Library / game list
-        - Game page
-        - OptiScaler
-        - ReShade / RenoDX / Luma
-        - Downloads / accounts
-        - Cloud saves
-        - Smart HDR
-        - Achievements
-        - My PC
-        - Settings / look
-        - A new mod or store
-        - Other
-    validations:
-      required: true
-  - type: textarea
-    id: why
-    attributes:
-      label: Why it matters
-      description: Who else would use it, and how often?
-    validations:
-      required: true
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives and references
-      description: Other apps or mods that do something similar, workarounds you use now.
-  - type: textarea
-    id: mockups
-    attributes:
-      label: Mockups or screenshots
-      description: Drag images here if they help explain the idea.
+      label: Examples, mockups or references
+      description: Other apps or mods that do something similar, a sketch, a screenshot. Optional.
