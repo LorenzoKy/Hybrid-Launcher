@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://ko-fi.com/lorenzoky"><img src="docs/images/support-banner.png" width="600" alt="Enjoying Hybrid Launcher? Buy me a slice of pizza and keep it going. Support on Ko-fi" /></a>
+  <a href="https://ko-fi.com/lorenzoky"><img alt="Support me on Ko-fi" src="https://ko-fi.com/img/githubbutton_sm.svg" /></a>
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 ## At a glance
 
-Hybrid Launcher is a free Windows 11 app, with its source code public, that finds the games installed on your PC, gives each one its own page, and helps
+Hybrid Launcher is a free and open source Windows 11 app that finds the games installed on your PC, gives each one its own page, and helps
 you install a few popular mods that make them run and look better: **OptiScaler**, **ReShade**, **RenoDX** and **Luma**.
 
 |  |  |
@@ -178,7 +178,7 @@ For collaborations and business enquiries (not bug reports), write to
 Hybrid Launcher is **free**, and support helps cover its costs. Support is really appreciated: it encourages me to keep
 developing Hybrid Launcher. But be warned: for now, updates come at **random times and are not guaranteed**. Thank you.
 
-You can support it on [Ko-fi](https://ko-fi.com/lorenzoky), from the banner at the top of this page or the **Sponsor**
+You can support it on [Ko-fi](https://ko-fi.com/lorenzoky), from the button at the top of this page or the **Sponsor**
 button of this repository.
 
 ## Third-party software
