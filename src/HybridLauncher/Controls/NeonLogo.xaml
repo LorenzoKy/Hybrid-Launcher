@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="HybridLauncher.Controls.NeonLogo"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- The wordmark alone: HYBRID in the logo's ivory, with a short crimson bar under it, like the crossbar of the H.
+         The bar hangs below the text (negative margin), so the word itself sits centred on the title bar's line. -->
+    <Grid VerticalAlignment="Center" Padding="0,8">
+        <!-- A soft composition glow is attached to GlowHost, behind the text. -->
+        <Canvas x:Name="GlowHost" />
+        <TextBlock x:Name="Word" Text="HYBRID" TextLineBounds="Tight" FontFamily="{StaticResource CyberFont}" FontSize="15" FontWeight="SemiBold" CharacterSpacing="180"
+                   HorizontalAlignment="Left" VerticalAlignment="Center" Foreground="{ThemeResource HybridBrush}" />
+        <Rectangle x:Name="Bar" Width="16" Height="2" RadiusX="1" RadiusY="1" Margin="0,0,0,-7" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                   Fill="{ThemeResource HybridAccentBrush}" />
+    </Grid>
+</UserControl>

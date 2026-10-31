@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RootNamespace>HybridLauncher</RootNamespace>
+    <AssemblyName>HybridLauncher</AssemblyName>
+    <Product>Hybrid Launcher</Product>
+    <Version>1.0.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <PlatformTarget>$(Platform)</PlatformTarget>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Unpackaged, self-contained: runs from a plain folder, no installer, no runtime to install. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Release only: drop unused framework/WinRT projection code. "partial" never trims Hybrid Launcher's own assemblies,
+         settings.json uses source-generated System.Text.Json (HybridJson). -->
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <!-- protobuf-net reads [DefaultValue] on every Steam message: a trimmed app turns that attribute off by default, and then
+         no message to Steam can be written ("Could not reach Steam", no QR code). -->
+    <_DefaultValueAttributeSupport>true</_DefaultValueAttributeSupport>
+    <!-- Release only: precompiled code, so opening pages the first time does not stall on the JIT. -->
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Release'">true</PublishReadyToRun>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\**\*.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Only the Windows App SDK pieces Hybrid Launcher uses (same versions as the 1.8.260921001 metapackage):
+         leaving out AI/ML/Widgets saves ~45 MB (onnxruntime, DirectML). -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Base" Version="1.8.251216001" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="1.8.260708001" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="1.8.25122902" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridLauncher.Core\HybridLauncher.Core.csproj" />
+    <!-- SteamKit2 and protobuf-net build their messages by reflection: kept whole by the trimmer. -->
+    <TrimmerRootAssembly Include="SteamKit2" />
+    <TrimmerRootAssembly Include="protobuf-net" />
+    <TrimmerRootAssembly Include="protobuf-net.Core" />
+    <!-- MEGA cloud saves: its client reads MEGA's answers through Newtonsoft.Json, by reflection. -->
+    <TrimmerRootAssembly Include="MegaApiClient" />
+    <TrimmerRootAssembly Include="Newtonsoft.Json" />
+  </ItemGroup>
+
+  <!-- The Windows App SDK ships its own strings in about 90 language folders; the app speaks English and Italian, and WinUI falls
+       back to English for the rest. The published folder keeps only those, so it is readable at a glance. -->
+  <Target Name="DropUnusedLanguageFolders" AfterTargets="Publish">
+    <ItemGroup>
+      <_LangDir Include="$([System.IO.Directory]::GetDirectories('$(PublishDir)'))" />
+      <_LangDir Remove="@(_LangDir)" Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('%(Filename)%(Extension)', '^[a-z]{2,3}(-[A-Za-z]{2,8})*$'))" />
+      <_LangDir Remove="@(_LangDir)" Condition="'%(Filename)%(Extension)' == 'en-us' or '%(Filename)%(Extension)' == 'en-GB' or '%(Filename)%(Extension)' == 'it-IT'" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_LangDir)" />
+  </Target>
+
+</Project>

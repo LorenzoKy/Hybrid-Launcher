@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Downloads tab: built in code (DownloadsPage.cs); the XAML file makes the page known to the frame's navigation. -->
+<Page
+    x:Class="HybridLauncher.Views.DownloadsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" />

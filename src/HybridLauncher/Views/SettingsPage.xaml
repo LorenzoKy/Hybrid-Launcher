@@ -1,0 +1,606 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="HybridLauncher.Views.SettingsPage"
+    NavigationCacheMode="Required"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:HybridLauncher.Controls">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="1600" Padding="24,8,24,40" Spacing="4">
+            <!-- The title, and on the right Restore defaults for the open tab (each tab has its own defaults). -->
+            <Grid Margin="0,8,0,12" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
+                <Button x:Name="RestoreDefaultsButton" Grid.Column="1" VerticalAlignment="Center" Padding="12,6" Click="RestoreDefaults_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE777;" FontSize="14" />
+                        <TextBlock x:Name="RestoreDefaultsText" Text="Restore defaults" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <!-- One tab per area: what Hybrid Launcher looks like, what it does, what it keeps on disk, and about. -->
+            <SelectorBar x:Name="SettingsTabs" Margin="0,0,0,12" SelectionChanged="SettingsTabs_SelectionChanged">
+                <SelectorBarItem Text="Appearance" Tag="appearance">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE790;" Foreground="#FFE05CB8" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="Features" Tag="features">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE9E9;" Foreground="#FF5FA8FF" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="Cloud saves" Tag="cloud">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE753;" Foreground="#FF4FC3F7" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="Storage" Tag="storage">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xEDA2;" Foreground="#FFF07F2A" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="About" Tag="about">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE946;" Foreground="#FF3FC26A" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+            </SelectorBar>
+
+            <StackPanel x:Name="AppearancePanel" Spacing="4">
+            <TextBlock Text="LANGUAGE" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16" RowSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Language" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Automatic follows the Windows display language. Hybrid Launcher restarts to apply a new one." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="LanguageCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Language_Changed" />
+                    <InfoBar x:Name="RestartBar" Grid.Row="1" Grid.ColumnSpan="2" IsOpen="False" IsClosable="False" Severity="Informational"
+                             Message="Restart Hybrid Launcher to use the new language.">
+                        <InfoBar.ActionButton>
+                            <Button Content="Restart now" Click="Restart_Click" />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
+                </Grid>
+            </Border>
+
+            <TextBlock Text="LOOK" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Colour theme" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="PaletteHint" Text="Accent colour and a soft tint behind the window. Works with light and dark." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="PaletteCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Palette_Changed" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Material colours" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="On: cards, outlines and the window take a trace of the colour theme (with Windows accent, of your Windows colour). Off: neutral grey surfaces like before, only buttons and highlights in the accent colour." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="MaterialToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Material_Toggled" />
+                </Grid>
+            </Border>
+            <!-- Free colour pickers: picking any of them switches the colour theme to "My colours". -->
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16" RowSpacing="10">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="My colours" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Pick any accent, the glow behind the window and, if you like, your own dark background. Picking a colour switches the colour theme to My colours." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                        <DropDownButton x:Name="AccentPickButton" Padding="10,5" ToolTipService.ToolTip="Accent: buttons, selections, highlights">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border x:Name="AccentSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <TextBlock Text="Accent" />
+                            </StackPanel>
+                            <DropDownButton.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="AccentPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
+                                </Flyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                        <DropDownButton x:Name="TintPickButton" Padding="10,5" ToolTipService.ToolTip="Glow: the soft colour wash behind the window">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border x:Name="TintSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <TextBlock Text="Glow" />
+                            </StackPanel>
+                            <DropDownButton.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="TintPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
+                                </Flyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                        <DropDownButton x:Name="BackgroundPickButton" Padding="10,5" ToolTipService.ToolTip="Background: your own dark backdrop (always dark), used while the switch is on">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border x:Name="BackgroundSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <TextBlock Text="Background" />
+                            </StackPanel>
+                            <DropDownButton.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="BackgroundPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
+                                </Flyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                        <ToggleSwitch x:Name="BackdropToggle" OnContent="Own background" OffContent="Own background" MinWidth="0" VerticalAlignment="Center" Toggled="CustomColor_Changed" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Icon colours" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="The icons of the game page tabs and sections: one quiet colour, or each in its own colour." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="TabIconsCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="TabIcons_Changed" />
+                </Grid>
+            </Border>
+
+            <!-- Icons: one switch per place (filled from code with IconSpots). -->
+            <TextBlock Text="ICONS" Style="{StaticResource GroupHeader}" Margin="0,16,0,4" />
+            <StackPanel x:Name="IconSpotsPanel" Spacing="4" />
+
+            <!-- Parts of the game page: one switch each, for every game (a game can hide more from its ⋯ menu). -->
+            <TextBlock Text="GAME PAGE" Style="{StaticResource GroupHeader}" Margin="0,16,0,4" />
+            <TextBlock Text="What the banner and the launch bar show in every game. To hide something for one game only, use ⋯ → Show on this page on its page." Style="{StaticResource RowDescription}" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <StackPanel x:Name="PagePartsPanel" Spacing="4" />
+
+            </StackPanel>
+
+            <StackPanel x:Name="FeaturesPanel" Spacing="4" Visibility="Collapsed">
+            <TextBlock Text="GRAPHICS" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Hardware acceleration" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Smooth effects, the blurred reflection under the banner and videos that play by themselves. Turn it off on a slow or busy graphics card. Videos never play while a game is running." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="HardwareToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Hardware_Toggled" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="WINDOW" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Welcome tour" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="The tips shown at the first start, each beside the real control: your games, a game&apos;s page and its tools, Library, Downloads, My PC and Settings." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Take the tour again" Click="Tour_Click" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Keep running in the background when closed" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Closing the window leaves Hybrid Launcher in the notification area (by the clock): games stay tracked, Smart HDR keeps working, achievements still pop up. Right-click its icon there to quit." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="TrayToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Start with Windows" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Hybrid Launcher starts in the notification area when you sign in to Windows, without opening its window." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="GAME PAGE TABS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8" Padding="0,4,0,4">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Tabs shown on every game page" Style="{StaticResource RowHeader}" />
+                            <TextBlock Text="Turn a tab off to hide it everywhere. To hide one for a single game, right-click it on that game's page or use the gear at the end of its tabs; drag the tabs there to reorder them." Style="{StaticResource RowDescription}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Default order, show all" Click="ResetTabs_Click" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel x:Name="TabsList" Spacing="2" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="LIBRARY" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Upscaler tags on the covers" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="DLSS, FSR, XeSS and frame generation tags at the bottom of each cover. Also in the library's Filters." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="CoverTagsToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="CoverTags_Toggled" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="MODS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Game files a mod replaces" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="When OptiScaler or Luma goes into a game, the game's own files it replaces can be backed up first (uninstalling puts them back) or simply replaced. ReShade's own installer keeps its own backups." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="ModBackupsCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="ModBackups_Changed" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="STEAM EMULATORS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Read Goldberg / GSE saves" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Games run through a Steam emulator (Goldberg SteamEmu, gbe_fork): their achievements and last session, read from the emulator's saves. Hybrid Launcher counts the play time when it starts them." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="EmulatorToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Emulator_Toggled" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="GAME" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="How long to beat" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="The HowLongToBeat card in the overview's side column (main story, extras, 100%)." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="HltbToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="OverviewCards_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Metacritic" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="The Metacritic card under How long to beat: the Metascore of the critics and the users' score." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="MetacriticToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="OverviewCards_Toggled" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="ACHIEVEMENTS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Unlock pop-ups" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="A small pop-up (where you choose, in the colours you choose) when Steam records a new achievement, while Hybrid Launcher is open. Steam games only for now; read from Steam's own files, nothing is sent anywhere. It shows over borderless / windowed games, not over exclusive full screen." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Try it" Click="TestPopup_Click" VerticalAlignment="Center" />
+                    <ToggleSwitch x:Name="PopupToggle" Grid.Column="2" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Popup_Toggled" />
+                </Grid>
+            </Border>
+            <!-- How the pop-up looks; "Try it" above shows the result. -->
+            <Border x:Name="PopupOptions" Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16" RowSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="Position" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="CornerCombo" Grid.Column="1" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                        <ComboBoxItem Content="Bottom right" Tag="BottomRight" />
+                        <ComboBoxItem Content="Bottom left" Tag="BottomLeft" />
+                        <ComboBoxItem Content="Top right" Tag="TopRight" />
+                        <ComboBoxItem Content="Top left" Tag="TopLeft" />
+                        <ComboBoxItem Content="Exactly where I put it" Tag="Custom" />
+                    </ComboBox>
+
+                    <!-- Custom position: drag a sample pop-up on the screen, or fine-tune with the two sliders. -->
+                    <StackPanel x:Name="PlacePanel" Grid.Row="1" Grid.ColumnSpan="2" Spacing="8" Visibility="Collapsed">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Drag a sample pop-up to the exact spot on the screen, or fine-tune it with the sliders (0% is the left or top edge)." Style="{StaticResource RowDescription}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <Button x:Name="PlaceButton" Grid.Column="1" Content="Place on screen" Style="{StaticResource AccentButtonStyle}" Click="PlacePopup_Click" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Across" VerticalAlignment="Center" Style="{StaticResource RowDescription}" />
+                            <Slider x:Name="PlaceX" Grid.Column="1" Minimum="0" Maximum="100" StepFrequency="0.5" VerticalAlignment="Center" ValueChanged="PlaceSlider_Changed" />
+                            <TextBlock x:Name="PlaceXText" Grid.Column="2" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="3" Text="Down" VerticalAlignment="Center" Style="{StaticResource RowDescription}" />
+                            <Slider x:Name="PlaceY" Grid.Column="4" Minimum="0" Maximum="100" StepFrequency="0.5" VerticalAlignment="Center" ValueChanged="PlaceSlider_Changed" />
+                            <TextBlock x:Name="PlaceYText" Grid.Column="5" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="2" Text="Screen" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ScreenCombo" Grid.Row="2" Grid.Column="1" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                        <ComboBoxItem Content="Where the game is" Tag="Game" />
+                        <ComboBoxItem Content="Main display" Tag="Primary" />
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="3" Text="Size" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="SizeCombo" Grid.Row="3" Grid.Column="1" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                        <ComboBoxItem Content="Normal" Tag="Normal" />
+                        <ComboBoxItem Content="Large" Tag="Large" />
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="4" Text="Colour" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="CustomColorButton" Padding="6" VerticalAlignment="Center" Visibility="Collapsed" ToolTipService.ToolTip="Pick the colour">
+                            <Border x:Name="CustomColorSwatch" Width="44" Height="20" CornerRadius="4" />
+                            <Button.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="CustomColorPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorSliderVisible="True" IsHexInputVisible="True" ColorChanged="PopupColor_Changed" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                        <ComboBox x:Name="StyleCombo" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                            <ComboBoxItem Content="Colour theme accent" Tag="Accent" />
+                            <ComboBoxItem Content="Gold" Tag="Gold" />
+                            <ComboBoxItem Content="Steam blue" Tag="Steam" />
+                            <ComboBoxItem Content="My colour" Tag="Custom" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="7" Text="Time on screen" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                        <Slider x:Name="SecondsSlider" Width="150" Minimum="2" Maximum="15" StepFrequency="0.5" VerticalAlignment="Center" ValueChanged="Seconds_Changed" />
+                        <TextBlock x:Name="SecondsText" MinWidth="40" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="8" Text="Sound" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="SoundFileButton" Content="Pick .wav…" Click="SoundFile_Click" Visibility="Collapsed" />
+                        <ComboBox x:Name="SoundCombo" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                            <ComboBoxItem Content="None" Tag="None" />
+                            <ComboBoxItem Content="Windows notification" Tag="Windows" />
+                            <ComboBoxItem Content="My sound (.wav)" Tag="File" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="9" Text="Show how rare it is" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <ToggleSwitch x:Name="RarityToggle" Grid.Row="9" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" Toggled="PopupOption_Changed" />
+
+                    <TextBlock Grid.Row="5" Text="Background" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="BackgroundAutoButton" Content="Automatic" Click="BackgroundAuto_Click" VerticalAlignment="Center" />
+                        <Button Padding="6" VerticalAlignment="Center" ToolTipService.ToolTip="Pick the background colour">
+                            <Border x:Name="PopupBackSwatch" Width="44" Height="20" CornerRadius="4" />
+                            <Button.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="PopupBackPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorSliderVisible="True" IsHexInputVisible="True" ColorChanged="BackgroundColor_Changed" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="6" Text="Background opacity" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                        <Slider x:Name="OpacitySlider" Width="150" Minimum="60" Maximum="100" StepFrequency="1" VerticalAlignment="Center" ValueChanged="Opacity_Changed" />
+                        <TextBlock x:Name="OpacityText" MinWidth="40" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <TextBlock Text="GAME DETECTION" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Stores to scan" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Installed games are found from each launcher's own records. Nothing is changed in the launchers." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <CheckBox x:Name="SteamCheck" Content="Steam" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="EpicCheck" Content="Epic" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="GogCheck" Content="GOG" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="XboxCheck" Content="Xbox" MinWidth="0" Click="Sources_Changed" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Games folders" Style="{StaticResource RowHeader}" />
+                            <TextBlock Text="Each sub-folder that contains an .exe is listed as a game." Style="{StaticResource RowDescription}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Add folder…" Click="AddLibrary_Click" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel x:Name="LibrariesList" Spacing="4" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel>
+                        <TextBlock Text="Games added by hand" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Added with “Add a game (pick its .exe)”." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="CustomList" Spacing="4" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel>
+                        <TextBlock Text="Hidden games" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Games you hid from the list." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="HiddenList" Spacing="4" />
+                </StackPanel>
+            </Border>
+
+            </StackPanel>
+
+            <!-- Cloud saves: built in code (CloudSettingsView), made again when the provider changes. -->
+            <StackPanel x:Name="CloudPanel" Spacing="4" Visibility="Collapsed" />
+
+            <StackPanel x:Name="StoragePanel" Spacing="4" Visibility="Collapsed">
+            <TextBlock Text="GAME UPDATES" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Keep games up to date" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Games Hybrid Launcher downloaded (Steam, Epic Games, GOG) are checked when Hybrid Launcher starts and every six hours, and update in Downloads by themselves, like on Steam: only the files that changed are downloaded, mods and settings stay. A game does not start while it updates." Style="{StaticResource RowDescription}" />
+                        <TextBlock x:Name="UpdateCheckText" Style="{StaticResource RowDescription}" Visibility="Collapsed" />
+                    </StackPanel>
+                    <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Click="CheckUpdates_Click" VerticalAlignment="Center" />
+                    <ToggleSwitch x:Name="AutoUpdateToggle" Grid.Column="2" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="AutoUpdate_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Desktop shortcut for downloaded games" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="A game Hybrid Launcher downloads gets a shortcut on the desktop when it is installed. It starts the game through the app, so Smart HDR, play time and cloud saves work." Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="ShortcutToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Shortcut_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Games installed by a launcher" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Steam, the Epic Games Launcher and GOG Galaxy update the games they installed when they are open. Xbox / Game Pass games update from the Microsoft Store." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Microsoft Store updates" Click="StoreUpdates_Click" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
+            <TextBlock Text="DOWNLOADS AND DATA" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="10">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Saved OptiScaler versions" Style="{StaticResource RowHeader}" />
+                            <TextBlock x:Name="CacheText" Style="{StaticResource RowDescription}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Delete all downloads" Click="ClearCache_Click" VerticalAlignment="Center" />
+                    </Grid>
+                    <controls:SavedVersionsList x:Name="VersionsList" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Custom OptiScaler builds folder" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="CustomBuildsText" Style="{StaticResource RowDescription}" IsTextSelectionEnabled="True" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button x:Name="ResetBuildsButton" Content="Default" Click="ResetBuildsDir_Click" />
+                        <Button Content="Change…" Click="ChangeBuildsDir_Click" />
+                        <Button Content="Open" Click="OpenBuildsDir_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Hybrid Launcher data" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="DataText" Style="{StaticResource RowDescription}" IsTextSelectionEnabled="True" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Content="Open logs" Click="OpenLogs_Click" />
+                        <Button Content="Open folder" Click="OpenData_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            </StackPanel>
+
+            <StackPanel x:Name="AboutPanel" Spacing="4" Visibility="Collapsed">
+            <!-- Who makes Hybrid Launcher, and where to support it. -->
+            <Border Style="{StaticResource RowStyle}" Padding="16,12">
+                <Grid ColumnSpacing="16" RowSpacing="10">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Text="Made by LorenzoKy" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Text="If Hybrid Launcher helps you, a coffee on Ko-fi keeps it going. Code, releases and other projects are on GitHub." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="AuthorLinks" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Style="{StaticResource AccentButtonStyle}" Padding="14,7" Click="Kofi_Click" ToolTipService.ToolTip="ko-fi.com/lorenzoky">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xEB51;" FontSize="14" />
+                                <TextBlock Text="Support on Ko-fi" />
+                            </StackPanel>
+                        </Button>
+                        <Button Padding="14,7" Click="Github_Click" ToolTipService.ToolTip="github.com/LorenzoKy">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE943;" FontSize="14" />
+                                <TextBlock Text="GitHub" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <!-- Report a problem: GitHub's bug form, filled in with the version, the system and this session's log. -->
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Text="Report a problem" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Opens the bug form on GitHub with the version, your system and this session's log already filled in. Your user name, PC name and e-mail addresses are taken out first." Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Click="Report_Click" MinWidth="140" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xEBE8;" FontSize="14" />
+                            <TextBlock Text="Report on GitHub" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Border>
+            <!-- The app's own updates, from GitHub's releases. -->
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Text="Updates" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="UpdateStatusText" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                        <ToggleSwitch x:Name="AppUpdateToggle" OnContent="Check at start" OffContent="Check at start" MinWidth="0" VerticalAlignment="Center" Toggled="AppUpdate_Toggled" />
+                        <Button x:Name="UpdateButton" Content="Check for updates" MinWidth="140" Click="Update_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel VerticalAlignment="Center" Spacing="4">
+                    <TextBlock x:Name="AboutText" Style="{StaticResource RowHeader}" />
+                    <TextBlock Style="{StaticResource RowDescription}"
+                               Text="OptiScaler, OptiPatcher and their setup script belong to the OptiScaler team; Hybrid Launcher downloads them from GitHub and runs them unchanged." />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <HyperlinkButton Content="OptiScaler on GitHub" NavigateUri="https://github.com/optiscaler/OptiScaler" Padding="0" />
+                        <HyperlinkButton Content="OptiPatcher" NavigateUri="https://github.com/optiscaler/OptiPatcher" Padding="0" />
+                        <HyperlinkButton Content="ReShade" NavigateUri="https://reshade.me" Padding="0" />
+                        <HyperlinkButton Content="RenoDX" NavigateUri="https://github.com/clshortfuse/renodx" Padding="0" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource RowDescription}"
+                               Text="ReShade installers come from reshade.me and run unchanged; RenoDX mods come from their authors' GitHub pages or, for Nexus Mods files, from your own download." />
+                </StackPanel>
+            </Border>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

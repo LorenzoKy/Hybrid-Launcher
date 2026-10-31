@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The exe at the top of the app's folder: it starts app\HybridLauncher.exe, so the folder shows one exe and one
+       folder instead of hundreds of runtime files. .NET Framework 4.8 ships with Windows 10 and 11, so it stays a few KB. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>HybridLauncher</AssemblyName>
+    <RootNamespace>HybridLauncher.Starter</RootNamespace>
+    <Product>Hybrid Launcher</Product>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>..\HybridLauncher\Assets\AppIcon.ico</ApplicationIcon>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+</Project>

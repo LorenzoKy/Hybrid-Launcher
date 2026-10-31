@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    No outlines, as in Steam: every button, toggle, combo box, text box and card is a plain fill. WinUI rims each control with
+    a 1 px stroke (an "elevation" gradient for controls, CardStroke for cards); over Hybrid Launcher's tinted and see-through surfaces
+    those strokes read as hard contours around every box, in every tab. Here they are all transparent: surfaces are told apart
+    by their fill alone (see GlassBrush for the surfaces laid over pictures).
+    Merged after XamlControlsResources (App.xaml); a style or element that sets its own border still wins.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="HybridControlRim" Color="#00FFFFFF" />
+            <SolidColorBrush x:Key="HybridControlRimHover" Color="#00FFFFFF" />
+            <SolidColorBrush x:Key="HybridAccentRim" Color="#00FFFFFF" />
+            <StaticResource x:Key="ControlElevationBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="AccentControlElevationBorderBrush" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="ButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="RepeatButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="RepeatButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="ToggleButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="ToggleButtonBorderBrushIndeterminate" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushIndeterminatePointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="AccentButtonBorderBrush" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="AccentButtonBorderBrushPointerOver" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="AppBarToggleButtonBorderBrushChecked" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="AppBarToggleButtonBorderBrushCheckedPointerOver" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="SplitButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="SplitButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="SplitButtonBorderBrushPressed" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="SplitButtonBorderBrushChecked" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="SplitButtonBorderBrushCheckedPointerOver" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="ComboBoxBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ComboBoxBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="CalendarDatePickerBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="CalendarDatePickerBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="DatePickerButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="DatePickerButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="TimePickerButtonBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="TimePickerButtonBorderBrushPointerOver" ResourceKey="HybridControlRimHover" />
+            <StaticResource x:Key="SliderThumbBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ButtonBorderBrushPressed" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ButtonBorderBrushDisabled" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="AccentButtonBorderBrushPressed" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="AccentButtonBorderBrushDisabled" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushPressed" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushDisabled" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ToggleButtonBorderBrushCheckedPressed" ResourceKey="HybridAccentRim" />
+            <StaticResource x:Key="ComboBoxBorderBrushPressed" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="ComboBoxBorderBrushDisabled" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="CardStrokeColorDefaultBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="TextControlBorderBrush" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="HybridControlRim" />
+            <StaticResource x:Key="TextControlBorderBrushDisabled" ResourceKey="HybridControlRim" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

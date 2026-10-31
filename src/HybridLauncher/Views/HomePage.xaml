@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="HybridLauncher.Views.HomePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Padding="24" MaxWidth="460">
+        <Image Source="ms-appx:///Assets/Logo.png" Width="120" Height="120" />
+        <TextBlock Text="Pick a game on the left" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" TextAlignment="Center" />
+        <TextBlock
+            Style="{StaticResource BodyTextBlockStyle}"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            TextAlignment="Center"
+            TextWrapping="Wrap"
+            Text="Hybrid Launcher finds your Steam, Epic, GOG and Xbox games by itself. Anything else: use “Add a game or games folder” at the bottom of the list." />
+    </StackPanel>
+</Page>

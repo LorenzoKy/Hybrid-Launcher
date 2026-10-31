@@ -1,0 +1,11 @@
+<Project>
+  <!-- Builds shared with testers carry no path of the build PC: source and obj paths are written as "/_/" (also in the PE debug entry). -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))=/_/</PathMap>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+</Project>

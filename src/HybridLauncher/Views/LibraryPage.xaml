@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="HybridLauncher.Views.LibraryPage"
+    NavigationCacheMode="Required"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Page.Resources>
+        <!-- One tile slot: the cover plus a fixed gap on the right and below (the page sizes the tiles to fill whole columns). -->
+        <Style x:Key="TileItem" TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+            <Setter Property="Margin" Value="0,0,16,16" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+    </Page.Resources>
+
+    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+        <!-- Centred: its width is set from code to whole columns of tiles. -->
+        <StackPanel x:Name="Root" Padding="0,8,0,32" Spacing="20" HorizontalAlignment="Center">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="Library" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock x:Name="CountText" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                    <!-- Cover size (Ctrl + mouse wheel does the same); Auto goes back to as many columns as fit. -->
+                    <StackPanel x:Name="ZoomBar" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Button x:Name="ZoomOutButton" Background="Transparent" BorderThickness="0" Padding="8,6" Click="ZoomOut_Click" ToolTipService.ToolTip="Smaller covers">
+                            <FontIcon Glyph="&#xE71F;" FontSize="14" />
+                        </Button>
+                        <Slider x:Name="ZoomSlider" Width="140" Minimum="0" Maximum="100" StepFrequency="1" ToolTipService.ToolTip="Cover size" VerticalAlignment="Center" ValueChanged="ZoomSlider_ValueChanged" />
+                        <Button x:Name="ZoomInButton" Background="Transparent" BorderThickness="0" Padding="8,6" Click="ZoomIn_Click" ToolTipService.ToolTip="Bigger covers">
+                            <FontIcon Glyph="&#xE8A3;" FontSize="14" />
+                        </Button>
+                        <Button x:Name="ZoomAutoButton" Background="Transparent" BorderThickness="0" Padding="8,5" Click="ZoomAuto_Click" ToolTipService.ToolTip="Size the covers automatically">
+                            <TextBlock Text="Auto" FontSize="12" />
+                        </Button>
+                    </StackPanel>
+                    <!-- Sort and filters: the flyout is built in code. -->
+                    <DropDownButton x:Name="FiltersButton" VerticalAlignment="Center" Padding="14,7">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                            <TextBlock Text="Filters" />
+                            <Border x:Name="FilterBadge" CornerRadius="9" MinWidth="18" Padding="5,0,5,1" VerticalAlignment="Center" Visibility="Collapsed"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}">
+                                <TextBlock x:Name="FilterBadgeText" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center"
+                                           Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                            </Border>
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <Flyout x:Name="FiltersFlyout" Placement="BottomEdgeAlignedRight" Opening="FiltersFlyout_Opening" />
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                </StackPanel>
+            </Grid>
+
+            <!-- The covers, centred under the full-width header whatever the zoom (only this block changes width). -->
+            <StackPanel x:Name="Block" Spacing="20" HorizontalAlignment="Center">
+            <!-- Quick access: the pinned games, always on top. -->
+            <StackPanel x:Name="PinnedSection" Spacing="8" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE718;" FontSize="13" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                    <TextBlock Text="PINNED" Style="{StaticResource GroupHeader}" VerticalAlignment="Center" />
+                </StackPanel>
+                <GridView x:Name="PinnedGrid" SelectionMode="None" IsItemClickEnabled="True" ItemClick="Tile_Click" ItemContainerStyle="{StaticResource TileItem}"
+                          ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Hidden" Padding="0" Margin="0,0,-16,0" />
+            </StackPanel>
+
+            <StackPanel x:Name="Groups" Spacing="14" />
+
+            <TextBlock x:Name="EmptyText" Style="{StaticResource BodyTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" TextWrapping="Wrap" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

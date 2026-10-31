@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="HybridLauncher.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:HybridLauncher.Controls"
+    Title="Hybrid Launcher">
+
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="RootGrid">
+        <Grid.Resources>
+            <!-- Hybrid Launcher's own minimize / maximize / close: as tall as the title bar (easy to hit, even at the top edge of a
+                 maximized window), lined up with the logo, in the theme's colours; close turns red under the pointer. -->
+            <Style x:Key="CaptionButton" TargetType="Button">
+                <Setter Property="Width" Value="54" />
+                <Setter Property="Height" Value="58" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="VerticalAlignment" Value="Top" />
+                <Setter Property="IsTabStop" Value="False" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="0" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="0" />
+            </Style>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="58" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- The palette's colour wash over the Mica backdrop (empty with the Windows accent palette). -->
+        <Border x:Name="TintLayer" Grid.RowSpan="2" IsHitTestVisible="False" />
+
+        <Grid x:Name="AppTitleBar" Padding="18,0,0,0">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- The wordmark lives in the title bar, at the very top of the window, whether the pane is open or not. -->
+                <controls:NeonLogo x:Name="TitleBrand" WordSize="15" VerticalAlignment="Center" ToolTipService.ToolTip="Library" />
+                <!-- On a game page: a back arrow and the game's name, lined up with the page content. -->
+                <StackPanel x:Name="PageTitle" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Visibility="Collapsed">
+                    <Button x:Name="BackButton" Style="{StaticResource TitleBackButton}" Click="Back_Click" ToolTipService.ToolTip="Back">
+                        <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                    </Button>
+                    <TextBlock x:Name="PageTitleText" TextLineBounds="Tight" FontWeight="Bold" FontSize="15" CharacterSpacing="30" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" MaxWidth="900" />
+                </StackPanel>
+            </StackPanel>
+            <StackPanel x:Name="CaptionButtons" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Click="Minimize_Click" ToolTipService.ToolTip="Minimize">
+                    <FontIcon Glyph="&#xE921;" FontSize="11" />
+                </Button>
+                <Button x:Name="MaximizeButton" Style="{StaticResource CaptionButton}" Click="Maximize_Click" ToolTipService.ToolTip="Maximize">
+                    <FontIcon x:Name="MaximizeIcon" Glyph="&#xE922;" FontSize="11" />
+                </Button>
+                <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Click="CloseWindow_Click" ToolTipService.ToolTip="Close">
+                    <Button.Resources>
+                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#C42B1C" />
+                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#A72618" />
+                        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#E6FFFFFF" />
+                    </Button.Resources>
+                    <FontIcon Glyph="&#xE8BB;" FontSize="11" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <NavigationView
+            x:Name="Nav"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsPaneToggleButtonVisible="False"
+            IsSettingsVisible="True"
+            IsTitleBarAutoPaddingEnabled="False"
+            PaneDisplayMode="Auto"
+            OpenPaneLength="312"
+            CompactModeThresholdWidth="760"
+            ExpandedModeThresholdWidth="1100"
+            SelectionChanged="Nav_SelectionChanged"
+            ItemInvoked="Nav_ItemInvoked">
+
+            <!-- The step from the game list to the page: a hairline of light (not WinUI's dark stroke beside a lighter layer)
+                 and a softer, rounder corner, so list and page read as one surface. -->
+            <NavigationView.Resources>
+                <ResourceDictionary>
+                    <ResourceDictionary.ThemeDictionaries>
+                        <ResourceDictionary x:Key="Default">
+                            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#1F3A3A3A" />
+                            <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="#1AFFFFFF" />
+                        </ResourceDictionary>
+                        <ResourceDictionary x:Key="Light">
+                            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#59FFFFFF" />
+                            <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="#0F000000" />
+                        </ResourceDictionary>
+                    </ResourceDictionary.ThemeDictionaries>
+                    <!-- Square: a rounded corner cuts the banner's art without anti-aliasing (a stair-stepped corner). The step from list
+                         to page is the hairline alone. -->
+                    <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
+                </ResourceDictionary>
+            </NavigationView.Resources>
+
+
+            <!-- Search and the button that folds the game list share one row: same height, same look. Folded, only the button
+                 stays, in the middle of the strip. -->
+            <NavigationView.PaneCustomContent>
+                <Grid x:Name="PaneBar" Margin="12,2,12,8" ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Search games" QueryIcon="Find" TextChanged="SearchBox_TextChanged" VerticalAlignment="Center" />
+                    <!-- Sort and filters for the list (the same ones as the library grid); a dot while any is on. -->
+                    <Button x:Name="PaneFilterButton" Grid.Column="1" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center" ToolTipService.ToolTip="Sort and filters">
+                        <Grid>
+                            <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                            <Ellipse x:Name="PaneFilterDot" Width="7" Height="7" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-5,-7,0"
+                                     Fill="{ThemeResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
+                        </Grid>
+                        <Button.Flyout>
+                            <Flyout x:Name="PaneFiltersFlyout" Placement="RightEdgeAlignedTop" Opening="PaneFilters_Opening" />
+                        </Button.Flyout>
+                    </Button>
+                    <Button x:Name="PaneButton" Grid.Column="2" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center"
+                            Click="PaneButton_Click" ToolTipService.ToolTip="Hide the game list">
+                        <!-- A side panel with an arrow: points left while the list is open (hide), right while it is folded (show). -->
+                        <Viewbox Width="17" Height="17">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M5,3 H19 A2,2 0 0 1 21,5 V19 A2,2 0 0 1 19,21 H5 A2,2 0 0 1 3,19 V5 A2,2 0 0 1 5,3 Z" Stroke="{ThemeResource TextFillColorPrimaryBrush}" StrokeThickness="1.6" />
+                                <Path Data="M5,3.9 H9 V20.1 H5 A1.1,1.1 0 0 1 3.9,19 V5 A1.1,1.1 0 0 1 5,3.9 Z" Fill="{ThemeResource TextFillColorPrimaryBrush}" Opacity="0.22" />
+                                <Path Data="M9,3 V21" Stroke="{ThemeResource TextFillColorPrimaryBrush}" StrokeThickness="1.6" />
+                                <Path x:Name="PaneButtonArrow" Data="M17,7.5 L12.5,12 L17,16.5" Stroke="{ThemeResource TextFillColorPrimaryBrush}" StrokeThickness="2"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" RenderTransformOrigin="0.5,0.5">
+                                    <Path.RenderTransform>
+                                        <RotateTransform x:Name="PaneButtonArrowTurn" CenterX="14.75" CenterY="12" />
+                                    </Path.RenderTransform>
+                                </Path>
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
+            </NavigationView.PaneCustomContent>
+
+            <NavigationView.FooterMenuItems>
+                <!-- Steam friends, once Steam is signed in in Hybrid Launcher (Downloads → Accounts): who is online and what they play. -->
+                <NavigationViewItem x:Name="FriendsItem" Content="Friends" SelectsOnInvoked="False" Tag="friends" Visibility="Collapsed">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE716;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="AddGameItem" Content="Add a game or games folder" SelectsOnInvoked="False" Tag="add">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE710;" />
+                    </NavigationViewItem.Icon>
+                    <FlyoutBase.AttachedFlyout>
+                        <MenuFlyout Placement="RightEdgeAlignedBottom">
+                            <MenuFlyoutItem Text="Add a game (pick its .exe)…" Click="AddGameExe_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7FC;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Add a games folder (each sub-folder is a game)…" Click="AddLibrary_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Text="Rescan installed games" Click="Rescan_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72C;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </FlyoutBase.AttachedFlyout>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+
+        <!-- Drag the game list's edge to make it wider or narrower (Expanded mode only; placed and clamped in code). -->
+        <controls:ResizeGrip x:Name="PaneGrip" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Stretch" Visibility="Collapsed" />
+
+        <Border
+            x:Name="ToastHost"
+            Grid.Row="1"
+            MaxWidth="680"
+            Margin="24"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            CornerRadius="{StaticResource OverlayCornerRadius}"
+            Visibility="Collapsed">
+            <InfoBar x:Name="ToastBar" IsOpen="True" Closed="ToastBar_Closed" />
+        </Border>
+    </Grid>
+</Window>
