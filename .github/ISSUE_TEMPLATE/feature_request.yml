@@ -1,0 +1,70 @@
+name: Feature request
+description: A concrete idea for something new or better. Well-argued requests only.
+title: "[Request] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Read before you write.** This is a personal project made in limited free time, and updates come at random times.
+        A request is only considered when it is concrete, understandable and makes sense: one idea per issue, described
+        step by step. Vague requests ("add more features", "make it like X") are closed.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before requesting
+      options:
+        - label: I searched the open and closed issues and this was not requested already.
+          required: true
+        - label: I checked the user guide and the app cannot do this already.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Your proposal
+      description: How should it work, step by step? Where in the app would it live?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Library / game list
+        - Game page
+        - OptiScaler
+        - ReShade / RenoDX / Luma
+        - Downloads / accounts
+        - Cloud saves
+        - Smart HDR
+        - Achievements
+        - My PC
+        - Settings / look
+        - A new mod or store
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Who else would use it, and how often?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and references
+      description: Other apps or mods that do something similar, workarounds you use now.
+  - type: textarea
+    id: mockups
+    attributes:
+      label: Mockups or screenshots
+      description: Drag images here if they help explain the idea.

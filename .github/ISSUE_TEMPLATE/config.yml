@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to use the app
+    url: https://github.com/LorenzoKy/Hybrid-Launcher/blob/main/docs/user-guide.md
+    about: The user guide and the FAQ answer most "how do I…" questions.
+  - name: Collaborations and business enquiries
+    url: https://github.com/LorenzoKy/Hybrid-Launcher/blob/main/SUPPORT.md
+    about: E-mail or Discord, for working together. Not for bug reports.
+  - name: A problem with OptiScaler itself
+    url: https://github.com/optiscaler/OptiScaler/wiki
+    about: Check the mod's own wiki first; Hybrid Launcher only installs and configures the mods.
+  - name: A problem with ReShade itself
+    url: https://reshade.me/forum
+    about: Shaders, presets and add-ons belong to ReShade's own forum.
