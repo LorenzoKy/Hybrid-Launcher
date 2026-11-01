@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest"><img src="docs/images/button-download.svg" height="52" alt="Download Hybrid Launcher" /></a>
+  <a href="https://github.com/LorenzoKy/Hybrid-Launcher/releases"><img src="docs/images/button-download.svg" height="52" alt="Download Hybrid Launcher" /></a>
   &nbsp;
   <a href="https://ko-fi.com/lorenzoky"><img src="docs/images/button-support.svg" height="52" alt="Support Hybrid Launcher on Ko-fi" /></a>
 </p>
