@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="262" height="44" viewBox="0 0 262 44" role="img" aria-label="Support Hybrid Launcher">
+<svg xmlns="http://www.w3.org/2000/svg" width="296" height="52" viewBox="0 0 296 52" role="img" aria-label="Support Hybrid Launcher">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8A2BE2"/>
       <stop offset="1" stop-color="#C8143F"/>
     </linearGradient>
   </defs>
-  <rect x="0.5" y="0.5" width="261" height="43" rx="10" fill="url(#bg)" stroke="#E07BFF" stroke-opacity="0.45"/>
-  <g fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linejoin="round" transform="translate(16 10)">
+  <rect x="0.5" y="0.5" width="295" height="51" rx="12" fill="url(#bg)" stroke="#E07BFF" stroke-opacity="0.45"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linejoin="round" transform="translate(18 12) scale(1.15)">
     <path d="M12 21s-8.5-5.2-8.5-11.2A4.8 4.8 0 0 1 12 6.6a4.8 4.8 0 0 1 8.5 3.2C20.5 15.8 12 21 12 21z"/>
   </g>
-  <text x="48" y="28" fill="#FFFFFF" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700">Support Hybrid Launcher</text>
+  <text x="56" y="32.5" fill="#FFFFFF" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="17.5" font-weight="700">Support Hybrid Launcher</text>
 </svg>
