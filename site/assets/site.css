@@ -231,9 +231,7 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 .discord-banner:hover { color: #fff; transform: translateY(-3px); box-shadow: 0 24px 70px rgba(88, 101, 242, .42), inset 0 1px 0 rgba(255,255,255,.25); }
 .discord-logo { width: 72px; height: 55px; flex: none; fill: #fff; }
 .discord-text { flex: 1; min-width: 0; }
-.discord-banner .eyebrow { color: rgba(255,255,255,.75); margin-bottom: 6px; }
-.discord-banner h2 { font-size: clamp(24px, 2.6vw, 32px); margin: 0 0 6px; }
-.discord-banner p { margin: 0; color: #e3e5ff; font-size: 16.5px; }
+.discord-banner h2 { font-size: clamp(24px, 2.6vw, 32px); margin: 0; }
 .discord-join { flex: none; padding: 12px 20px; border-radius: 11px; background: #fff; color: #3b44c4; font-weight: 700; transition: transform .25s var(--ease); }
 .discord-banner:hover .discord-join { transform: translateX(3px); }
 @media (max-width: 720px) {
