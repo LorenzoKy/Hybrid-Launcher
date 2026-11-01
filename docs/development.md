@@ -49,6 +49,8 @@ runs beside the normal one. Put a `settings.json` there with `"Language": "en"` 
 - `HybridLauncher.exe --selftest` opens every game, tab, view, page and theme, then closes; the log's last line counts the
   failures. `HL_SHOTS=<folder>` saves a picture of the window after every step, `HL_SELFTEST_ONLY=downloads,settings` runs
   only the steps starting with those words, `HL_SAMPLE_DOWNLOADS=1` adds pretend downloads.
+- `HL_SYSTEM_FORMAT=<culture>` pretends Windows' regional format is another one (`hi-IN`, `th-TH`, `ar-SA`): the self-test
+  should pass under any of them, since the app always runs in en-US, en-GB or it-IT (`L.Formats`).
 - `HL_UPDATE_FEED=<file or URL>` replaces GitHub's `releases/latest` for the update check (a JSON in GitHub's format).
 
 ## Smoke tests

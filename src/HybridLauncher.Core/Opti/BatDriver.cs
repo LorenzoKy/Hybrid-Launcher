@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -27,10 +28,29 @@ public static partial class BatDriver
     [GeneratedRegex(@"\.\s\.\s\.\s*$")]
     private static partial Regex PausePrompt(); // "Press any key to continue . . ." in any language
 
-    public static async Task<BatResult> RunAsync(string batFile, OptiSetupOptions options, Action<string>? onLine, CancellationToken ct)
+    [DllImport("kernel32.dll")] static extern uint GetOEMCP();
+
+    /// <summary>
+    /// The encoding cmd writes in when its output is a pipe: the system's OEM code page (GetOEMCP), not the user's regional
+    /// format. Formats Windows has only in Unicode (Hindi, Georgian, Armenian, ...) have no OEM code page and report 1
+    /// (CP_OEMCP), which .NET cannot open: issue #1. UTF-8 for any code page .NET does not know.
+    /// </summary>
+    public static Encoding OutputEncoding(int codePage)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        var oem = Encoding.GetEncoding(L.SystemCulture.TextInfo.OEMCodePage);
+        // 0..3 are Windows' "use the default" placeholders (CP_ACP, CP_OEMCP, CP_MACCP, CP_THREAD_ACP), not code pages.
+        if (codePage > 3)
+        {
+            try { return Encoding.GetEncoding(codePage); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { }
+        }
+        Log.Warn($"Setup bat: code page {codePage} is not supported, reading its output as UTF-8");
+        return new UTF8Encoding(false);
+    }
+
+    public static async Task<BatResult> RunAsync(string batFile, OptiSetupOptions options, Action<string>? onLine, CancellationToken ct)
+    {
+        var oem = OutputEncoding((int)GetOEMCP());
 
         var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
         {

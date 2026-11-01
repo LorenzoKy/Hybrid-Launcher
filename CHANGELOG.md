@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.2.0 — 2026-11-01 · Glass and fixes
+
+**Hybrid Launcher 1.2** gives the game page a new launch bar, shows an Update button when a new version is out, and makes OptiScaler install on every Windows, whatever its
+language and regional format. If you already have 1.1, the app offers this update by itself a few seconds after it starts.
+
+### ✨ New
+
+- **A new launch bar.** On a game's page, the bar with Play, the play time and the buttons is now a floating pane of frosted
+  glass with rounded corners, a little inside the banner. Its light blur keeps the shapes and colours of the game's art,
+  and a neutral dark tint keeps the text readable on any picture. The fade at the bottom of the banner is softer, so the
+  art shows more.
+- **An Update button in the title bar.** When a newer version of Hybrid Launcher is out, a small blue *Update* button
+  appears beside Minimize, and stays there until you install it, even if you chose *Later*. One click opens the update.
+
+### 🐞 Fixed
+
+- **OptiScaler would not install with some Windows regional formats.** With a format Windows has only in Unicode (Hindi,
+  Bengali, Tamil, Punjabi, Georgian, Armenian, Amharic and others), every install (stable, nightly or a custom build)
+  stopped at once with *"1 is not a supported code page"*. The setup script's output is now read in the code page Windows
+  really uses for it, and in UTF-8 if that one is unknown.
+- **Every other feature is kept out of the same kind of problem.** Whatever the regional format in Windows (another calendar
+  such as Thai or Persian, other digits, separators changed in Control Panel), the app shows dates and numbers in US
+  English, British English or Italian, the formats it is tested in.
+
 ## 1.1.0 — 2026-11-01 · Make it yours
 
 **Hybrid Launcher 1.1** lets you keep only the features you need, adds custom upscaler dlls for OptiScaler, game renaming

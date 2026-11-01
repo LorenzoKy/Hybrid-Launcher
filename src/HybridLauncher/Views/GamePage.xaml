@@ -61,8 +61,9 @@
                     <Rectangle.Fill>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                             <GradientStop Color="#00000000" Offset="0.62" />
-                            <GradientStop Color="#55000000" Offset="0.82" />
-                            <GradientStop Color="#B0000000" Offset="1" />
+                            <GradientStop Color="#1A000000" Offset="0.72" />
+                            <GradientStop Color="#1A000000" Offset="0.95" />
+                            <GradientStop Color="#D8000000" Offset="1" />
                         </LinearGradientBrush>
                     </Rectangle.Fill>
                 </Rectangle>
@@ -146,12 +147,14 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- 2. Launch bar: the bottom of the art seen through dark frosted glass (strongly blurred, so white text keeps its
-                     contrast on any art), as in Steam's library; always dark. Minimal like Steam and Hydra: its buttons are light
-                     see-through faces (see LaunchGrid's resources) and the play stats sit on the glass itself. -->
-                <Border x:Name="LaunchBar" Grid.Row="1" RequestedTheme="Dark" Padding="20,12,20,10">
+                <!-- 2. Launch bar: a floating pane of frosted glass over the bottom of the art, drawn as Hydra draws its hero panel
+                     (backdrop-filter: blur(10px) under rgba(0, 0, 0, 0.6)): a light blur that keeps the art's shapes, its colours
+                     as they are, and a flat neutral black that keeps white text readable on any art. Always dark; rounded and
+                     floating, so it blends into the banner. Its buttons are light see-through faces (see LaunchGrid's resources)
+                     and the play stats sit on the glass itself. -->
+                <Border x:Name="LaunchBar" Grid.Row="1" RequestedTheme="Dark" Padding="20,12,20,10" Margin="14,0,14,12" CornerRadius="18">
                     <Border.Background>
-                        <helpers:GlassBrush Tint="#7A0A0B0E" Blur="40" />
+                        <helpers:GlassBrush Tint="#99000000" Blur="10" Saturation="1" />
                     </Border.Background>
                     <StackPanel Spacing="6">
                         <!-- Every item takes only the room it needs; the free space sits between the arguments and the buttons on the right. -->

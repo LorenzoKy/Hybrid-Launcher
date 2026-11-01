@@ -25,11 +25,17 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     public static readonly DependencyProperty BlurProperty = DependencyProperty.Register(nameof(Blur), typeof(double), typeof(GlassBrush),
         new PropertyMetadata(18.0, (d, _) => ((GlassBrush)d).Update()));
 
+    public static readonly DependencyProperty SaturationProperty = DependencyProperty.Register(nameof(Saturation), typeof(double), typeof(GlassBrush),
+        new PropertyMetadata(1.15, (d, _) => ((GlassBrush)d).Update()));
+
     /// <summary>The colour laid over the blur; its alpha is how much of the blurred picture still shows.</summary>
     public Color Tint { get => (Color)GetValue(TintProperty); set => SetValue(TintProperty, value); }
 
     /// <summary>The blur radius in pixels.</summary>
     public double Blur { get => (double)GetValue(BlurProperty); set => SetValue(BlurProperty, value); }
+
+    /// <summary>How much the blurred picture's colours are boosted (1 = as they are, like a CSS backdrop blur).</summary>
+    public double Saturation { get => (double)GetValue(SaturationProperty); set => SetValue(SaturationProperty, value); }
 
     public GlassBrush() => FallbackColor = Color.FromArgb(0xE0, 0x1C, 0x1D, 0x22);
 
@@ -58,7 +64,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
                     {
                         new SaturationEffect
                         {
-                            Saturation = 1.15f,
+                            Name = "Saturation", Saturation = 1.15f,
                             Source = new GaussianBlurEffect
                             {
                                 Name = "Blur", BlurAmount = 18, BorderMode = EffectBorderMode.Hard,
@@ -71,7 +77,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
                         new ColorSourceEffect { Name = "Tint", Color = Tint },
                     },
                 };
-                _factory = compositor.CreateEffectFactory(graph, ["Blur.BlurAmount", "Tint.Color"]);
+                _factory = compositor.CreateEffectFactory(graph, ["Blur.BlurAmount", "Saturation.Saturation", "Tint.Color"]);
                 _factoryCompositor = compositor;
             }
             var brush = _factory.CreateBrush();
@@ -96,6 +102,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     {
         if (CompositionBrush is not CompositionEffectBrush brush) return;
         brush.Properties.InsertScalar("Blur.BlurAmount", (float)Blur);
+        brush.Properties.InsertScalar("Saturation.Saturation", (float)Saturation);
         brush.Properties.InsertColor("Tint.Color", Tint);
     }
 }

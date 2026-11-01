@@ -767,6 +767,54 @@ switch (cmd)
         Check(BatDriver_Decide("Premere un tasto per continuare . . . ", o) == "", "localized pause -> Enter");
         Check(BatDriver_Decide("Something new?\nWaiting - ", o, expectUnknown: true) is null, "unknown question is refused");
         Check(BatDriver_Decide("Choose a filename for OptiScaler", o) is null, "partial output waits");
+        // Issue #1: regional formats Windows has only in Unicode (Hindi, Georgian, ...) report OEM code page 1, which .NET cannot open.
+        foreach (var name in new[] { "hi-IN", "ka-GE", "hy-AM" })
+        {
+            var cp = System.Globalization.CultureInfo.GetCultureInfo(name).TextInfo.OEMCodePage;
+            Check(BatDriver.OutputEncoding(cp).CodePage == 65001, $"{name} (OEM code page {cp}) -> UTF-8, no exception");
+        }
+        Check(BatDriver.OutputEncoding(0).CodePage == 65001, "code page 0 (CP_ACP) -> UTF-8");
+        Check(BatDriver.OutputEncoding(437).CodePage == 437 && BatDriver.OutputEncoding(850).CodePage == 850, "OEM 437 and 850 kept");
+        Check(BatDriver.OutputEncoding(65001).CodePage == 65001, "UTF-8 system code page kept");
+        Check(BatDriver.OutputEncoding(99999).CodePage == 65001, "unknown code page -> UTF-8");
+        {
+            // The bat itself under a Unicode-only format: it runs and its pause is answered.
+            var saved = System.Globalization.CultureInfo.CurrentCulture;
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("hi-IN");
+            var batDir = Path.Combine(Path.GetTempPath(), "hl-codepage-bat");
+            ArchiveExtractor.ResetDir(batDir);
+            var bat = Path.Combine(batDir, "setup_windows.bat");
+            File.WriteAllText(bat, "@echo off\r\necho Setup started\r\npause\r\necho Setup done\r\n");
+            try
+            {
+                var r = await BatDriver.RunAsync(bat, o, null, CancellationToken.None);
+                Check(r.Completed && r.Transcript.Contains("Setup done"), $"bat runs under hi-IN ({r.Failure ?? "ok"})");
+            }
+            catch (Exception ex) { Check(false, $"bat runs under hi-IN: {ex.GetType().Name}: {ex.Message}"); }
+            finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
+        }
+        {
+            // Whatever Windows' format, the app runs in one it is tested in, without the user's own separators.
+            var saved = (System.Globalization.CultureInfo.CurrentCulture, System.Globalization.CultureInfo.CurrentUICulture);
+            var odd = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.GetCultureInfo("en-US").Clone();
+            odd.NumberFormat.NumberDecimalSeparator = ",";
+            foreach (var (system, setting) in new (System.Globalization.CultureInfo, string)[]
+            {
+                (System.Globalization.CultureInfo.GetCultureInfo("hi-IN"), "auto"), (System.Globalization.CultureInfo.GetCultureInfo("ka-GE"), "en"),
+                (System.Globalization.CultureInfo.GetCultureInfo("th-TH"), "en"), (System.Globalization.CultureInfo.GetCultureInfo("fa-IR"), "it"),
+                (System.Globalization.CultureInfo.GetCultureInfo("ar-SA"), "en"), (System.Globalization.CultureInfo.GetCultureInfo("tr-TR"), "en"),
+                (System.Globalization.CultureInfo.GetCultureInfo("en-ZA"), "en"), (odd, "en"),
+            })
+            {
+                System.Globalization.CultureInfo.CurrentCulture = system;
+                L.Init(setting);
+                var now = System.Globalization.CultureInfo.CurrentCulture;
+                Check(L.Formats.Contains(now.Name) && now.IsReadOnly && now.NumberFormat.NumberDecimalSeparator == (now.Name == "it-IT" ? "," : ".")
+                    && now.Calendar is System.Globalization.GregorianCalendar, $"format {system.Name}{(system == odd ? " with ',' decimals" : "")}, language {setting} -> {now.Name}");
+            }
+            (System.Globalization.CultureInfo.CurrentCulture, System.Globalization.CultureInfo.CurrentUICulture) = saved;
+            L.Init("en");
+        }
         Check(XboxScanner.PublisherId("CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US") == "8wekyb3d8bbwe", "Xbox publisher id");
         // Names: trademark signs, store tags and editions do not stop a match; a longer name is another game.
         Check(HybridLauncher.Core.Media.GameNames.Clean("Batman™: Arkham Knight") == "Batman: Arkham Knight", "clean drops ™");

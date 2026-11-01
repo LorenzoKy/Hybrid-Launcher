@@ -166,7 +166,10 @@ public sealed partial class MainWindow : Window
         OwnedLibrary.Loaded += UpdateFriendsItem;
         UpdateFriendsItem();
         MaybeStartTour();
-        // The app's own updates: a quiet look at GitHub a few seconds after start; a newer version asks once.
+        // The app's own updates: a quiet look at GitHub a few seconds after start; a newer version asks once, and the blue button
+        // beside Minimize stays until it is installed.
+        Helpers.AppUpdater.Changed += () => DispatcherQueue.TryEnqueue(UpdateUpdateButton);
+        UpdateUpdateButton();
         if (Content?.XamlRoot is { } root) _ = Helpers.AppUpdater.CheckAtStartAsync(root);
         if (SteamAccount.SignedIn) _ = Task.Delay(TimeSpan.FromSeconds(8)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => _ = (_friends ??= new FriendsView()).LoadAsync(quiet: true)), TaskScheduler.Default);
         // The cache stays within its budget (game pages load from it); in the background, once things have settled.
@@ -1256,6 +1259,17 @@ public sealed partial class MainWindow : Window
             if (!SearchHasFocus()) throw new InvalidOperationException("Ctrl+F could not put the focus in the search box");
             ContentFrame.Focus(FocusState.Programmatic);
         }, 300);
+        // The blue Update button beside Minimize: shown for a newer version (a local feed stands in for GitHub), gone without one.
+        var feed = Path.Combine(Path.GetTempPath(), "hl-selftest-feed.json");
+        var savedFeed = Environment.GetEnvironmentVariable("HL_UPDATE_FEED");
+        void Feed(string tag) => File.WriteAllText(feed, $$"""{"tag_name":"{{tag}}","body":"Self-test","html_url":"https://example.invalid","assets":[{"name":"HybridLauncher-{{tag}}-win-x64.zip","size":1,"browser_download_url":"https://example.invalid/a.zip"},{"name":"HybridLauncher-{{tag}}-win-arm64.zip","size":1,"browser_download_url":"https://example.invalid/b.zip"}]}""");
+        Environment.SetEnvironmentVariable("HL_UPDATE_FEED", feed);
+        await Step("update button: newer version out", () => { Feed("v99.0.0"); _ = Helpers.AppUpdater.CheckAsync(quiet: true); }, 1500);
+        await Step("update button shown", () => { if (UpdateButton.Visibility != Visibility.Visible) throw new InvalidOperationException("the Update button did not appear for a newer version"); }, 300);
+        await Step("update button: no newer version", () => { Feed("v0.0.1"); _ = Helpers.AppUpdater.CheckAsync(quiet: true); }, 1500);
+        await Step("update button hidden", () => { if (UpdateButton.Visibility != Visibility.Collapsed) throw new InvalidOperationException("the Update button stayed without a newer version"); }, 300);
+        Environment.SetEnvironmentVariable("HL_UPDATE_FEED", savedFeed);
+        File.Delete(feed);
         await Step("pane folded", () => Nav.IsPaneOpen = false, 500);
         await Step("pane open", () => Nav.IsPaneOpen = true, 500);
         foreach (var game in AppState.VisibleGames.ToList())
@@ -1435,6 +1449,22 @@ public sealed partial class MainWindow : Window
         double brand = TitleBrand.ActualWidth;
         PageTitle.Margin = new Thickness(besidePane ? Math.Max(24, Nav.OpenPaneLength + 20 - 18 - 8 - brand) : 24, 0, 0, 0);
         DispatcherQueue.TryEnqueue(UpdateTitleBarRegions);
+    }
+
+    /// <summary>The blue Update button: shown only while a newer version is out, with its number in the tooltip.</summary>
+    void UpdateUpdateButton()
+    {
+        var release = Helpers.AppUpdater.Available;
+        UpdateButton.Visibility = release is null ? Visibility.Collapsed : Visibility.Visible;
+        UpdateButtonText.Text = L.T("Update");
+        if (release is not null)
+            ToolTipService.SetToolTip(UpdateButton, L.F("{0} {1} is available. Click to update.", AppInfo.Name, release.Version.ToString(3)));
+    }
+
+    async void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (Helpers.AppUpdater.Available is { } release && Content?.XamlRoot is { } root)
+            await Helpers.AppUpdater.OfferAsync(root, release);
     }
 
     /// <summary>The title bar drags the window: the back button needs a pass-through area to be clickable.</summary>

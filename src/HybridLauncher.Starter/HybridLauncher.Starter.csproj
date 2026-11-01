@@ -8,7 +8,7 @@
     <AssemblyName>HybridLauncher</AssemblyName>
     <RootNamespace>HybridLauncher.Starter</RootNamespace>
     <Product>Hybrid Launcher</Product>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <ApplicationIcon>..\HybridLauncher\Assets\AppIcon.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>

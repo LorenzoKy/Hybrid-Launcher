@@ -1541,6 +1541,7 @@ static class Italian
         ["Tools for this game"] = "Strumenti per questo gioco",
         ["Turn it on and Windows HDR switches on when this game starts and off when it closes, even after a crash. When it is off, the tile shows what Windows HDR is now: On or Off."] = "Attivalo e l'HDR di Windows si accende quando il gioco parte e si spegne quando si chiude, anche dopo un crash. Quando è disattivo, il riquadro mostra lo stato attuale dell'HDR di Windows: Attivo o Disattivo.",
         ["Update available"] = "Aggiornamento disponibile",
+        ["{0} {1} is available. Click to update."] = "{0} {1} è disponibile. Fai clic per aggiornare.",
         ["Update now"] = "Aggiorna ora",
         ["Update to {0}"] = "Aggiorna a {0}",
         ["Updated to {0} {1}."] = "Aggiornato a {0} {1}.",

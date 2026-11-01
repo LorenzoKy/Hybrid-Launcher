@@ -49,6 +49,20 @@
                 </StackPanel>
             </StackPanel>
             <StackPanel x:Name="CaptionButtons" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <!-- A newer version is out: a small blue button beside Minimize, shown only then; it opens the update dialog. -->
+                <Button x:Name="UpdateButton" Visibility="Collapsed" Click="Update_Click" Height="28" Padding="10,0,12,0" Margin="0,15,8,0"
+                        VerticalAlignment="Top" CornerRadius="14" BorderThickness="0" IsTabStop="False" Foreground="White" Background="#2F6FEB">
+                    <Button.Resources>
+                        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#4A84F5" />
+                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#2459C4" />
+                        <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                        <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#E6FFFFFF" />
+                    </Button.Resources>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE896;" FontSize="12" />
+                        <TextBlock x:Name="UpdateButtonText" Text="Update" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
                 <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Click="Minimize_Click" ToolTipService.ToolTip="Minimize">
                     <FontIcon Glyph="&#xE921;" FontSize="11" />
                 </Button>
