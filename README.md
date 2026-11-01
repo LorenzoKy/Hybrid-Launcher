@@ -34,10 +34,11 @@
 
 ---
 
-## At a glance
+## What is Hybrid Launcher
 
 Hybrid Launcher is a free and open source Windows 11 app that finds the games installed on your PC, gives each one its own page, and helps
 you install a few popular mods that make them run and look better: **OptiScaler**, **ReShade**, **RenoDX** and **Luma**.
+<img width="2559" height="1390" alt="image" src="https://github.com/user-attachments/assets/f3d5303a-d989-4724-8d4f-76170061e6a7" />
 
 |  |  |
 |---|---|
@@ -94,6 +95,8 @@ together, and offers them as **one alternative**.
 - **My PC.** Your graphics card, processor, memory and drives at a glance, displays and Windows' gaming switches, and the versions of the upscalers and frame generation your graphics driver provides.
 - **And more.** Desktop shortcuts, start with Windows, tray mode, a controller-friendly window, a welcome tour, self-updates
   with one confirmation, and a one-click bug report.
+  <img width="2559" height="1383" alt="image" src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" />
+
 
 Every feature is explained in the [user guide](docs/user-guide.md).
 
