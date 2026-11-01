@@ -541,6 +541,12 @@ public sealed partial class MainWindow : Window
     void GuardSearchFocus()
     {
         ContentFrame.IsTabStop = true;
+        // Every page change, not only a click in the pane: a page left with a focused control in it (a download's pause button)
+        // otherwise handed the focus to the search box. Who had the focus is read when the change starts, but the focus is moved
+        // only once the new page is in: moving it while the frame swapped pages crashed the app now and then.
+        bool searchHadFocus = false;
+        ContentFrame.Navigating += (_, _) => searchHadFocus = SearchHasFocus();
+        ContentFrame.Navigated += (_, _) => KeepFocusOffSearch(searchHadFocus);
         SearchBox.GettingFocus += (_, e) =>
         {
             bool byUser = e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Mouse or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Touch or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Pen

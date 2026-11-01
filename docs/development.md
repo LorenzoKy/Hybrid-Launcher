@@ -8,7 +8,7 @@ src/HybridLauncher          WinUI 3 app (unpackaged, self-contained); the exe is
 src/HybridLauncher.Starter  the small exe at the top of the published folder; it starts app\HybridLauncher.exe
 tests/HybridLauncher.Smoke  console checks against real Windows and network, one command per area
 data/                       files the installed apps read from this repository (tech-versions.json)
-docs/                       user and developer documentation
+docs/                       user and developer documentation (crashes.md, version-history.md)
 site/                       the website, published to GitHub Pages by .github/workflows/pages.yml
 .github/                    issue templates and workflows
 ```
@@ -83,6 +83,9 @@ The app updates itself from GitHub Releases, so a release must follow these rule
 
 The app picks the asset whose name ends in `.zip` and contains its processor's runtime (`win-x64` / `win-arm64`), so keep
 those names.
+4. Before releasing, run the self-test **several times** (crashes that show up 1 time in 10 hide in a single run), and
+   afterwards add the version to [version-history.md](version-history.md): source, toolchain, package size and SHA-256,
+   and the checks it passed. Every crash found goes in [crashes.md](crashes.md) with its cause and fix.
 
 ## Technology versions (My PC)
 

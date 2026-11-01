@@ -22,69 +22,109 @@
   <a href="https://lorenzoky.github.io/Hybrid-Launcher/"><img alt="Website" src="https://img.shields.io/badge/website-lorenzoky.github.io-555" /></a>
 </p>
 
-<p align="center">
-  <a href="#at-a-glance">At a glance</a> ·
-  <a href="#features">Features</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#faq">FAQ</a> ·
-  <a href="#reporting-bugs-and-requesting-features">Report a bug</a> ·
-  <a href="#support-the-project">Support</a> ·
-  <a href="#disclaimer">Disclaimer</a>
-</p>
+<a id="compass"></a>
+
+## Compass
+
+Jump straight to what you need.
+
+| 🚀 Get going | 🎮 What it does | 🤝 Help and community | 📜 The fine print |
+|---|---|---|---|
+| [What is it?](#what-is-hybrid-launcher) | [Your games](#your-games) | [FAQ](#faq) | [Third-party software](#third-party-software) |
+| [Quick start](#quick-start) | [Mods](#mods) | [Report a bug](#reporting-bugs-and-requesting-features) | [License](#license) |
+| [Requirements](#requirements) | [Extras](#extras) | [Support the project](#support-the-project) | [Disclaimer](#disclaimer) |
+| [Documentation](#documentation) | [Make it yours](#make-it-yours) | [Get in touch](#get-in-touch) | [For developers](#for-developers) |
 
 ---
 
 ## What is Hybrid Launcher
 
-Hybrid Launcher is a free and open source Windows 11 app that finds the games installed on your PC, gives each one its own page, and helps
-you install a few popular mods that make them run and look better: **OptiScaler**, **ReShade**, **RenoDX** and **Luma**.
-<img width="2559" height="1390" alt="image" src="https://github.com/user-attachments/assets/f3d5303a-d989-4724-8d4f-76170061e6a7" />
+A free and open source Windows 11 app that **finds the games installed on your PC**, gives each one **its own page**, and
+helps you install a few popular mods that make them run and look better: **OptiScaler**, **ReShade**, **RenoDX** and
+**Luma**.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f3d5303a-d989-4724-8d4f-76170061e6a7" width="100%" alt="A game's page in Hybrid Launcher: the game list on the left, the banner, the launch bar with Play, HDR and Cloud, the tabs and the store details" />
+  <br /><sub>A game's page: Play, Smart HDR, cloud saves, its folders and a tab for each mod tool.</sub>
+</p>
 
 |  |  |
 |---|---|
-| **One library** | Steam, Epic Games, GOG, Xbox / Game Pass and your own folders, in one list |
-| **Mods, the official way** | Each mod through its own installer (OptiScaler's `setup_windows.bat`, ReShade's setup), answered for you |
-| **Launcher features** | Play time, cloud saves, Smart HDR, achievements, direct downloads from your store accounts |
-| **Yours to shape** | Tabs, launch bar, banner, groups and colours can be toggled, dragged and hidden |
-| **Portable** | One zip, no installer; settings in `%LOCALAPPDATA%\HybridLauncher` |
+| 📚 **One library** | Steam, Epic Games, GOG, Xbox / Game Pass and your own folders, in one list |
+| 🧩 **Mods, the official way** | Each mod through its own installer (OptiScaler's `setup_windows.bat`, ReShade's setup), answered for you |
+| ▶️ **Launcher features** | Play time, cloud saves, Smart HDR, achievements, direct downloads from your store accounts |
+| 🎨 **Yours to shape** | Pick the features you want; tabs, launch bar, banner, groups and colours can be toggled, dragged and hidden |
+| 📦 **Portable** | One zip, no installer; settings in `%LOCALAPPDATA%\HybridLauncher` |
 
-It is *hybrid* in two ways: it brings several stores into one library, and it mixes a launcher (play, download, update, cloud
-saves) with a modding tool (upscalers, frame generation, HDR mods, shaders).
+It is *hybrid* in two ways: it brings **several stores into one library**, and it mixes **a launcher** (play, download,
+update, cloud saves) **with a modding tool** (upscalers, frame generation, HDR mods, shaders).
 
 ### Why this project?
 
-Modern PC gaming is getting overwhelming for anyone who wants the best experience out of their games. The best tools are
-external programs and mods, each with its own installer, its own folders and its own rules: many paths to remember, create
-and manage, spread over half a dozen launchers. Hybrid Launcher brings some of the main mods and the usual launcher features
-together, and offers them as **one alternative**.
+Modern PC gaming is getting overwhelming for anyone who wants the best out of their games. The best tools are external
+programs and mods, each with its own installer, folders and rules: many paths to remember, spread over half a dozen
+launchers. Hybrid Launcher brings some of the main mods and the usual launcher features together, as **one alternative**.
 
 > [!IMPORTANT]
 > **This is not a beginner-first app.** It is meant for people with some basic experience. Get familiar with the mods it
 > handles, read their wikis, and understand how they affect your game and your game folder: you will get much more out of
 > it, and you will know what is happening when something does not work.
 
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
+
+## Quick start
+
+1. **Download** `HybridLauncher-<version>-win-x64.zip` from [Releases](https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest).
+2. **Extract** it anywhere you can write, for example `C:\Games\Hybrid Launcher`.
+3. **Run** `HybridLauncher.exe`. Nothing else to install: .NET and the Windows App SDK ship inside the `app` folder.
+4. **Choose what you need** on the first start, then **pick a game**, open its OptiScaler or ReShade & Mods tab, and press
+   Install.
+
+### Requirements
+
+- **Windows 11** (or Windows 10 with the latest updates), **64-bit**.
+
+### Where things go
+
+- The folder holds `HybridLauncher.exe` to start the app and `app\` with the app and its runtime.
+- Your settings live in `%LOCALAPPDATA%\HybridLauncher`.
+- Apart from that, the app writes only into the game folders you ask it to change and the cloud places you pick for your
+  saves.
+
+### Updates
+
+The app checks for a new version a few seconds after it starts and asks once before updating. See
+[docs/updates.md](docs/updates.md).
+
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
+
 ## Features
+
+Every feature is explained in the [user guide](docs/user-guide.md).
 
 ### Your games
 
 - **One library.** Steam, Epic Games, GOG and Xbox / Game Pass, plus any exe or games folder you add. Covers, play time,
-  achievements, pins, search, filters, controller support.
+  achievements, pins, search, filters, controller support. Rename a game and the search finds both names.
 - **A page per game.** Play / Stop, last played and play time, trailer and store details, reviews, HowLongToBeat,
   PCGamingWiki fixes, links and notes.
 - **Direct downloads.** Sign in to Steam (QR code or password), Epic or GOG to list your library and download games from
-  Hybrid Launcher (some games may still need their store's own app to run). Pause and resume, and updates that download only
-  what changed and are designed to leave your mods in place.
+  Hybrid Launcher (some games may still need their store's own app to run). Pause and resume, and updates that download
+  only what changed and are designed to leave your mods in place.
 - **Cloud saves.** Your saves synced to **OneDrive** (through Windows' OneDrive app), **MEGA**, a folder of your choice, or
   more than one at once, with history, restore of older copies and conflict handling.
 
 ### Mods
 
 - **OptiScaler, made easy.** A quick panel for the settings you change most, configuration profiles, and new versions
-  fetched from GitHub by themselves. Custom builds are supported too, and every version is saved, listed and one click away.
+  fetched from GitHub by themselves. Custom builds are supported too, and every version is saved, listed and one click
+  away.
+- **Custom DLLs.** Extra FSR, DLSS or DLSSG dlls for OptiScaler (nightly), kept in one shared folder and turned on per
+  game; pick them by name in OptiScaler's upscaler or frame generation list.
 - **ReShade, RenoDX, Luma.** ReShade's own installers (with or without add-on support, loadable through OptiScaler), RenoDX
   HDR mods matched to the game when one exists, Luma mods. Removal keeps your presets.
-- **Backup or replace.** For the game files a mod replaces: back them up first (the default), just replace them, or be asked
-  at each install.
+- **Backup or replace.** For the game files a mod replaces: back them up first (the default), just replace them, or be
+  asked at each install.
 - **Smart HDR.** Turn it on for a game and Windows HDR switches **on when the game starts and off when it closes**.
 
 ### Extras
@@ -92,29 +132,24 @@ together, and offers them as **one alternative**.
 - **Custom achievements.** Rarity, a platinum trophy at 100 %, and an **achievement pop-up you design**: position, screen,
   size, colour, background, opacity, time on screen, sound.
 - **Quick access.** Your own shortcuts per game: folders, tools, config files, one click away from the game page.
-- **My PC.** Your graphics card, processor, memory and drives at a glance, displays and Windows' gaming switches, and the versions of the upscalers and frame generation your graphics driver provides.
+- **My PC.** Your graphics card, processor, memory and drives at a glance, displays and Windows' gaming switches, and the
+  versions of the upscalers and frame generation your graphics driver provides.
 - **And more.** Desktop shortcuts, start with Windows, tray mode, a controller-friendly window, a welcome tour, self-updates
   with one confirmation, and a one-click bug report.
-  <img width="2559" height="1383" alt="image" src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" />
 
+### Make it yours
 
-Every feature is explained in the [user guide](docs/user-guide.md).
+- **Choose what you need.** On the first start, pick a starting point (*Everything*, *No achievements*, *OptiScaler +
+  ReShade*, *Only OptiScaler* or *Just a launcher*) or switch single features on and off. What you leave out is only
+  hidden, and **Settings → Features** brings it back any time.
+- **Your layout.** Tabs, launch bar, banner, groups and colour themes can be toggled, dragged and hidden.
 
-## Quick start
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" width="100%" alt="The first-start picker in Hybrid Launcher: five starting points, a live preview of a game's page, and a switch for each feature" />
+  <br /><sub>Choose what you need: a starting point, a live preview, and a switch for each feature.</sub>
+</p>
 
-1. **Download** `HybridLauncher-<version>-win-x64.zip` from [Releases](https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest).
-2. **Extract** it anywhere you can write, for example `C:\Games\Hybrid Launcher`.
-3. **Run** `HybridLauncher.exe`. Nothing else to install: .NET and the Windows App SDK ship inside the `app` folder.
-4. **Pick a game**, open its OptiScaler or ReShade & Mods tab, and press Install.
-
-**Requirements:** Windows 11 (or Windows 10 with the latest updates), 64-bit.
-
-**Where things go:** the folder holds `HybridLauncher.exe` to start the app and `app\` with the app and its runtime. Your
-settings live in `%LOCALAPPDATA%\HybridLauncher`; apart from that, the app writes only into the game folders you ask it to
-change and the cloud places you pick for your saves.
-
-**Updates:** the app checks for a new version a few seconds after it starts and asks once before updating. See
-[docs/updates.md](docs/updates.md).
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
 
 ## FAQ
 
@@ -153,6 +188,22 @@ online or competitive games that do not allow them.
 
 More answers in [FAQ and troubleshooting](docs/faq.md).
 
+## Documentation
+
+| Guide | What is in it |
+|---|---|
+| [Getting started](docs/getting-started.md) | First start, the welcome tour, adding games |
+| [User guide](docs/user-guide.md) | Library, game pages, OptiScaler, mods, downloads, My PC, settings |
+| [Cloud saves](docs/cloud-saves.md) | OneDrive, MEGA or a folder, one or several; how syncing and conflicts work |
+| [Updates](docs/updates.md) | How the app updates itself |
+| [Privacy and data](docs/privacy.md) | What is stored, where, and what is sent where |
+| [FAQ and troubleshooting](docs/faq.md) | Common questions, logs for bug reports |
+| [Get in touch](SUPPORT.md) | E-mail and Discord for collaborations and business enquiries, issues |
+| [Contributing](CONTRIBUTING.md) | Joining as a contributor or maintainer |
+| [Changelog](CHANGELOG.md) | What changed in each version |
+
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
+
 ## Reporting bugs and requesting features
 
 > [!WARNING]
@@ -168,12 +219,17 @@ More answers in [FAQ and troubleshooting](docs/faq.md).
 > Please respect this choice. **Reports and requests are only considered when the description is detailed, understandable
 > and makes sense, with logs and screenshots.** Anything else will be ignored, permanently.
 
-**The quickest way to report a bug:** in the app, **Settings → About → Report on GitHub**. It opens the bug form with the
-version, your system and the end of the log already filled in, and shows the whole log file in Explorer to drag in. Your
-Windows user name, PC name and e-mail addresses are taken out of the log first, and nothing is sent until you submit.
+**The quickest way:** in the app, **Settings → About → Report on GitHub**.
 
-Otherwise, open an issue from the [templates](https://github.com/LorenzoKy/Hybrid-Launcher/issues/new/choose). Logs are in
-`%LOCALAPPDATA%\HybridLauncher\logs`: one file per session of the app, named after the date and time it started.
+- It opens the bug form with the version, your system and the end of the log already filled in.
+- It shows the whole log file in Explorer, ready to drag in.
+- Your Windows user name, PC name and e-mail addresses are taken out of the log first, and nothing is sent until you
+  submit.
+
+**Otherwise,** open an issue from the [templates](https://github.com/LorenzoKy/Hybrid-Launcher/issues/new/choose). Logs are
+in `%LOCALAPPDATA%\HybridLauncher\logs`: one file per session of the app, named after the date and time it started.
+
+### Get in touch
 
 For collaborations and business enquiries (not bug reports), write to
 [lorenzoillumino@gmail.com](mailto:lorenzoillumino@gmail.com) or to **LorenzoKy** on Discord.
@@ -185,6 +241,19 @@ Hybrid Launcher is **free**. For now it is funded **only out of my own pocket, a
 
 You can support it on [Ko-fi](https://ko-fi.com/lorenzoky), from the button at the top of this page or the **Sponsor**
 button of this repository.
+
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
+
+## For developers
+
+```bash
+dotnet build src/HybridLauncher/HybridLauncher.csproj -c Release -p:Platform=x64
+```
+
+Needs the .NET 10 SDK on Windows. The repository layout, tests and the release process are in
+[docs/development.md](docs/development.md); how to join in is in [CONTRIBUTING.md](CONTRIBUTING.md). How each version
+was built is in [docs/version-history.md](docs/version-history.md), and every crash found with its fix in
+[docs/crashes.md](docs/crashes.md).
 
 ## Third-party software
 
@@ -207,29 +276,6 @@ problems with one of them belong to its own project, not here.
 Hybrid Launcher is not affiliated with Valve, Epic Games, GOG, Microsoft, AMD, NVIDIA, Intel or any of the projects
 above. All trademarks belong to their owners. Signing in to a store with a third-party app may be against that store's terms
 in some cases: check them, the choice is yours.
-
-## Documentation
-
-| Guide | What is in it |
-|---|---|
-| [Getting started](docs/getting-started.md) | First start, the welcome tour, adding games |
-| [User guide](docs/user-guide.md) | Library, game pages, OptiScaler, mods, downloads, My PC, settings |
-| [Cloud saves](docs/cloud-saves.md) | OneDrive, MEGA or a folder, one or several; how syncing and conflicts work |
-| [Updates](docs/updates.md) | How the app updates itself |
-| [Privacy and data](docs/privacy.md) | What is stored, where, and what is sent where |
-| [FAQ and troubleshooting](docs/faq.md) | Common questions, logs for bug reports |
-| [Get in touch](SUPPORT.md) | E-mail and Discord for collaborations and business enquiries, issues |
-| [Contributing](CONTRIBUTING.md) | Joining as a contributor or maintainer |
-| [Changelog](CHANGELOG.md) | What changed in each version |
-
-## For developers
-
-```bash
-dotnet build src/HybridLauncher/HybridLauncher.csproj -c Release -p:Platform=x64
-```
-
-Needs the .NET 10 SDK on Windows. The repository layout, tests and the release process are in
-[docs/development.md](docs/development.md).
 
 ## License
 
@@ -263,6 +309,8 @@ Third-party libraries and mods keep their own licenses.
   the points above apply.
 
 If you do not agree with all of the above, do not use Hybrid Launcher.
+
+<p align="right"><sub><a href="#compass">↑ Back to the compass</a></sub></p>
 
 ---
 

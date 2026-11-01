@@ -1,9 +1,9 @@
 # Changelog
 
-## 1.1.0-rc.1 — 2026-11-01 · Release candidate
+## 1.1.0 — 2026-11-01 · Make it yours
 
-The first test build of 1.1. It is a pre-release: the app's own updates do not offer it to 1.0 users, and once 1.1.0 is
-out this build updates to it by itself.
+**Hybrid Launcher 1.1** lets you keep only the features you need, adds custom upscaler dlls for OptiScaler, game renaming
+and two new dark themes. If you already have 1.0, the app offers this update by itself a few seconds after it starts.
 
 ### ✨ New
 
@@ -26,6 +26,7 @@ out this build updates to it by itself.
   renamed dll); pick it in OptiScaler's upscaler or FG list. Renaming an entry renames it in every game, and OptiScaler.ini
   settings that picked it follow the new name. A folder already laid out for OptiScaler, or an old `Extra dlls\4.0.3`
   folder, can be added as it is. Uninstalling OptiScaler takes the files out too.
+  → [User guide, OptiScaler](docs/user-guide.md#optiscaler)
 - **Two new colour themes: Dark and Venom.** *Dark* is a plain near-black background with a soft silver accent, *Venom* a
   deep purple night. Both are always dark.
 
@@ -35,12 +36,11 @@ out this build updates to it by itself.
   Hybrid (Graphite to Dark).
 - The launch bar's **HDR** and **Cloud** buttons show a plain coloured icon, like the folder buttons beside them: the sun
   in an amber-to-pink sweep for Smart HDR, the cloud in blue while your saves sync.
-- Custom DLLs: a shorter description, and a folder icon on each entry.
 
 ### 🐞 Fixed
 
-- Custom DLLs: renaming an entry by changing only upper and lower case now renames it in the game too, so it matches
-  OptiScaler.ini exactly.
+- The game list's search box no longer takes the focus (and looks clicked) after you leave the Downloads page, or any page
+  opened from a button rather than from the list.
 
 ## 1.0.0 — 2026-10-31 · The first release
 

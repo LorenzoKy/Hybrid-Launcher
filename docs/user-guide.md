@@ -15,8 +15,10 @@ Cloud saves have their own page: [cloud-saves.md](cloud-saves.md).
 ## The library
 
 - **Side list**: your installed games grouped by launcher (Steam, Epic, GOG, Xbox, your games folders). Click a heading to fold
-  it, drag it to change the order. Pinned games sit on top. Right-click a game for Play, pin, open its folder, hide or
-  uninstall. A green dot marks a game that is running.
+  it, drag it to change the order. Pinned games sit on top. Right-click a game for Play, pin, rename, open its folder, hide
+  or uninstall. A green dot marks a game that is running.
+- **Rename a game**: right-click it → *Rename…*. The new name shows everywhere in the app and the search finds both names;
+  the store name stays underneath, so the wikis and store pages still find the game. Empty the name to go back.
 - **Search** filters the side list as you type (**Ctrl+F** jumps to it); the funnel button beside it sorts and filters.
 - **Library** (grid): the same games as covers, with tags for play time, OptiScaler, upscalers (DLSS, FSR, XeSS), frame
   generation and achievements. The trophy turns platinum once every achievement is unlocked. The zoom slider sets the cover
@@ -78,6 +80,11 @@ game runs.
 - **OptiScaler settings**: every OptiScaler.ini key as switches, sliders and lists with plain names. Your choices are applied
   again after every reinstall or update; profiles carry a set of settings to other games.
 - **ASI plugins**: one shared folder; switch a plugin on for a game and it is copied into its install.
+- **Custom DLLs** (OptiScaler nightly): extra FSR, DLSS or DLSSG dlls, kept in one shared folder as **entries**. Each entry
+  is a folder whose name is the one OptiScaler's menu shows, and can hold an FFX upscaler for DX12 and Vulkan, a DLSS runtime
+  and a DLSSG replacement. Turn an entry on for a game and it is copied into OptiScaler's own `custom` folder; then pick it by
+  name in OptiScaler's upscaler or FG list. From each dll's menu you can rename it, change its kind or move it to another
+  entry; renaming an entry renames it in every game and in OptiScaler.ini.
 - **Release notes**: what each version changed, as on GitHub.
 
 ## ReShade, RenoDX and Luma
@@ -133,7 +140,7 @@ which game. The app only reads the list; it never changes your online status.
 
 ## Settings
 
-- **Appearance**: colour themes (the *Hybrid* theme uses the logo's crimson), your own colours, Material colours, where icons
+- **Appearance**: colour themes (the *Hybrid* theme uses the logo's crimson; *Dark* and *Venom* are always dark), your own colours, Material colours, where icons
   show, what the game page shows.
 - **Features**: **Choose features** (the first-start picker again: keep everything, or only OptiScaler, OptiScaler +
   ReShade, no achievements, just a launcher, or your own mix), close to the notification area, start with Windows, the
