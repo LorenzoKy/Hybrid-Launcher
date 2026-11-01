@@ -85,6 +85,13 @@ switch (cmd)
         Check(!Directory.Exists(Path.Combine(opti, "custom", "Smoke FSR")) && File.Exists(Path.Combine(opti, "custom", "Smoke FSR 4.0.3", "ffx", "amd_fidelityfx_upscaler_dx12.dll")), "renamed entry renamed in the game");
         Check(HybridLauncher.Core.Ini.IniDocument.Load(Path.Combine(game, "OptiScaler.ini")).Get("Upscalers", "Dx12Upscaler") == "Smoke FSR 4.0.3", "Dx12Upscaler follows the new name");
 
+        // A rename that only changes case reaches the game's folder too, so it matches OptiScaler.ini exactly.
+        CustomDlls.RenameEntry("Smoke FSR 4.0.3", "SMOKE FSR 4.0.3");
+        CustomDlls.Sync(m, ["SMOKE FSR 4.0.3"]);
+        Check(Directory.GetDirectories(Path.Combine(opti, "custom")).Select(Path.GetFileName).Contains("SMOKE FSR 4.0.3") && m.CustomDlls.Keys.Single() == "SMOKE FSR 4.0.3", "case-only rename follows in the game");
+        CustomDlls.RenameEntry("SMOKE FSR 4.0.3", "Smoke FSR 4.0.3");
+        CustomDlls.Sync(m, ["Smoke FSR 4.0.3"]);
+
         // A custom folder of the user's own stays; turning the entry off and uninstalling leave nothing of ours.
         var foreign = Path.Combine(opti, "custom", "Mine", "dlss", "nvngx.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);

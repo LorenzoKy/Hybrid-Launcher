@@ -32,6 +32,7 @@ public sealed partial class GamePage
         bool busy = CloudSync.IsBusy(game.Id);
         CloudRing.IsActive = busy;
         CloudRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        CloudGlyph.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
         if (busy)
         {
             CloudStateText.Text = L.T("Syncing…");
@@ -53,7 +54,6 @@ public sealed partial class GamePage
         if (ask != _cloudAsk || game != _game) return;
         _cloud = status;
         bool lit = status.State is CloudState.Synced or CloudState.ChangedHere or CloudState.ChangedInCloud or CloudState.NotUploaded;
-        CloudIcon.Background = new SolidColorBrush(lit ? Color.FromArgb(0xFF, 0x2B, 0x8F, 0xD6) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
         CloudGlyph.Glyph = status.State switch
         {
             CloudState.Conflict => "",
@@ -62,7 +62,7 @@ public sealed partial class GamePage
             CloudState.ChangedInCloud => "",
             _ => "",
         };
-        CloudGlyph.Foreground = new SolidColorBrush(status.State == CloudState.Conflict ? Ui.ToneColor(Ui.Tone.Partial) : lit ? Microsoft.UI.Colors.White : Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
+        CloudGlyph.Foreground = new SolidColorBrush(status.State == CloudState.Conflict ? Ui.ToneColor(Ui.Tone.Partial) : lit ? CloudBlue : Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
         CloudStateText.Text = status.State switch
         {
             CloudState.Off when !CloudSaves.On => L.T("Set up"),

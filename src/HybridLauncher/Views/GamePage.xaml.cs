@@ -1342,9 +1342,8 @@ public sealed partial class GamePage : Page
     void UpdateHdrToggle()
     {
         HdrToggle.IsChecked = _settings.SmartHdr;
-        // Three looks, so "Smart" stands apart: Smart (this game turns HDR on by itself) is the sun on a lit amber-to-pink plate
-        // with "Smart" in the same sweep; otherwise the tile says what Windows HDR is now: "On" on a plain amber plate, or a grey
-        // sun on a faint plate and a quiet "Off".
+        // Three looks, so "Smart" stands apart: Smart (this game turns HDR on by itself) is the sun and "Smart" in an amber-to-pink
+        // sweep; otherwise the tile says what Windows HDR is now: "On" with a plain amber sun, or a grey sun and a quiet "Off".
         bool smart = _settings.SmartHdr, windowsOn = !smart && _windowsHdrOn == true;
         var sweep = new LinearGradientBrush
         {
@@ -1357,10 +1356,8 @@ public sealed partial class GamePage : Page
                 new GradientStop { Color = Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x4F, 0xA3), Offset = 1 },
             },
         };
-        HdrIcon.Background = smart ? sweep
-            : windowsOn ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xC8, 0x3D))
-            : new SolidColorBrush(Windows.UI.Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
-        HdrGlyph.Foreground = new SolidColorBrush(smart || windowsOn ? Windows.UI.Color.FromArgb(0xFF, 0x2A, 0x14, 0x10) : Windows.UI.Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
+        HdrGlyph.Foreground = smart ? sweep
+            : new SolidColorBrush(windowsOn ? Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xC8, 0x3D) : Windows.UI.Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
         HdrToggleState.Text = smart ? L.T("Smart") : windowsOn ? L.T("On") : L.T("Off");
         HdrToggleState.Opacity = smart || windowsOn ? 1 : 0.75;
         HdrToggleState.FontWeight = smart || windowsOn ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.Normal;

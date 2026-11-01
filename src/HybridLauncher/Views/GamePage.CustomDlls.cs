@@ -60,11 +60,18 @@ public sealed partial class GamePage
         });
         ToolTipService.SetToolTip(title, L.F("OptiScaler lists it as \"{0}\" in: {1}", name, string.Join(", ", entry.Kinds.Select(CustomDlls.MenuPlace).Distinct())));
 
-        var head = new Grid { ColumnSpacing = 8 };
+        // An entry is a folder in OptiScaler's custom folder: the same yellow folder as the launch bar's game folder button.
+        var folder = new FontIcon { Glyph = "", FontSize = 18, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xC8, 0x57)), VerticalAlignment = VerticalAlignment.Center };
+        ToolTipService.SetToolTip(folder, L.T("An entry is a folder in OptiScaler's custom folder"));
+
+        var head = new Grid { ColumnSpacing = 10 };
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        head.Children.Add(folder);
+        Grid.SetColumn(title, 1);
         head.Children.Add(title);
-        Grid.SetColumn(controls, 1);
+        Grid.SetColumn(controls, 2);
         head.Children.Add(controls);
 
         var body = new StackPanel { Spacing = 6 };

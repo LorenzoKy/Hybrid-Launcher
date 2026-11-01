@@ -131,7 +131,10 @@ public static class CustomDlls
     {
         var dir = KindDir(name, kind);
         Directory.CreateDirectory(dir);
-        File.Copy(source, Path.Combine(dir, fileName), overwrite: true);
+        var to = Path.Combine(dir, fileName);
+        // Picked from the shared folder itself, already where it goes: copying a file onto itself fails.
+        if (Path.GetFullPath(source).Equals(Path.GetFullPath(to), StringComparison.OrdinalIgnoreCase)) return;
+        File.Copy(source, to, overwrite: true);
     }
 
     /// <summary>Copies a folder already laid out for OptiScaler (ffx, ffx_vk, dlss, dlssg inside) into entry <paramref name="name"/>.</summary>
@@ -248,7 +251,9 @@ public static class CustomDlls
         var root = GameFolder(m.TargetDir);
         foreach (var name in m.CustomDlls.Keys.ToList())
         {
-            if (enabled.Contains(name, StringComparer.OrdinalIgnoreCase) && Exists(name)) continue;
+            // Kept only under the exact name: after a rename that changed case alone it is copied again, so the game's folder
+            // matches the name OptiScaler.ini now has.
+            if (enabled.Contains(name, StringComparer.Ordinal) && Exists(name)) continue;
             RemoveFiles(m, m.CustomDlls[name], keep: []);
             m.CustomDlls.Remove(name);
             RemoveEmptyDirs(m, root, name);

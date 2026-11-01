@@ -264,9 +264,9 @@
                                         <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#CCFFFFFF" />
                                     </ToggleButton.Resources>
                                     <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <!-- The sun in a round plate: lit amber-to-pink while Smart HDR is on, a quiet outline while off. -->
-                                        <Border x:Name="HdrIcon" Width="30" Height="30" CornerRadius="15" BorderThickness="0" VerticalAlignment="Center">
-                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="15" />
+                                        <!-- A bare sun, like the folder buttons' glyphs: amber-to-pink while Smart HDR is on, grey while off. -->
+                                        <Border x:Name="HdrIcon" Width="22" Height="30" VerticalAlignment="Center">
+                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="18" />
                                         </Border>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock Text="HDR" FontWeight="Bold" FontSize="13" CharacterSpacing="60" />
@@ -277,11 +277,9 @@
                                 <!-- Cloud saves for this game: its state at a glance, the menu (sync now, older copies, folder) on click. -->
                                 <Button x:Name="CloudButton" Style="{StaticResource GlassButton}" VerticalAlignment="Stretch" Padding="12,4" Click="CloudButton_Click">
                                     <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <Grid Width="30" Height="30" VerticalAlignment="Center">
-                                            <Border x:Name="CloudIcon" CornerRadius="15" BorderThickness="0">
-                                                <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="15" />
-                                            </Border>
-                                            <ProgressRing x:Name="CloudRing" Width="30" Height="30" IsActive="False" Visibility="Collapsed" Foreground="#FF4FC3F7" />
+                                        <Grid Width="22" Height="30" VerticalAlignment="Center">
+                                            <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="18" />
+                                            <ProgressRing x:Name="CloudRing" Width="22" Height="22" IsActive="False" Visibility="Collapsed" Foreground="#FF4FC3F7" />
                                         </Grid>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock Text="Cloud" FontWeight="Bold" FontSize="13" CharacterSpacing="40" />
@@ -746,7 +744,7 @@
                         </Grid>
                         <StackPanel x:Name="CustomDllBody" Spacing="10">
                         <TextBlock Style="{StaticResource RowDescription}"
-                                   Text="Any FSR or DLSS upscaler dll, or a DLSSG replacement, next to the ones the game or the driver gives you (OptiScaler nightly). Each entry groups dlls under one name, the name OptiScaler's menu shows; the switch is for this game only and copies the entry into OptiScaler's custom folder. Pick it in OptiScaler's upscaler or FG list." />
+                                   Text="Extra FSR, DLSS or DLSSG dlls for OptiScaler (nightly). Turn an entry on for this game, then pick it by name in OptiScaler's upscaler or FG list." />
                         <StackPanel x:Name="CustomDllList" Spacing="4" />
                         <HyperlinkButton x:Name="CustomDllEmpty" Click="CustomDllAddFiles_Click" Padding="0">
                             <TextBlock Text="No custom dlls yet: add one" TextWrapping="Wrap" />

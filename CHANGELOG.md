@@ -33,6 +33,14 @@ out this build updates to it by itself.
 
 - The colour themes Neon city, Toxic, Crimson, Ocean, Amber and Graphite are gone. If you used one, the app switches to
   Hybrid (Graphite to Dark).
+- The launch bar's **HDR** and **Cloud** buttons show a plain coloured icon, like the folder buttons beside them: the sun
+  in an amber-to-pink sweep for Smart HDR, the cloud in blue while your saves sync.
+- Custom DLLs: a shorter description, and a folder icon on each entry.
+
+### 🐞 Fixed
+
+- Custom DLLs: renaming an entry by changing only upper and lower case now renames it in the game too, so it matches
+  OptiScaler.ini exactly.
 
 ## 1.0.0 — 2026-10-31 · The first release
 
