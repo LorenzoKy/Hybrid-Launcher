@@ -251,9 +251,7 @@ dotnet build src/HybridLauncher/HybridLauncher.csproj -c Release -p:Platform=x64
 ```
 
 Needs the .NET 10 SDK on Windows. The repository layout, tests and the release process are in
-[docs/development.md](docs/development.md); how to join in is in [CONTRIBUTING.md](CONTRIBUTING.md). How each version
-was built is in [docs/version-history.md](docs/version-history.md), and every crash found with its fix in
-[docs/crashes.md](docs/crashes.md).
+[docs/development.md](docs/development.md); how to join in is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Third-party software
 
