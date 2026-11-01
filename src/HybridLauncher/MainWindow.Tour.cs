@@ -1,3 +1,4 @@
+using HybridLauncher.Controls;
 using HybridLauncher.Core;
 using HybridLauncher.Helpers;
 using HybridLauncher.Views;
@@ -46,11 +47,17 @@ public sealed partial class MainWindow
             list.Add(new(L.T("A game's page"),
                 L.F("This is {0}'s page. Play starts the game; while it runs the same button stops it. Last played and play time are beside it.", game.Name),
                 () => TourGame?.TourPlay, () => OpenGame(game.Id)));
+            if (!PageParts.HiddenEverywhere(AppState.Settings, PageParts.Hdr))
             list.Add(new(L.T("Smart HDR"),
                 L.T("Turn it on and Windows HDR switches on when this game starts and off when it closes, even after a crash. When it is off, the tile shows what Windows HDR is now: On or Off."),
                 () => TourGame?.TourHdr));
+            // The tools the feature picker left out are not talked about.
+            bool opti = !GameTabs.HiddenEverywhere("opti"), mods = !GameTabs.HiddenEverywhere("mods");
             list.Add(new(L.T("Tools for this game"),
-                L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS; ReShade & Mods adds ReShade, RenoDX and Luma; PCGamingWiki lists the game's known fixes. Drag a tab to reorder it."),
+                opti && mods ? L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS; ReShade & Mods adds ReShade, RenoDX and Luma; PCGamingWiki lists the game's known fixes. Drag a tab to reorder it.")
+                : opti ? L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS. Drag a tab to reorder it.")
+                : mods ? L.T("Game has the overview, trailer and controller support. ReShade & Mods adds ReShade, RenoDX and Luma. Drag a tab to reorder it.")
+                : L.T("Game has the overview, trailer and controller support. Drag a tab to reorder it; Settings → Features turns the mod tools on."),
                 () => TourGame?.TourTabs));
             list.Add(new(L.T("Game settings"),
                 L.T("The gear opens the game's properties: launch options, which exe to start, desktop shortcut, files and uninstall."),
@@ -268,7 +275,7 @@ public sealed partial class MainWindow
         }
     }
 
-    /// <summary>At the first start, once the window has settled: the tour (not in the self-test, not from the tray).</summary>
+    /// <summary>At the first start, once the window has settled: the feature picker, then the tour (not in the self-test, not from the tray).</summary>
     void MaybeStartTour()
     {
         if (AppState.Settings.TourSeen || _hidden || Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase)) return;
@@ -278,7 +285,10 @@ public sealed partial class MainWindow
         timer.Tick += (t, _) =>
         {
             t.Stop();
-            if (!_closed && !_hidden && !AppState.Settings.TourSeen) StartTour();
+            if (_closed || _hidden || AppState.Settings.TourSeen) return;
+            // First the features to keep, then the tour shows only those.
+            if (!AppState.Settings.FeaturesChosen) ShowFeaturePicker(firstStart: true, StartTour);
+            else StartTour();
         };
         _tourTimer = timer;
         timer.Start();

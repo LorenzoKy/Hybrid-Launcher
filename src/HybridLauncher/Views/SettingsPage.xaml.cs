@@ -31,10 +31,10 @@ public sealed partial class SettingsPage : Page
         LoadControls();
 
         DataText.Text = AppInfo.DataRoot;
-        var version = typeof(App).Assembly.GetName().Version;
-        AboutText.Text = $"{AppInfo.Name} {version?.ToString(3)}" + (Elevation.IsAdmin ? "  " + L.T("(running as administrator)") : "");
+        AboutText.Text = $"{AppInfo.Name} {AppUpdates.DisplayVersion}" + (Elevation.IsAdmin ? "  " + L.T("(running as administrator)") : "");
         Fill();
         FillTabs();
+        ShowFeatures();
         var tab = SettingsTabs.Items.FirstOrDefault(i => i.Tag as string == S.SettingsTab) ?? SettingsTabs.Items[0];
         SettingsTabs.SelectedItem = tab;
         ShowSettingsTab(tab.Tag as string ?? "appearance");
@@ -648,6 +648,25 @@ public sealed partial class SettingsPage : Page
     void TestPopup_Click(object sender, RoutedEventArgs e) => AchievementPopup.ShowTest();
 
     void Tour_Click(object sender, RoutedEventArgs e) => App.Window?.StartTour();
+
+    /// <summary>The picker of the first start, again: what it changes shows here at once (tabs, page parts, pop-ups).</summary>
+    void Features_Click(object sender, RoutedEventArgs e) => App.Window?.ShowFeaturePicker(firstStart: false, () =>
+    {
+        _loading = true;
+        PopupToggle.IsOn = S.AchievementPopups;
+        _loading = false;
+        FillIconsAndParts();
+        FillTabs();
+        ShowFeatures();
+    });
+
+    void ShowFeatures()
+    {
+        var on = Features.Current(S);
+        FeaturesText.Text = (Features.Matching(on) is { } p ? L.T(p.Name) : L.T("Your own mix")) + " · "
+            + (on.Count == 0 ? L.T("only the launcher") : string.Join(", ", Features.All.Where(f => on.Contains(f.Id)).Select(f => L.T(f.Name))))
+            + ". " + L.T("What is left out is only hidden, nothing is uninstalled.");
+    }
 
     static void Select(ComboBox combo, string tag) =>
         combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == tag) ?? combo.Items[0];

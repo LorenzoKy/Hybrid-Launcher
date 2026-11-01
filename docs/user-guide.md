@@ -135,7 +135,9 @@ which game. The app only reads the list; it never changes your online status.
 
 - **Appearance**: colour themes (the *Hybrid* theme uses the logo's crimson), your own colours, Material colours, where icons
   show, what the game page shows.
-- **Features**: close to the notification area, start with Windows, the welcome tour, the tabs, and the **achievement
+- **Features**: **Choose features** (the first-start picker again: keep everything, or only OptiScaler, OptiScaler +
+  ReShade, no achievements, just a launcher, or your own mix), close to the notification area, start with Windows, the
+  welcome tour, the tabs, and the **achievement
   pop-up** (position, screen, size, colour, background, opacity, time on screen, sound, rarity; *Try it* shows a sample).
   **Game files a mod replaces**: back them up first (the default), just replace them, or ask at each OptiScaler or Luma
   install. Without a backup, uninstalling a mod removes its files but cannot bring back the ones it replaced.

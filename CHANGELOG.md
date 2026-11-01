@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0-rc.1 — 2026-11-01 · Release candidate
+
+The first test build of 1.1. It is a pre-release: the app's own updates do not offer it to 1.0 users, and once 1.1.0 is
+out this build updates to it by itself.
+
+### ✨ New
+
+- **Choose what you need, at the first start.** Before the welcome tour, a sheet over the window asks which features to
+  keep: *Everything*, *No achievements*, *OptiScaler + ReShade*, *Only OptiScaler* or *Just a launcher*, each with its icons,
+  a live preview of a game's page (launch bar and tabs) and a switch per feature for your own mix. What you leave out is
+  only hidden: nothing is installed or removed. The tour then talks only about what you kept.
+  → [Getting started](docs/getting-started.md#2-the-first-start)
+- **Settings → Features → Choose features** opens the same picker any time.
+- *Settings → About* shows the full version, release candidates included.
+
 ## 1.0.0 — 2026-10-31 · The first release
 
 **Welcome to Hybrid Launcher!** 🍕

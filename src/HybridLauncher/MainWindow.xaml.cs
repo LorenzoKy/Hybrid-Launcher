@@ -1251,6 +1251,11 @@ public sealed partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.PlacingHandle is { } placing and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up placing window.png"), placing);
         await Step("pop-up placing closed", AchievementPopup.CloseAll, 300);
+        for (int f = 0; f <= 7; f++)
+        {
+            int step = f;
+            await Step($"feature picker {step}", () => SelfTestFeaturePicker(step), step == 0 ? 1200 : 700);
+        }
         for (int t = 0; t <= 7; t++)
         {
             int step = t;

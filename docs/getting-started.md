@@ -11,7 +11,12 @@ Download `HybridLauncher-<version>-win-x64.zip` from
 ## 2. The first start
 
 The app scans Steam, Epic Games, GOG and Xbox / Game Pass and lists every installed game in the side list, grouped by
-launcher. Then the **welcome tour** starts. Each tip sits beside the real control it explains, and the tour opens the pages
+launcher. First it asks **what you need**: a sheet over the window with ready-made choices (*Everything*, *No
+achievements*, *OptiScaler + ReShade*, *Only OptiScaler*, *Just a launcher*), a preview of a game's page with that choice,
+and a switch for each feature if you want your own mix. What you leave out is only hidden (no tabs, buttons or pop-ups for
+it): nothing is installed or removed, and **Settings → Features → Choose features** changes it any time.
+
+Then the **welcome tour** starts, about the features you kept. Each tip sits beside the real control it explains, and the tour opens the pages
 it talks about so you see them for real:
 
 1. **Your games**: the list, the search box and the sort and filter button.

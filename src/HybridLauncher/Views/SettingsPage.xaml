@@ -164,6 +164,18 @@
                 </Grid>
             </Border>
 
+            <TextBlock Text="FEATURES YOU USE" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Choose features" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="FeaturesText" Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Choose features" Click="Features_Click" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
             <TextBlock Text="WINDOW" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">

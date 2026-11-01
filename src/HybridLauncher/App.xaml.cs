@@ -98,7 +98,7 @@ public partial class App : Application
         _showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-show");
         _launchSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-launch");
 
-        Log.Info($"{AppInfo.Name} {AppUpdates.Current.ToString(3)} starting, data in {AppInfo.DataRoot}");
+        Log.Info($"{AppInfo.Name} {AppUpdates.DisplayVersion} starting, data in {AppInfo.DataRoot}");
         Log.Info($"Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, {System.Globalization.CultureInfo.CurrentUICulture.Name}");
         SettingsStore.Load();
         L.Init(AppState.Settings.Language);

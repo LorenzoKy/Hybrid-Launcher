@@ -31,6 +31,21 @@ public static class AppUpdates
         }
     }
 
+    /// <summary>The running version as released: "1.1.0", or "1.1.0-rc.1" for a release candidate.</summary>
+    public static string DisplayVersion
+    {
+        get
+        {
+            var info = (System.Reflection.Assembly.GetEntryAssembly() ?? typeof(AppUpdates).Assembly)
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+            return info is { Length: > 0 } ? info.Split('+')[0] : Current.ToString(3);
+        }
+    }
+
+    /// <summary>A release candidate (or other pre-release): the final release of the same number is still an update for it.</summary>
+    public static bool IsPrerelease => DisplayVersion.Contains('-');
+
     static string Arch => RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
 
     static string Feed => Environment.GetEnvironmentVariable("HL_UPDATE_FEED") is { Length: > 0 } f
@@ -55,7 +70,7 @@ public static class AppUpdates
             json = await resp.Content.ReadAsStringAsync(cts.Token);
         }
         var release = Parse(json);
-        if (release is null || release.Version <= Current) return null;
+        if (release is null || release.Version < Current || release.Version == Current && !IsPrerelease) return null;
         Log.Info($"Update: {release.Version} is out (this is {Current})");
         return release;
     }

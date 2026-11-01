@@ -417,6 +417,9 @@ public sealed class AppSettings
     /// <summary>The welcome tour was shown (finished or skipped); Settings can start it again.</summary>
     public bool TourSeen { get; set; }
 
+    /// <summary>The first-start feature picker was answered (see <see cref="Features"/>); Settings → Features opens it again.</summary>
+    public bool FeaturesChosen { get; set; }
+
     /// <summary>Icons of the game page tabs: "mono" (one colour, the default), "color" (each its own colour) or "none".</summary>
     public string TabIcons { get; set; } = "color";
 
