@@ -1,5 +1,6 @@
 using HybridLauncher.Core;
 using HybridLauncher.Core.Detection;
+using HybridLauncher.Core.Opti;
 using HybridLauncher.Helpers;
 
 namespace HybridLauncher;
@@ -131,4 +132,8 @@ public static class AppState
         var on = AsiOn(game);
         return AsiPluginFiles().Where(on.Contains).ToList();
     }
+
+    /// <summary>The custom dll entries in the shared folder that are turned on for the game.</summary>
+    public static List<string> EnabledCustomDlls(GameSettings game) =>
+        CustomDlls.Entries().Select(e => e.Name).Where(game.CustomDlls.Contains).ToList();
 }

@@ -9,7 +9,16 @@ public sealed class Game
 {
     /// <summary>Stable key, e.g. "steam:1091500", "epic:Ginger", "custom:&lt;exe path&gt;".</summary>
     public required string Id { get; init; }
+    /// <summary>The name the store or the scan gave the game: wikis, store pages and searches look it up by this one.</summary>
     public required string Name { get; init; }
+
+    /// <summary>
+    /// The name shown in Hybrid Launcher: the user's own (right-click → Rename, kept in <see cref="AppSettings.GameNames"/>) or
+    /// <see cref="Name"/>. Only for showing: lookups keep using <see cref="Name"/>.
+    /// </summary>
+    [JsonIgnore]
+    public string Title => SettingsStore.Current.GameNames.TryGetValue(Id, out var own) && own.Length > 0 ? own : Name;
+
     public required GameStore Store { get; init; }
     public required string InstallDir { get; init; }
 
@@ -116,6 +125,12 @@ public sealed class InstallManifest
     /// <summary>ASI plugins copied from the universal folder: file name -> SHA-256.</summary>
     public Dictionary<string, string> AsiPlugins { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Custom dlls copied from the shared folder into custom\&lt;name&gt; (see <see cref="Opti.CustomDlls"/>):
+    /// entry name -> (file relative to <see cref="TargetDir"/> -> SHA-256).
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> CustomDlls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>A copy of OptiScaler.ini as the install left it, before Hybrid Launcher's saved choices (OptiScaler settings → Restore defaults).</summary>
     public string? DefaultIni { get; set; }
 
@@ -157,6 +172,9 @@ public sealed class GameSettings
     /// Null until set: before 0.11 one switch served every game, and the plugins an install already holds carry over.
     /// </summary>
     public HashSet<string>? AsiPlugins { get; set; }
+
+    /// <summary>Entries of the shared custom dll folder turned on for this game only (folder names), copied into its OptiScaler install.</summary>
+    public HashSet<string> CustomDlls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Size of the install folder at the last measurement (shown under "Open game folder" before the new one is done).</summary>
     public long? SizeBytes { get; set; }
@@ -562,8 +580,14 @@ public sealed class AppSettings
     public HashSet<string> HiddenGames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, GameSettings> Games { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Names the user gave to games (game id → shown name, see <see cref="Game.Title"/>); the game keeps its own for lookups.</summary>
+    public Dictionary<string, string> GameNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Names the user gave to ASI plugins (file name → shown name); the file keeps its own name.</summary>
     public Dictionary<string, string> AsiNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Names the user gave to custom dll entries (folder name → shown name); the folder keeps its own name.</summary>
+    public Dictionary<string, string> CustomDllNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Names the user gave to saved OptiScaler versions (version folder → shown name); the folder keeps its own name.</summary>
     public Dictionary<string, string> VersionNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);

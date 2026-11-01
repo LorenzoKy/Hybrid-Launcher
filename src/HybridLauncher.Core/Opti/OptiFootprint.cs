@@ -46,6 +46,7 @@ public sealed record OptiFootprint(long TotalBytes, int FileCount, long LogBytes
         {
             foreach (var rel in manifest.Files.Keys) AddFile(rel);
             foreach (var name in manifest.AsiPlugins.Keys) AddFile(Path.Combine(manifest.PluginsDir, name));
+            foreach (var rel in manifest.CustomDlls.Values.SelectMany(f => f.Keys)) AddFile(rel);
             foreach (var dir in manifest.CreatedDirs) AddDir(dir);
         }
         else

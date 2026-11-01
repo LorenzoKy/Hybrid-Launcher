@@ -73,12 +73,12 @@ public static class CloudSync
         catch (OperationCanceledException)
         {
             Log.Warn($"Cloud: {game.Name} check took too long, starting with the saves on this PC");
-            App.Window?.ShowInfo(L.F("{0} is taking long to answer: {1} starts with the saves on this PC.", CloudSaves.StoreName, game.Name));
+            App.Window?.ShowInfo(L.F("{0} is taking long to answer: {1} starts with the saves on this PC.", CloudSaves.StoreName, game.Title));
         }
         catch (Exception ex)
         {
             Log.Error($"Cloud before {game.Name}", ex);
-            App.Window?.ShowError(L.T("Cloud saves"), L.F("The cloud check failed, {0} starts with the saves on this PC: {1}", game.Name, ex.Message));
+            App.Window?.ShowError(L.T("Cloud saves"), L.F("The cloud check failed, {0} starts with the saves on this PC: {1}", game.Title, ex.Message));
         }
         finally
         {
@@ -99,13 +99,13 @@ public static class CloudSync
             await Task.Delay(TimeSpan.FromSeconds(4));
             if (GameSessions.IsActive(game.Id) || (await PartsAsync(game, settings)).Count == 0) return;
             if (await CloudSaves.AfterSessionAsync(game, settings))
-                App.Window?.ShowSuccess(L.F("Saves of {0} sent to {1}.", game.Name, CloudSaves.StoreName));
+                App.Window?.ShowSuccess(L.F("Saves of {0} sent to {1}.", game.Title, CloudSaves.StoreName));
             SettingsStore.Save();
         }
         catch (Exception ex)
         {
             Log.Error($"Cloud after {game.Name}", ex);
-            App.Window?.ShowError(L.T("Cloud saves"), L.F("The saves of {0} could not be sent: {1}", game.Name, ex.Message));
+            App.Window?.ShowError(L.T("Cloud saves"), L.F("The saves of {0} could not be sent: {1}", game.Title, ex.Message));
         }
         finally
         {
@@ -120,7 +120,7 @@ public static class CloudSync
         var settings = AppState.Settings.For(game.Id);
         if ((await PartsAsync(game, settings)).Count == 0)
         {
-            App.Window?.ShowError(L.T("Cloud saves"), L.F("Hybrid Launcher did not find the saves folder of {0}. Pick it in the cloud menu.", game.Name));
+            App.Window?.ShowError(L.T("Cloud saves"), L.F("Hybrid Launcher did not find the saves folder of {0}. Pick it in the cloud menu.", game.Title));
             return;
         }
         Busy.Add(game.Id);
@@ -129,7 +129,7 @@ public static class CloudSync
         {
             var message = await CloudSaves.BeforeLaunchAsync(game, settings, s => AskAsync(game, s));
             SettingsStore.Save();
-            App.Window?.ShowSuccess(message ?? L.F("Saves of {0} are in sync.", game.Name));
+            App.Window?.ShowSuccess(message ?? L.F("Saves of {0} are in sync.", game.Title));
         }
         catch (Exception ex) { App.Window?.ShowError(L.T("Cloud saves"), ex.Message); }
         finally
@@ -147,7 +147,7 @@ public static class CloudSync
         {
             var settings = AppState.Settings.For(game.Id);
             if (settings.CloudOff || GameSessions.IsActive(game.Id)) continue;
-            progress?.Report(game.Name);
+            progress?.Report(game.Title);
             try
             {
                 if ((await PartsAsync(game, settings)).Count == 0) continue;
@@ -175,7 +175,7 @@ public static class CloudSync
         if (App.Window?.Content?.XamlRoot is not { } root) return CloudSaves.Choice.Skip;
         var here = status.SaveDir is { } d && Directory.Exists(d) ? Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Select(f => File.GetLastWriteTime(f)).DefaultIfEmpty().Max() : default;
         var text = new StackPanel { Spacing = 10 };
-        text.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Text = L.F("The saves of {0} changed on this PC and in the cloud since the last sync. Which ones should Hybrid Launcher keep? The other copy is not lost: it stays in the cloud's history or in Hybrid Launcher's backups.", game.Name) });
+        text.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Text = L.F("The saves of {0} changed on this PC and in the cloud since the last sync. Which ones should Hybrid Launcher keep? The other copy is not lost: it stays in the cloud's history or in Hybrid Launcher's backups.", game.Title) });
         text.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8, Text = L.F("This PC: last changed {0}", here == default ? "—" : here.ToString("g")) });
         if (status.Cloud is { } c)
             text.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8, Text = L.F("Cloud: sent from {0} on {1}", c.Machine, c.UpdatedUtc.ToLocalTime().ToString("g")) });

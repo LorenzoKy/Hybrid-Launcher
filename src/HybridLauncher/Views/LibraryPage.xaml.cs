@@ -40,6 +40,9 @@ public sealed partial class LibraryPage : Page
 
     CancellationTokenSource _cts = new();
     string _filter = "";
+
+    /// <summary>The pane's search text the covers were last built for.</summary>
+    public string Filter => _filter;
     int _widestRow = 1;
     double _tileWidth = 204;
     readonly List<CoverTile> _tiles = [];
@@ -320,7 +323,7 @@ public sealed partial class LibraryPage : Page
         _owned = null;
         var f = AppState.Settings.Library;
 
-        bool Matches(Game g) => _filter.Length == 0 || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase);
+        bool Matches(Game g) => _filter.Length == 0 || g.Title.Contains(_filter, StringComparison.CurrentCultureIgnoreCase) || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase);
         var visible = Library.Apply(AppState.VisibleGames.Where(Matches));
         var pinned = AppState.PinnedGames().Where(g => visible.Contains(g)).ToList();
         var rest = visible.Where(g => !AppState.IsPinned(g.Id)).ToList();
@@ -717,7 +720,7 @@ public sealed partial class LibraryPage : Page
             placeholder.Children.Add(icon);
             placeholder.Children.Add(new TextBlock
             {
-                Text = game.Name,
+                Text = game.Title,
                 TextAlignment = TextAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
                 MaxLines = 3,
@@ -771,7 +774,7 @@ public sealed partial class LibraryPage : Page
 
             var name = new TextBlock
             {
-                Text = game.Name,
+                Text = game.Title,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 TextWrapping = TextWrapping.NoWrap,
                 Margin = new Thickness(2, 8, 2, 0),
@@ -783,7 +786,7 @@ public sealed partial class LibraryPage : Page
             Root.Children.Add(_art);
             Root.Children.Add(name);
             Root.Children.Add(store);
-            ToolTipService.SetToolTip(Root, $"{game.Name}\n{game.StoreLabel} · {game.InstallDir}");
+            ToolTipService.SetToolTip(Root, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
             Resize(width);
 
             _ = LoadIconAsync(icon, game);

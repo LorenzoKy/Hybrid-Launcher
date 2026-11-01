@@ -267,7 +267,7 @@ public sealed partial class GamePage
         _syncingQuickScope = true;
         QuickScopeBar.SelectedItem = _settings.QuickPanelOwn ? QuickScopeOwn : QuickScopeGlobal;
         _syncingQuickScope = false;
-        QuickScopeText.Text = _settings.QuickPanelOwn ? L.F("This game only: what you add or remove stays with {0}.", _game?.Name) : L.T("Global: the panel every game set to Global shares; a change here shows on all of them.");
+        QuickScopeText.Text = _settings.QuickPanelOwn ? L.F("This game only: what you add or remove stays with {0}.", _game?.Title) : L.T("Global: the panel every game set to Global shares; a change here shows on all of them.");
         if (_doc is not { } doc)
         {
             QuickPanelRows.Child = Ui.Muted(L.T("Install OptiScaler to use the Quick Panel."));
@@ -407,7 +407,7 @@ public sealed partial class GamePage
         var res = HybridLauncher.Helpers.ThemeRes.Current;
         var panel = new StackPanel { Spacing = 8, Width = 400 };
         panel.Children.Add(new TextBlock { Text = L.T("IN THE QUICK PANEL"), Style = (Style)res["GroupHeader"] });
-        panel.Children.Add(Ui.Muted(_settings.QuickPanelOwn ? L.F("Profile: This game only ({0})", _game?.Name) : L.T("Profile: Global (every game set to Global)")));
+        panel.Children.Add(Ui.Muted(_settings.QuickPanelOwn ? L.F("Profile: This game only ({0})", _game?.Title) : L.T("Profile: Global (every game set to Global)")));
         if (_doc is { } doc)
         {
             var now = QuickEntries(doc);

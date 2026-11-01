@@ -828,7 +828,7 @@ public sealed partial class RenoDxView : UserControl
         var engine = await Task.Run(() => RenoDx.DetectEngine(_ctx.Game.InstallDir, exe));
         var hits = RenoDx.Match(_mods, Core.Media.GameNames.PlainOrClean(Core.Media.GameNames.LookupName(_ctx.Game)), engine);
         if (hits.Count == 0)
-            _matches.Children.Add(Ui.Muted((engine is null ? L.F("No RenoDX mod is listed for {0} yet.", _ctx.Game.Name) : L.F("No RenoDX mod is listed for {0} yet, and no generic one for its engine ({1}).", _ctx.Game.Name, engine))
+            _matches.Children.Add(Ui.Muted((engine is null ? L.F("No RenoDX mod is listed for {0} yet.", _ctx.Game.Title) : L.F("No RenoDX mod is listed for {0} yet, and no generic one for its engine ({1}).", _ctx.Game.Title, engine))
                 + " " + L.T("Search the list above if it goes by another name.")));
         _hits = hits.Take(5).ToList();
         FillMatches();
@@ -957,7 +957,7 @@ public sealed partial class RenoDxView : UserControl
         if (dir is null)
         {
             _checks.Children.Add(Ui.Muted(_ctx.Game.NotInstalled
-                ? L.F("{0} is not installed: the mods below can go in once it is.", _ctx.Game.Name)
+                ? L.F("{0} is not installed: the mods below can go in once it is.", _ctx.Game.Title)
                 : L.T("Pick the game exe first (the gear beside Play → Change game exe).")));
             return;
         }
@@ -1166,7 +1166,7 @@ public sealed partial class QuickAccessView : UserControl
         add.Flyout = menu;
 
         var panel = new StackPanel { Spacing = 14 };
-        panel.Children.Add(Ui.Heading("", L.T("Quick access"), add, subtitle: L.F("Your shortcuts for {0}: right-click a tile to rename, move or remove it", ctx.Game.Name), tint: Color.FromArgb(0xFF, 0x00, 0xC2, 0xD8)));
+        panel.Children.Add(Ui.Heading("", L.T("Quick access"), add, subtitle: L.F("Your shortcuts for {0}: right-click a tile to rename, move or remove it", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0x00, 0xC2, 0xD8)));
         panel.Children.Add(_tiles);
         _suggestedPanel.Children.Add(new TextBlock { Text = L.T("SUGGESTED"), Style = Ui.Style("GroupHeader") });
         _suggestedPanel.Children.Add(_suggested);
@@ -1498,7 +1498,7 @@ public sealed partial class NotesView : UserControl
         };
 
         var panel = new StackPanel { Spacing = 16 };
-        panel.Children.Add(Ui.Heading("", L.T("Notes"), subtitle: L.F("Only for {0}, kept on this PC", ctx.Game.Name), tint: Color.FromArgb(0xFF, 0xB9, 0xA3, 0xFF)));
+        panel.Children.Add(Ui.Heading("", L.T("Notes"), subtitle: L.F("Only for {0}, kept on this PC", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0xB9, 0xA3, 0xFF)));
         panel.Children.Add(grid);
         // A card like the other tabs' (Quick access, RenoDX, ReShade).
         Content = Ui.Card(panel, 20);
@@ -1719,7 +1719,7 @@ public sealed partial class LumaView : UserControl
         if (_ctx.Settings.Luma is { } installed && !hits.Any(h => h.Mod.Name == installed.Mod) && _mods.FirstOrDefault(m => m.Name == installed.Mod) is { } im)
             hits.Insert(0, new LumaMatch(im, L.T("Installed in this game"), 200));
         if (hits.Count == 0)
-            _matches.Children.Add(Ui.Muted(L.F("No Luma mod is listed for {0} yet.", _ctx.Game.Name) + " " + L.T("Search the list above if it goes by another name.")));
+            _matches.Children.Add(Ui.Muted(L.F("No Luma mod is listed for {0} yet.", _ctx.Game.Title) + " " + L.T("Search the list above if it goes by another name.")));
         _hits = hits.Take(4).ToList();
         FillMatches();
         Refresh();
@@ -1763,7 +1763,7 @@ public sealed partial class LumaView : UserControl
         if (dir is null)
         {
             _state.Children.Add(Ui.Muted(_ctx.Game.NotInstalled
-                ? L.F("{0} is not installed: the mods below can go in once it is.", _ctx.Game.Name)
+                ? L.F("{0} is not installed: the mods below can go in once it is.", _ctx.Game.Title)
                 : L.T("Pick the game exe first (the gear beside Play → Change game exe).")));
             return;
         }
@@ -1888,7 +1888,7 @@ public sealed partial class LumaView : UserControl
     {
         if (_busy || !CanInstall(out var dir)) return;
         bool opti = File.Exists(Path.Combine(dir, "OptiScaler.ini"));
-        if (await ModBackups.DecideAsync("Luma", _ctx.Game.Name) is not { } backup) return;
+        if (await ModBackups.DecideAsync("Luma", _ctx.Game.Title) is not { } backup) return;
         var reshade = ReShade.Detect(dir);
         if (reshade is not null && _ctx.Settings.Luma is null && !await _ctx.ConfirmAsync(this, L.T("ReShade is already in this game"),
                 backup

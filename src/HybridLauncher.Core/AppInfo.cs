@@ -78,6 +78,9 @@ public static class AppInfo
     /// <summary>The universal ASI plugin folder: every enabled .asi in here is copied into each OptiScaler install.</summary>
     public static string AsiPluginsDir => Ensure(Path.Combine(DataRoot, "AsiPlugins"));
 
+    /// <summary>The shared custom dll folder: one folder per entry (ffx, dlss, dlssg inside), copied into the OptiScaler installs that turn it on.</summary>
+    public static string CustomDllsDir => Ensure(Path.Combine(DataRoot, "CustomDlls"));
+
     public static string Ensure(string dir)
     {
         Directory.CreateDirectory(dir);

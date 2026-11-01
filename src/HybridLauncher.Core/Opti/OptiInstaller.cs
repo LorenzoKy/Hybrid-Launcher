@@ -14,6 +14,7 @@ public sealed class InstallRequest
     public required OptiSetupOptions Options { get; init; }
     public IReadOnlyDictionary<string, string> IniOverrides { get; init; } = new Dictionary<string, string>();
     public IReadOnlyList<string> AsiPlugins { get; init; } = [];
+    public IReadOnlyList<string> CustomDlls { get; init; } = [];
     public InstallManifest? Previous { get; init; }
     /// <summary>False: the files OptiScaler replaces are overwritten without a backup, so uninstalling cannot put them back.</summary>
     public bool Backup { get; init; } = true;
@@ -240,6 +241,7 @@ public static class OptiInstaller
             progress?.Report(new(0.92, L.T("Applying saved settings")));
             ApplyIniOverrides(manifest, req.IniOverrides);
             SyncAsiPlugins(manifest, req.AsiPlugins);
+            Opti.CustomDlls.Sync(manifest, req.CustomDlls);
 
             progress?.Report(new(1, L.F("OptiScaler {0} installed as {1}", manifest.DisplayVersion, manifest.DllName)));
             Log.Info($"Installed {manifest.DisplayVersion} into {target} as {manifest.DllName}");
@@ -360,6 +362,7 @@ public static class OptiInstaller
             if (File.Exists(full) && Hash(full) == hash) TryDelete(full);
         }
 
+        Opti.CustomDlls.Sync(m, []);
         foreach (var f in RuntimeFiles) TryDelete(Path.Combine(target, f));
 
         RemoveCreatedDirs(m);
@@ -448,7 +451,7 @@ public static class OptiInstaller
         catch { return false; }
     }
 
-    static void EnsureNotRunning(string target)
+    public static void EnsureNotRunning(string target)
     {
         var running = RunningGameProcess(target);
         if (running is not null) throw new InstallException(L.F("{0} is running from this folder. Close the game first.", running));
@@ -508,7 +511,7 @@ public static class OptiInstaller
         }
     }
 
-    static bool TryDelete(string path)
+    internal static bool TryDelete(string path)
     {
         try
         {

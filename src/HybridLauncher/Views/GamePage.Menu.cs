@@ -37,7 +37,7 @@ public sealed partial class GamePage
         _propsNav = new StackPanel { Spacing = 2, Padding = new Thickness(14, 26, 14, 14) };
         _propsNav.Children.Add(new TextBlock
         {
-            Text = game.Name.ToUpperInvariant(), FontSize = 19, FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap,
+            Text = game.Title.ToUpperInvariant(), FontSize = 19, FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap,
             Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush"), Margin = new Thickness(10, 0, 10, 18), MaxLines = 3,
         });
         foreach (var (id, title) in PropsPages(game)) _propsNav.Children.Add(NavItem(id, title));
@@ -292,16 +292,17 @@ public sealed partial class GamePage
 }
 
 /// <summary>
-/// The OptiScaler tab's foldable parts: the note under Install, ASI plugins and Saved versions. Each remembers whether it was
+/// The OptiScaler tab's foldable parts: the note under Install, ASI plugins, Custom DLLs and Saved versions. Each remembers whether it was
 /// folded (Settings: CollapsedCards), for every game, so it stays the way the user left it.
 /// </summary>
 public sealed partial class GamePage
 {
-    const string HintKey = "opti:installhint", AsiKey = "opti:asi", VersionsKey = "opti:versions";
+    const string HintKey = "opti:installhint", AsiKey = "opti:asi", CustomDllKey = "opti:customdlls", VersionsKey = "opti:versions";
 
     void InitFolds()
     {
         Foldable(AsiKey, AsiHeader, AsiTitle, AsiBody);
+        Foldable(CustomDllKey, CustomDllHeader, CustomDllTitle, CustomDllBody);
         Foldable(VersionsKey, VersionsHeader, VersionsTitle, VersionsList);
         ApplyHintFold();
     }

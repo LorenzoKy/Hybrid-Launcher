@@ -285,12 +285,9 @@ public static class Palettes
     [
         new("Windows", "Windows accent", "Your Windows accent colour", null, null),
         new("Hybrid", "Hybrid", "Crimson, like the logo's crossbar", C(0xD7, 0x14, 0x3A), C(0xA8, 0x0E, 0x2C)),
-        new("NeonCity", "Neon city", "Cyan with a magenta haze", C(0x00, 0xD8, 0xE8), C(0xFF, 0x3B, 0xD8)),
-        new("Toxic", "Toxic", "Acid green", C(0x3D, 0xDC, 0x5A), C(0x2B, 0xB0, 0x40)),
-        new("Crimson", "Crimson", "Deep red", C(0xE5, 0x39, 0x50), C(0xC0, 0x18, 0x30)),
-        new("Ocean", "Ocean", "Calm blue", C(0x2D, 0x9C, 0xDB), C(0x1A, 0x6F, 0xC0)),
-        new("Amber", "Amber", "Warm orange", C(0xFF, 0xA5, 0x1F), C(0xE0, 0x70, 0x10)),
-        new("Graphite", "Graphite", "Neutral grey, no colour", C(0x9A, 0xA4, 0xB0), null),
+        // Always dark, with their own background: a plain near-black one, and Venom's purple night.
+        new("Dark", "Dark", "Plain near-black background, soft silver accent (always dark)", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x17, 0x17, 0x1A), C(0x07, 0x07, 0x08))),
+        new("VenomViolet", "Venom", "Deep purple night with violet light (always dark)", C(0xA8, 0x5C, 0xFF), C(0x7B, 0x2C, 0xE6), (C(0x1A, 0x0F, 0x26), C(0x07, 0x04, 0x0C))),
         // Scene themes: dark / grey backgrounds of their own, inspired by a console or game look.
         new("Cyberpunk", "Cyberpunk 2077", "Night city black, signal yellow and red (always dark)", C(0xFC, 0xEE, 0x0A), C(0xFF, 0x00, 0x3C), (C(0x16, 0x10, 0x14), C(0x07, 0x07, 0x09))),
         new("Mgs1", "Metal Gear Solid", "Shadow Moses: arctic night blue with codec green (always dark)", C(0x5C, 0xE0, 0x8C), C(0x2C, 0x6E, 0x9E), (C(0x10, 0x1A, 0x24), C(0x04, 0x08, 0x0C))),
@@ -311,10 +308,13 @@ public static class Palettes
 
     public static Palette Get(string? key)
     {
-        // The theme named after the app's old name became "Hybrid" with the rename (0.25).
+        // The theme named after the app's old name became "Hybrid" with the rename (0.25); the purple Venom theme of 1.1 is "VenomViolet".
         if (key == AppInfo.LegacyName) key = "Hybrid";
         // Scene themes dropped in 1.0 (PS5, Metal Gear Solid 3, Spider-Man): their dark look carries on as Cyberpunk 2077.
         if (key is "Ps5" or "MetalGear" or "SpiderMan") key = "Cyberpunk";
+        // Colour themes dropped in 1.1: Graphite carries on as Dark, the coloured ones as Hybrid.
+        if (key is "Graphite") key = "Dark";
+        if (key is "NeonCity" or "Toxic" or "Crimson" or "Ocean" or "Amber") key = "Hybrid";
         return key == "Custom" ? Custom() : key is null or "Windows" ? WindowsAccent() : All.FirstOrDefault(p => p.Key == key) ?? WindowsAccent();
     }
 

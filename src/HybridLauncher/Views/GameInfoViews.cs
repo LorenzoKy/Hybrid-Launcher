@@ -1591,7 +1591,7 @@ public sealed partial class OptiWikiView : UserControl
         {
             var empty = new StackPanel { Spacing = 10 };
             empty.Children.Add(Ui.Heading("", L.T("OptiScaler wiki"), Ui.LinkButton(L.T("Compatibility List"), "", () => Ui.Open(CompatWiki.ListUrl))));
-            empty.Children.Add(new TextBlock { Text = L.F("{0} has no page on the OptiScaler wiki yet (or Hybrid Launcher could not reach GitHub).", _data.Game.Name), TextWrapping = TextWrapping.Wrap });
+            empty.Children.Add(new TextBlock { Text = L.F("{0} has no page on the OptiScaler wiki yet (or Hybrid Launcher could not reach GitHub).", _data.Game.Title), TextWrapping = TextWrapping.Wrap });
             empty.Children.Add(Ui.Muted(L.T("The Compatibility List shows every tested game. If you try OptiScaler here, the team welcomes a report on their Discord or GitHub.")));
             _root.Children.Add(Ui.Card(empty));
             return;
@@ -1831,7 +1831,7 @@ public sealed partial class PcgwView : UserControl
             var empty = new StackPanel { Spacing = 10 };
             empty.Children.Add(Ui.Heading("\uE774", "PCGamingWiki", Ui.LinkButton(L.T("Search the wiki"), "\uE721",
                 () => Ui.Open($"https://www.pcgamingwiki.com/w/index.php?search={Uri.EscapeDataString(_data.SearchName)}"))));
-            empty.Children.Add(new TextBlock { Text = L.F("No PCGamingWiki page was found for {0} (or the wiki could not be reached).", _data.Game.Name), TextWrapping = TextWrapping.Wrap });
+            empty.Children.Add(new TextBlock { Text = L.F("No PCGamingWiki page was found for {0} (or the wiki could not be reached).", _data.Game.Title), TextWrapping = TextWrapping.Wrap });
             _main.Children.Add(Ui.Card(empty));
             _noPage = true;
             _layoutMode = -1;

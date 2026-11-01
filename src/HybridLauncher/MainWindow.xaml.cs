@@ -227,7 +227,7 @@ public sealed partial class MainWindow : Window
     void UpdateTrayTip()
     {
         if (_tray is null) return;
-        var running = GameSessions.Active().Select(AppState.Find).Where(g => g is not null).Select(g => g!.Name).ToList();
+        var running = GameSessions.Active().Select(AppState.Find).Where(g => g is not null).Select(g => g!.Title).ToList();
         _tray.Update(running.Count == 0 ? AppInfo.Name : $"{AppInfo.Name} · " + L.F("playing {0}", string.Join(", ", running)));
     }
 
@@ -445,7 +445,7 @@ public sealed partial class MainWindow : Window
     }
 
 
-    bool Matches(Game g) => _filter.Length == 0 || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase);
+    bool Matches(Game g) => _filter.Length == 0 || g.Title.Contains(_filter, StringComparison.CurrentCultureIgnoreCase) || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase);
 
     const string NotInstalledKey = "notinstalled";
 
@@ -884,7 +884,7 @@ public sealed partial class MainWindow : Window
             if (AppState.Find(id) is not { NotInstalled: false, Installing: false } game || Shortcuts.Exists(game)) return;
             await Shortcuts.CreateDesktopAsync(game, AppState.Settings.For(game.Id));
             Log.Info($"Desktop shortcut made for {game.Name}");
-            ShowSuccess(L.F("{0} is installed. Its shortcut is on the desktop.", game.Name));
+            ShowSuccess(L.F("{0} is installed. Its shortcut is on the desktop.", game.Title));
         }
         catch (Exception ex) { Log.Warn($"Shortcut after install: {ex.Message}"); }
     }
@@ -916,12 +916,12 @@ public sealed partial class MainWindow : Window
     {
         var item = new NavigationViewItem
         {
-            Content = ItemName(game.Name),
+            Content = ItemName(game.Title),
             Tag = game.Id,
             Icon = new FontIcon { Glyph = "" },
         };
         BigIcon(item);
-        ToolTipService.SetToolTip(item, $"{game.Name}\n{game.StoreLabel} · {game.InstallDir}");
+        ToolTipService.SetToolTip(item, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
 
         item.ContextFlyout = GameMenu(game);
         if (GameSessions.IsActive(game.Id)) DispatcherQueue.TryEnqueue(() => MarkRunning(game.Id));
@@ -950,13 +950,14 @@ public sealed partial class MainWindow : Window
             () => AppState.SetPinned(game.Id, !pinned)));
         menu.Items.Add(MenuItem(L.T("Play"), "\uF5B0", () => _ = PlayFromMenuAsync(game)));
         menu.Items.Add(MenuItem(L.T("Open game folder"), "", () => GameLauncher.OpenFolder(game.InstallDir)));
+        menu.Items.Add(MenuItem(L.T("Rename…"), "", () => _ = RenameGameAsync(game)));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MenuItem(L.T("Hide from the list"), "", () =>
         {
             AppState.Settings.HiddenGames.Add(game.Id);
             SettingsStore.Save();
             RebuildNav();
-            ShowInfo(L.F("{0} is hidden. Show it again from Settings.", game.Name));
+            ShowInfo(L.F("{0} is hidden. Show it again from Settings.", game.Title));
         }));
         if (!game.Installing)
         {
@@ -974,6 +975,28 @@ public sealed partial class MainWindow : Window
             }));
         }
         return menu;
+    }
+
+    /// <summary>
+    /// A name of the user's own for a game, shown everywhere in Hybrid Launcher. The game keeps its store name (Game.Name)
+    /// for the OptiScaler wiki, PCGamingWiki and the store pages, so they still find it.
+    /// </summary>
+    async Task RenameGameAsync(Game game)
+    {
+        if (Content.XamlRoot is not { } root) return;
+        var picked = await HybridLauncher.Controls.NameDialog.AskAsync(root, ((FrameworkElement)Content).ActualTheme, L.T("Rename this game"), game.Name,
+            AppState.Settings.GameNames.GetValueOrDefault(game.Id, ""));
+        if (picked is null) return;
+        if (picked.Length == 0 || picked == game.Name) AppState.Settings.GameNames.Remove(game.Id);
+        else AppState.Settings.GameNames[game.Id] = picked;
+        SettingsStore.Save();
+        RebuildNav();
+        switch (ContentFrame.Content)
+        {
+            case LibraryPage library: library.Reload(library.Filter); break;
+            case GamePage page when page.GameId == game.Id: page.Refresh(); break;
+        }
+        UpdatePageTitle();
     }
 
     /// <summary>Play from a right-click menu: started and watched like the Play button (Stop, time played, Smart HDR).</summary>
@@ -1399,7 +1422,7 @@ public sealed partial class MainWindow : Window
             UpdateTitleBarRegions();
             return;
         }
-        PageTitleText.Text = game.Name.ToUpperInvariant();
+        PageTitleText.Text = game.Title.ToUpperInvariant();
         BackButton.Visibility = CanGoBack ? Visibility.Visible : Visibility.Collapsed;
         // Pane open beside the content: line up with the banner (pane width + page padding). Otherwise after the brand.
         bool besidePane = Nav.IsPaneOpen && Nav.DisplayMode == NavigationViewDisplayMode.Expanded;

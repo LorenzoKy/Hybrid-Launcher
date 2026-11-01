@@ -25,6 +25,7 @@
 //   dotnet run -- signin-page [hold] MEGA's browser sign-in page served on 127.0.0.1: form, token guard, empty-form check, cancel
 //   dotnet run -- friends           signs in with HL_DATA's Steam token and lists the account's friends (read-only)
 //   dotnet run -- updates           the app's own update: release JSON parsing, the check against a local feed, download + unpack
+//   dotnet run -- customdlls        custom dlls on a fake install: copied in, replaced, a foreign file kept, turned off, uninstalled
 //   dotnet run -- techversions      My PC's technology versions read from AMD's, Intel's and NVIDIA's SDK releases on GitHub
 // Set HL_DATA to keep test data out of %LOCALAPPDATA%\HybridLauncher.
 using System.Security.Cryptography;
@@ -44,6 +45,50 @@ void Check(bool ok, string what)
 var cmd = args.Length > 0 ? args[0] : "scan";
 switch (cmd)
 {
+    case "customdlls":
+    {
+        // Needs HL_DATA (the shared folder is written): a scratch install folder with a file that is not ours under custom\.
+        var game = Path.Combine(Path.GetTempPath(), "hl-customdlls-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(game);
+        var picked = Path.Combine(game, "..", Path.GetFileName(game) + "-src");
+        Directory.CreateDirectory(picked);
+        File.WriteAllText(Path.Combine(picked, "amd_fidelityfx_upscaler_dx12.dll"), "ffx v1");
+        File.WriteAllText(Path.Combine(picked, "helper.dll"), "helper");
+        CustomDlls.Add("Smoke FFX", CustomDllKind.Ffx, Directory.GetFiles(picked));
+        var m = new InstallManifest { TargetDir = game };
+        CustomDlls.Sync(m, ["Smoke FFX"]);
+        var ffx = Path.Combine(game, "custom", "Smoke FFX", "ffx", "amd_fidelityfx_upscaler_dx12.dll");
+        Check(File.ReadAllText(ffx) == "ffx v1" && m.CustomDlls["Smoke FFX"].Count == 2, "entry copied into custom/<name>/ffx");
+        Check(CustomDlls.Entries().Any(e => e.Name == "Smoke FFX" && e.Kinds.SequenceEqual([CustomDllKind.Ffx])), "entry listed as an FFX upscaler");
+
+        // The shared copy changes (one dll only now): the install follows and drops the file that went away.
+        File.Delete(Path.Combine(picked, "helper.dll"));
+        File.WriteAllText(Path.Combine(picked, "amd_fidelityfx_upscaler_dx12.dll"), "ffx v2");
+        CustomDlls.Add("Smoke FFX", CustomDllKind.Ffx, Directory.GetFiles(picked));
+        CustomDlls.Sync(m, ["Smoke FFX"]);
+        Check(File.ReadAllText(ffx) == "ffx v2" && !File.Exists(Path.Combine(Path.GetDirectoryName(ffx)!, "helper.dll")), "replaced entry copied again, old file gone");
+
+        // A file of the user's own in the same place is never overwritten nor deleted.
+        var foreign = Path.Combine(game, "custom", "Mine", "dlss", "nvngx.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
+        File.WriteAllText(foreign, "mine");
+        CustomDlls.Sync(m, []);
+        Check(!File.Exists(ffx) && !Directory.Exists(Path.Combine(game, "custom", "Smoke FFX")) && m.CustomDlls.Count == 0, "turned off: entry removed from the install");
+        Check(File.ReadAllText(foreign) == "mine", "a custom folder of the user's own stays");
+        File.Delete(foreign);
+        Directory.Delete(Path.Combine(game, "custom"), recursive: true);
+
+        // Uninstall takes it out with the rest, the custom folder it made included.
+        CustomDlls.Sync(m, ["Smoke FFX"]);
+        OptiInstaller.Uninstall(m);
+        Check(!Directory.Exists(Path.Combine(game, "custom")), "uninstall removes the custom folder it made");
+
+        CustomDlls.Delete("Smoke FFX");
+        Check(CustomDlls.Entries().All(e => e.Name != "Smoke FFX"), "entry deleted from the shared folder");
+        Directory.Delete(game, recursive: true);
+        Directory.Delete(picked, recursive: true);
+        break;
+    }
     case "techversions":
     {
         var sample = "<h3>AMD FSR\u2122 Upscaling 4.1.2</h3> <h3>AMD FidelityFX\u2122 Super Resolution 3.1.6</h3> <h3>AMD FSR\u2122 Frame Generation (Swapchain) 4.0.0</h3> <h3>AMD FSR\u2122 Frame Generation 4.0.2</h3>";

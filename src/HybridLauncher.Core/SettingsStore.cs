@@ -131,6 +131,8 @@ public static class SettingsStore
             s.InstallRoot = null;
         }
         s.AsiNames = new Dictionary<string, string>(s.AsiNames ?? [], StringComparer.OrdinalIgnoreCase);
+        s.CustomDllNames = new Dictionary<string, string>(s.CustomDllNames ?? [], StringComparer.OrdinalIgnoreCase);
+        s.GameNames = new Dictionary<string, string>(s.GameNames ?? [], StringComparer.OrdinalIgnoreCase);
         s.VersionNames = new Dictionary<string, string>(s.VersionNames ?? [], StringComparer.OrdinalIgnoreCase);
         s.CollapsedGroups = new HashSet<string>(s.CollapsedGroups ?? [], StringComparer.OrdinalIgnoreCase);
         s.GroupOrder = (s.GroupOrder ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -179,9 +181,13 @@ public static class SettingsStore
                 m.Files = new Dictionary<string, string>(m.Files ?? [], StringComparer.OrdinalIgnoreCase);
                 m.Backups = new Dictionary<string, string>(m.Backups ?? [], StringComparer.OrdinalIgnoreCase);
                 m.AsiPlugins = new Dictionary<string, string>(m.AsiPlugins ?? [], StringComparer.OrdinalIgnoreCase);
+                m.CustomDlls = new Dictionary<string, Dictionary<string, string>>(
+                    (m.CustomDlls ?? []).ToDictionary(e => e.Key, e => new Dictionary<string, string>(e.Value ?? [], StringComparer.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase);
                 m.CreatedDirs ??= [];
             }
             // Per game since 0.11: a game starts with the plugins its install already holds (the old shared switches).
+            g.CustomDlls = new HashSet<string>(g.CustomDlls ?? [], StringComparer.OrdinalIgnoreCase);
             g.AsiPlugins = new HashSet<string>(g.AsiPlugins ?? g.Install?.AsiPlugins.Keys ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         }
         MigrateTabs(s);

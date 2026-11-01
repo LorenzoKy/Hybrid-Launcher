@@ -193,7 +193,7 @@ public sealed partial class GamePage : Page
         _loading = true;
         try
         {
-            TitleText.Text = _game.Name;
+            TitleText.Text = _game.Title;
             StoreText.Text = _game.StoreLabel.ToUpperInvariant();
             if (StoreBadgePanel.Children.Count > 2) StoreBadgePanel.Children.RemoveAt(0);
             var logo = StoreLogos.Create(_game.Store, 13);
@@ -231,6 +231,7 @@ public sealed partial class GamePage : Page
             LoadSetupOptions();
             UpdateOptiStatus();
             LoadAsiList();
+            LoadCustomDllList();
             _iniStale = true;
             if (IniOpen) LoadIni();
             UpdatePin();
@@ -284,7 +285,7 @@ public sealed partial class GamePage : Page
             if (_game is null) return;
             try
             {
-                if (!await TabsDialog.ShowAsync(XamlRoot, ActualTheme, _settings, _game.Name)) return;
+                if (!await TabsDialog.ShowAsync(XamlRoot, ActualTheme, _settings, _game.Title)) return;
                 RebuildTabs();
                 ShowTab(_tab, remember: false);
             }
@@ -335,7 +336,7 @@ public sealed partial class GamePage : Page
         if (id == _tab) ShowTab("overview", remember: false);
         App.Window?.ShowInfo(everywhere
             ? L.F("\"{0}\" is hidden in every game. The gear at the end of the tabs brings it back.", name)
-            : L.F("\"{0}\" is hidden for {1}. The gear at the end of the tabs brings it back.", name, _game?.Name));
+            : L.F("\"{0}\" is hidden for {1}. The gear at the end of the tabs brings it back.", name, _game?.Title));
     }
 
     /// <summary>
@@ -628,7 +629,7 @@ public sealed partial class GamePage : Page
         body.Children.Add(new TextBlock { Text = info.Name, Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["SubtitleTextBlockStyle"], HorizontalAlignment = HorizontalAlignment.Center });
         body.Children.Add(new TextBlock
         {
-            Text = (info is null ? "" : info.Info + ".\n") + L.F("It works on the game's files: ready as soon as {0} is installed.", _game?.Name),
+            Text = (info is null ? "" : info.Info + ".\n") + L.F("It works on the game's files: ready as soon as {0} is installed.", _game?.Title),
             TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Opacity = 0.75,
         });
         bool downloading = _game is not null && Downloads.Active(_game.Id) is not null;
@@ -869,7 +870,7 @@ public sealed partial class GamePage : Page
         try
         {
             if (await StoreLinks.OpenAsync(game, _steamAppId, _pageCts.Token) is null)
-                App.Window?.ShowInfo(L.F("{0} was added by hand and no store page was found for it.", game.Name));
+                App.Window?.ShowInfo(L.F("{0} was added by hand and no store page was found for it.", game.Title));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
@@ -994,7 +995,7 @@ public sealed partial class GamePage : Page
                 logo.ImageFailed += (_, e) => Log.Warn($"Logo for {game.Name} failed: {e.ErrorMessage}");
                 logo.UriSource = new Uri(art.LogoImage);
                 LogoImage.Source = logo;
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LogoImage, game.Name);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LogoImage, game.Title);
             }
             catch (Exception ex) { Log.Warn($"Logo image failed: {ex.Message}"); }
         }
@@ -1221,7 +1222,7 @@ public sealed partial class GamePage : Page
             : null);
         if (owned is null)
         {
-            App.Window?.ShowError(L.T("Could not open the launcher"), L.F("Install {0} from {1}.", _game.Name, _game.StoreLabel));
+            App.Window?.ShowError(L.T("Could not open the launcher"), L.F("Install {0} from {1}.", _game.Title, _game.StoreLabel));
             return;
         }
         OwnedLibrary.Install(owned, UpdateRunState);
@@ -1297,12 +1298,12 @@ public sealed partial class GamePage : Page
         if (_game is null) return;
         var game = _game;
         // A game still starting closes at once: the click on the stop square is the decision. A running one asks first (unsaved progress).
-        if (GameSessions.State(game.Id) != GameRunState.Starting && !await ConfirmAsync(L.F("Close {0}?", game.Name),
+        if (GameSessions.State(game.Id) != GameRunState.Starting && !await ConfirmAsync(L.F("Close {0}?", game.Title),
                 L.T("Hybrid Launcher asks the game to close, as if you closed its window, and ends it after a few seconds if it does not. Progress that is not saved is lost."),
                 L.T("Close the game")))
             return;
         if (!await GameSessions.StopAsync(game.Id))
-            App.Window?.ShowError(L.F("{0} is still running", game.Name), L.T("Windows did not let Hybrid Launcher close it (it may run as administrator). Close it from the game or Task Manager."));
+            App.Window?.ShowError(L.F("{0} is still running", game.Title), L.T("Windows did not let Hybrid Launcher close it (it may run as administrator). Close it from the game or Task Manager."));
     }
 
     void OnSessionChanged(string gameId)
@@ -1418,8 +1419,8 @@ public sealed partial class GamePage : Page
         UpdateHdrToggle();
         UpdateRunState();
         App.Window?.ShowInfo(_settings.SmartHdr
-            ? L.F("Smart HDR is on for {0}: HDR turns on when you press Play and off when the game closes.", _game.Name)
-            : L.F("Smart HDR is off for {0}.", _game.Name));
+            ? L.F("Smart HDR is on for {0}: HDR turns on when you press Play and off when the game closes.", _game.Title)
+            : L.F("Smart HDR is off for {0}.", _game.Title));
     }
 
     bool _narrowBar;
@@ -1583,8 +1584,8 @@ public sealed partial class GamePage : Page
             bool existed = Shortcuts.Exists(game);
             await Shortcuts.CreateDesktopAsync(game, _settings);
             App.Window?.ShowInfo(existed
-                ? L.F("The desktop shortcut for {0} was updated.", game.Name)
-                : L.F("{0} is on the desktop: the shortcut starts it through Hybrid Launcher.", game.Name));
+                ? L.F("The desktop shortcut for {0} was updated.", game.Title)
+                : L.F("{0} is on the desktop: the shortcut starts it through Hybrid Launcher.", game.Title));
         }
         catch (Exception ex) { App.Window?.ShowError(L.T("The shortcut was not created"), ex.Message); }
     }
@@ -1784,7 +1785,7 @@ public sealed partial class GamePage : Page
         AppState.Settings.HiddenGames.Add(_game!.Id);
         SettingsStore.Save();
         App.Window?.SelectGame("");
-        App.Window?.ShowInfo(L.F("{0} is hidden. Show it again from Settings.", _game.Name));
+        App.Window?.ShowInfo(L.F("{0} is hidden. Show it again from Settings.", _game.Title));
     }
 
     // ---------- OptiScaler: status and versions ----------
@@ -2187,7 +2188,7 @@ public sealed partial class GamePage : Page
             return;
         }
 
-        if (await ModBackups.DecideAsync("OptiScaler", game.Name) is not { } backup) return;
+        if (await ModBackups.DecideAsync("OptiScaler", game.Title) is not { } backup) return;
 
         // With the bat installer the file name is picked in the script, which warns about existing files itself.
         var options = settings.Setup.Clone();
@@ -2227,13 +2228,14 @@ public sealed partial class GamePage : Page
                 Options = options,
                 IniOverrides = new Dictionary<string, string>(settings.IniOverrides),
                 AsiPlugins = AppState.EnabledAsiPlugins(settings),
+                CustomDlls = AppState.EnabledCustomDlls(settings),
                 Previous = settings.Install,
                 Backup = backup,
             }, progress, _installCts.Token));
 
             settings.Install = manifest;
             SettingsStore.Save();
-            App.Window?.ShowSuccess(L.F("OptiScaler {0} installed in {1} as {2}.", manifest.DisplayVersion, game.Name, manifest.DllName));
+            App.Window?.ShowSuccess(L.F("OptiScaler {0} installed in {1} as {2}.", manifest.DisplayVersion, game.Title, manifest.DllName));
         }
         catch (OperationCanceledException)
         {
@@ -2470,8 +2472,8 @@ public sealed partial class GamePage : Page
         SettingsStore.Save();
         var errors = await SyncAsiAsync([_settings]);
         if (errors.Count > 0) App.Window?.ShowError(L.T("Some games were not updated"), string.Join("\n", errors));
-        else if (_settings.Install is null) App.Window?.ShowInfo(on ? L.F("{0} will be copied in when OptiScaler is installed in {1}.", name, _game?.Name) : L.F("{0} is off for {1}.", name, _game?.Name));
-        else App.Window?.ShowSuccess(on ? L.F("{0} added to the OptiScaler install of {1}.", name, _game?.Name) : L.F("{0} removed from the OptiScaler install of {1}.", name, _game?.Name));
+        else if (_settings.Install is null) App.Window?.ShowInfo(on ? L.F("{0} will be copied in when OptiScaler is installed in {1}.", name, _game?.Title) : L.F("{0} is off for {1}.", name, _game?.Title));
+        else App.Window?.ShowSuccess(on ? L.F("{0} added to the OptiScaler install of {1}.", name, _game?.Title) : L.F("{0} removed from the OptiScaler install of {1}.", name, _game?.Title));
         _iniStale = true;
         if (IniOpen) LoadIni();
     }
@@ -2606,7 +2608,7 @@ public sealed partial class GamePage : Page
             var profile = existing;
             if (profile is null)
             {
-                var name = await AskNameAsync(L.T("Save as a profile"), L.F("{0} setting(s) that are not on Auto will be saved. Apply them to any game later from Profiles.", values.Count), _game?.Name ?? L.T("My profile"));
+                var name = await AskNameAsync(L.T("Save as a profile"), L.F("{0} setting(s) that are not on Auto will be saved. Apply them to any game later from Profiles.", values.Count), _game?.Title ?? L.T("My profile"));
                 if (name is null) return;
                 profile = AppState.Settings.IniProfiles.FirstOrDefault(p => p.Name.Equals(name, StringComparison.CurrentCultureIgnoreCase));
                 if (profile is not null && !await ConfirmAsync(L.F("Replace \"{0}\"?", profile.Name), L.T("A profile with this name already exists."), L.T("Replace"))) return;
@@ -2661,9 +2663,9 @@ public sealed partial class GamePage : Page
             _iniStale = true;
             if (IniOpen) LoadIni();
             if (path is null)
-                App.Window?.ShowSuccess(L.F("\"{0}\" will be applied when OptiScaler is installed in {1}.", profile.Name, game.Name));
+                App.Window?.ShowSuccess(L.F("\"{0}\" will be applied when OptiScaler is installed in {1}.", profile.Name, game.Title));
             else
-                App.Window?.ShowSuccess(L.F("\"{0}\" applied to {1}: {2} setting(s) written to OptiScaler.ini", profile.Name, game.Name, written)
+                App.Window?.ShowSuccess(L.F("\"{0}\" applied to {1}: {2} setting(s) written to OptiScaler.ini", profile.Name, game.Title, written)
                     + (written < profile.Values.Count ? " " + L.F("({0} not in this OptiScaler version).", profile.Values.Count - written) : "."));
         }
         catch (Exception ex)

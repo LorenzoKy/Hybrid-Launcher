@@ -94,13 +94,13 @@ public static class Library
             "playtime" => g => StatsOf(g.Id)?.Minutes ?? 0,
             "achievements" => g => StatsOf(g.Id) is { AchTotal: > 0 } s ? s.AchUnlocked * 1000.0 + (double)s.AchUnlocked / s.AchTotal : -1.0,
             "tech" => g => StatsOf(g.Id)?.Tags?.Count ?? 0,
-            _ => g => g.Name.ToLowerInvariant(),
+            _ => g => g.Title.ToLowerInvariant(),
         };
         // Name sorts A→Z by default; the numbers and dates biggest / newest first. "Reverse" flips either.
         bool descending = f.Sort != "name";
         if (f.Descending) descending = !descending;
         var ordered = descending ? list.OrderByDescending(key) : list.OrderBy(key);
-        return ordered.ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        return ordered.ThenBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
     /// <summary>

@@ -45,7 +45,7 @@ public sealed partial class MainWindow
         if (game is not null)
         {
             list.Add(new(L.T("A game's page"),
-                L.F("This is {0}'s page. Play starts the game; while it runs the same button stops it. Last played and play time are beside it.", game.Name),
+                L.F("This is {0}'s page. Play starts the game; while it runs the same button stops it. Last played and play time are beside it.", game.Title),
                 () => TourGame?.TourPlay, () => OpenGame(game.Id)));
             if (!PageParts.HiddenEverywhere(AppState.Settings, PageParts.Hdr))
             list.Add(new(L.T("Smart HDR"),

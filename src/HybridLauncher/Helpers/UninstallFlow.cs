@@ -18,7 +18,7 @@ static class UninstallFlow
         {
             if (GameSessions.IsActive(game.Id))
             {
-                App.Window?.ShowError(L.F("{0} is running", game.Name), L.T("Close the game first."));
+                App.Window?.ShowError(L.F("{0} is running", game.Title), L.T("Close the game first."));
                 return;
             }
             var route = Uninstaller.Route(game);
@@ -40,7 +40,7 @@ static class UninstallFlow
             {
                 XamlRoot = root,
                 RequestedTheme = theme,
-                Title = L.F("Uninstall {0}?", game.Name),
+                Title = L.F("Uninstall {0}?", game.Title),
                 Content = text,
                 PrimaryButtonText = L.T("Uninstall"),
                 CloseButtonText = L.T("Cancel"),
@@ -83,7 +83,7 @@ static class UninstallFlow
     {
         Log.Info($"Uninstalled: {game.Name}");
         await AppState.RescanAsync();
-        App.Window?.ShowInfo(L.F("{0} was uninstalled.", game.Name));
+        App.Window?.ShowInfo(L.F("{0} was uninstalled.", game.Title));
         App.Window?.GameRemoved(game.Id);
     }
 }

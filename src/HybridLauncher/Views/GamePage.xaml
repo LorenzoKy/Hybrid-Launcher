@@ -710,6 +710,51 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Custom dlls (OptiScaler nightly): extra upscalers and DLSSG frame generation, shared, switched per game. -->
+                <Border x:Name="CustomDllCard" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="10">
+                        <Grid x:Name="CustomDllHeader" ColumnSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel x:Name="CustomDllTitle" Spacing="2" VerticalAlignment="Center" Background="Transparent">
+                                <TextBlock Text="Custom DLLs" Style="{StaticResource SectionTitle}" />
+                                <TextBlock x:Name="CustomDllSummary" Style="{StaticResource RowDescription}" />
+                            </StackPanel>
+                            <Button x:Name="CustomDllAddButton" Grid.Column="1" Style="{StaticResource IconButton}" ToolTipService.ToolTip="Add custom dlls (copied into the shared folder)">
+                                <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                <Button.Flyout>
+                                    <MenuFlyout x:Name="CustomDllAddMenu" Placement="BottomEdgeAlignedRight">
+                                        <MenuFlyoutItem Text="DLL files…" Click="CustomDllAddFiles_Click">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="A folder laid out for OptiScaler…" Click="CustomDllAddFolder_Click">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
+                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CustomDllRefresh_Click" ToolTipService.ToolTip="Refresh">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                            </Button>
+                            <Button Grid.Column="3" Style="{StaticResource IconButton}" Click="CustomDllOpen_Click" ToolTipService.ToolTip="Open the shared custom dlls folder">
+                                <FontIcon Glyph="&#xE838;" FontSize="14" />
+                            </Button>
+                        </Grid>
+                        <StackPanel x:Name="CustomDllBody" Spacing="10">
+                        <TextBlock Style="{StaticResource RowDescription}"
+                                   Text="Extra upscalers and DLSSG frame generation for OptiScaler nightly builds, kept in one shared folder. The switches are for this game only: an entry turned on goes into its custom folder, and OptiScaler lists it in its menu (upscalers under the entry's name in the DX12 upscaler list)." />
+                        <StackPanel x:Name="CustomDllList" Spacing="4" />
+                        <HyperlinkButton x:Name="CustomDllEmpty" Click="CustomDllAddFiles_Click" Padding="0">
+                            <TextBlock Text="No custom dlls yet: add one" TextWrapping="Wrap" />
+                        </HyperlinkButton>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- Every OptiScaler version kept on this PC, each with a bin. -->
                 <Border x:Name="VersionsCard" Style="{StaticResource CardStyle}">
                     <StackPanel Spacing="10">
