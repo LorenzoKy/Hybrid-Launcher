@@ -13,6 +13,8 @@
   <a href="https://github.com/LorenzoKy/Hybrid-Launcher/releases"><img src="docs/images/button-download.svg" height="52" alt="Download Hybrid Launcher" /></a>
   &nbsp;
   <a href="https://ko-fi.com/lorenzoky"><img src="docs/images/button-support.svg" height="52" alt="Support Hybrid Launcher on Ko-fi" /></a>
+  <br />
+  <a href="https://discord.com/invite/yjXsQehpaR"><img src="docs/images/button-discord.svg" height="52" alt="Join the Hybrid Launcher Discord server" /></a>
 </p>
 
 <p align="center">
@@ -20,10 +22,6 @@
   <img alt="Windows 11, 64-bit" src="https://img.shields.io/badge/Windows-11%20%C2%B7%2064--bit-2A2E38" />
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-555" /></a>
   <a href="https://lorenzoky.github.io/Hybrid-Launcher/"><img alt="Website" src="https://img.shields.io/badge/website-lorenzoky.github.io-555" /></a>
-</p>
-
-<p align="center">
-  <a href="https://discord.com/invite/yjXsQehpaR"><img src="docs/images/banner-discord.svg" width="820" alt="Join the Hybrid Launcher Discord server" /></a>
 </p>
 
 <div align="center">
