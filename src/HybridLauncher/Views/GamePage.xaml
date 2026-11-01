@@ -247,7 +247,7 @@
 
                             <!-- Smart HDR for this game: Windows HDR on while it runs, off again when it closes. -->
                             <StackPanel x:Name="LaunchToggles" Grid.Column="2" Orientation="Horizontal" Spacing="10">
-                                <ToggleButton x:Name="HdrToggle" Style="{StaticResource GlassToggleButton}" VerticalAlignment="Stretch" Padding="12,4" Click="HdrToggle_Click">
+                                <ToggleButton x:Name="HdrToggle" Style="{StaticResource GlassToggleButton}" VerticalAlignment="Stretch" Padding="10,2" Click="HdrToggle_Click">
                                     <!-- Checked keeps the bar's look (no accent fill, no rim): the lit sun shows the state. -->
                                     <ToggleButton.Resources>
                                         <LinearGradientBrush x:Key="ToggleButtonBackgroundChecked" StartPoint="0,0" EndPoint="0,1">
@@ -263,10 +263,10 @@
                                         <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="White" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#CCFFFFFF" />
                                     </ToggleButton.Resources>
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
                                         <!-- A bare sun, like the folder buttons' glyphs: amber-to-pink while Smart HDR is on, grey while off. -->
-                                        <Border x:Name="HdrIcon" Width="22" Height="30" VerticalAlignment="Center">
-                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="18" />
+                                        <Border x:Name="HdrIcon" Width="24" Height="24" VerticalAlignment="Center">
+                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="22" />
                                         </Border>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock Text="HDR" FontWeight="Bold" FontSize="13" CharacterSpacing="60" />
@@ -275,10 +275,10 @@
                                     </StackPanel>
                                 </ToggleButton>
                                 <!-- Cloud saves for this game: its state at a glance, the menu (sync now, older copies, folder) on click. -->
-                                <Button x:Name="CloudButton" Style="{StaticResource GlassButton}" VerticalAlignment="Stretch" Padding="12,4" Click="CloudButton_Click">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <Grid Width="22" Height="30" VerticalAlignment="Center">
-                                            <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="18" />
+                                <Button x:Name="CloudButton" Style="{StaticResource GlassButton}" VerticalAlignment="Stretch" Padding="10,2" Click="CloudButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Grid Width="24" Height="24" VerticalAlignment="Center">
+                                            <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="22" />
                                             <ProgressRing x:Name="CloudRing" Width="22" Height="22" IsActive="False" Visibility="Collapsed" Foreground="#FF4FC3F7" />
                                         </Grid>
                                         <StackPanel VerticalAlignment="Center">
