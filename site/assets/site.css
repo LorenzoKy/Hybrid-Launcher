@@ -223,6 +223,23 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 .card-link h3::after { content: " →"; color: var(--red-soft); }
 .card-link p { margin: 0; font-size: 15.5px; }
 
+/* Discord banner: the server's blurple, with a soft light behind the logo */
+.discord-banner { position: relative; display: flex; align-items: center; gap: 28px; padding: 32px 36px; border-radius: var(--radius); overflow: hidden; isolation: isolate;
+  color: #fff; text-decoration: none !important; background: linear-gradient(135deg, #5865f2, #4048c8 60%, #2a2e8c);
+  box-shadow: 0 18px 60px rgba(88, 101, 242, .28), inset 0 1px 0 rgba(255,255,255,.2); transition: transform .25s var(--ease), box-shadow .25s ease; }
+.discord-banner::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(260px 160px at 70px 50%, rgba(255,255,255,.2), transparent 70%); }
+.discord-banner:hover { color: #fff; transform: translateY(-3px); box-shadow: 0 24px 70px rgba(88, 101, 242, .42), inset 0 1px 0 rgba(255,255,255,.25); }
+.discord-logo { width: 72px; height: 55px; flex: none; fill: #fff; }
+.discord-text { flex: 1; min-width: 0; }
+.discord-banner .eyebrow { color: rgba(255,255,255,.75); margin-bottom: 6px; }
+.discord-banner h2 { font-size: clamp(24px, 2.6vw, 32px); margin: 0 0 6px; }
+.discord-banner p { margin: 0; color: #e3e5ff; font-size: 16.5px; }
+.discord-join { flex: none; padding: 12px 20px; border-radius: 11px; background: #fff; color: #3b44c4; font-weight: 700; transition: transform .25s var(--ease); }
+.discord-banner:hover .discord-join { transform: translateX(3px); }
+@media (max-width: 720px) {
+  .discord-banner { flex-direction: column; align-items: flex-start; gap: 18px; padding: 26px 22px; }
+}
+
 /* How it works: three steps on a glowing line */
 .steps { position: relative; list-style: none; margin: 44px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .steps::before { content: ""; position: absolute; left: 8%; right: 8%; top: 45px; height: 2px; z-index: 0;

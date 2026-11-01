@@ -22,6 +22,10 @@
   <a href="https://lorenzoky.github.io/Hybrid-Launcher/"><img alt="Website" src="https://img.shields.io/badge/website-lorenzoky.github.io-555" /></a>
 </p>
 
+<p align="center">
+  <a href="https://discord.com/invite/yjXsQehpaR"><img src="docs/images/banner-discord.svg" width="820" alt="Join the Hybrid Launcher Discord server" /></a>
+</p>
+
 <div align="center">
 
 **🧭 Jump to:** [🎮 What it is](#what-is-hybrid-launcher) · [📦 Quick start](#quick-start) · [✨ Features](#features) · [❓ FAQ](#faq) · [📚 Docs](#documentation) · [🐞 Report a bug](#reporting-bugs) · [☕ Support](#support-the-project) · [📜 License](#license) · [⚠️ Disclaimer](#disclaimer)

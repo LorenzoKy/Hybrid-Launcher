@@ -2,6 +2,11 @@
 
 Hybrid Launcher is a personal passion project made in limited free time. These are the ways to reach it.
 
+## Community: Discord
+
+News, help from other players and a say in what comes next:
+[join the Hybrid Launcher Discord server](https://discord.com/invite/yjXsQehpaR).
+
 ## Collaborations and business enquiries
 
 For working together on the project, partnerships and commercial information, write to me:
