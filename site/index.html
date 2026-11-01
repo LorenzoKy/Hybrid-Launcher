@@ -19,6 +19,7 @@
 <!-- One set of line icons for the whole page (used with <svg><use href="#i-..."/></svg>). -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21s-8.5-5.2-8.5-11.2A4.8 4.8 0 0 1 12 6.6a4.8 4.8 0 0 1 8.5 3.2C20.5 15.8 12 21 12 21z"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
     <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
     <symbol id="i-upscale" viewBox="0 0 24 24"><rect x="3" y="11" width="9" height="9" rx="1.5"/><path d="M13 3h8v8M21 3l-8 8"/></symbol>
@@ -200,17 +201,21 @@
 </section>
 
 <section id="custom" class="band">
-  <div class="wrap two">
+  <div class="wrap two pick">
     <div>
       <div class="eyebrow reveal">Make it yours</div>
       <h2 class="reveal">A launcher, a mod manager, or both.</h2>
-      <p class="reveal muted">Hybrid Launcher adapts to how you play.</p>
+      <p class="reveal muted">Hybrid Launcher adapts to how you play. At the first start you choose what you need: a starting point, a live preview of a game's page, a switch per feature. What you leave out is only hidden, and <b>Settings → Features</b> brings it back any time.</p>
+      <ul class="modes">
+        <li class="reveal"><svg class="ico"><use href="#i-download"/></svg><div><b>Your stores in one launcher</b>Sign in and download, update and play your Steam, Epic and GOG games from one place.</div></li>
+        <li class="reveal"><svg class="ico"><use href="#i-upscale"/></svg><div><b>Just a mod manager</b>Skip accounts and downloads, and use it only for OptiScaler, ReShade, RenoDX and Luma on the games you already have.</div></li>
+        <li class="reveal"><svg class="ico"><use href="#i-layout"/></svg><div><b>Your layout</b>Game page tabs, banner and launch bar parts, launcher groups, colour themes, the achievement pop-up, tray mode: much of it can be toggled, dragged and hidden.</div></li>
+      </ul>
     </div>
-    <ul class="modes">
-      <li class="reveal"><svg class="ico"><use href="#i-download"/></svg><div><b>Your stores in one launcher</b>Sign in and download, update and play your Steam, Epic and GOG games from one place.</div></li>
-      <li class="reveal"><svg class="ico"><use href="#i-upscale"/></svg><div><b>Just a mod manager</b>Skip accounts and downloads, and use it only for OptiScaler, ReShade, RenoDX and Luma on the games you already have.</div></li>
-      <li class="reveal"><svg class="ico"><use href="#i-layout"/></svg><div><b>Your layout</b>Game page tabs, banner and launch bar parts, launcher groups, colour themes, the achievement pop-up, tray mode: much of it can be toggled, dragged and hidden.</div></li>
-    </ul>
+    <figure class="picker reveal">
+      <img src="assets/shots/features.webp" width="956" height="1038" loading="lazy" alt="Choose what you need: five starting points (Everything, No achievements, OptiScaler + ReShade, Only OptiScaler, Just a launcher), a preview of a game's page with the tabs that stay, and a switch for each feature: OptiScaler, ReShade &amp; Mods, Achievements, Smart HDR, Cloud saves, PCGamingWiki, Notes &amp; shortcuts.">
+      <figcaption>Choose what you need, at the first start or in Settings → Features.</figcaption>
+    </figure>
   </div>
 </section>
 
@@ -235,7 +240,7 @@
     <h2 class="reveal">Support helps cover the costs.</h2>
     <p class="reveal">Support is really appreciated: it encourages me to keep developing Hybrid Launcher and helps cover its costs. But be warned: for now, updates come at random times and are not guaranteed.</p>
     <p class="reveal">Thank you.</p>
-    <p class="reveal"><a class="btn kofi big" href="https://ko-fi.com/lorenzoky">☕ Support on Ko-fi</a></p>
+    <p class="reveal"><a class="btn kofi big" href="https://ko-fi.com/lorenzoky"><svg class="ico"><use href="#i-heart"/></svg>Support Hybrid Launcher</a></p>
   </div>
 </section>
 
@@ -272,6 +277,7 @@
   <div class="wrap narrow center">
     <img class="final-logo reveal" src="assets/logo.png" alt="">
     <h2 class="reveal">Ready to try it?</h2>
+    <p class="reveal muted final-line">Grab a pizza slice while you're at it.</p>
     <p class="reveal"><a class="btn primary big" href="https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest" data-download><svg class="ico"><use href="#i-download"/></svg><span>Download for Windows</span></a></p>
   </div>
 </section>
