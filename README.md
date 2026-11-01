@@ -155,8 +155,8 @@ More answers in [FAQ and troubleshooting](docs/faq.md).
 > [!WARNING]
 > **Please read this before opening an issue.**
 >
-> Hybrid Launcher is a **personal passion project**. The time I can spend on it is very limited, so **updates come at
-> random times and are not guaranteed**. What helps it keep going:
+> Hybrid Launcher is a **personal passion project**, for now funded **only out of my own pocket**. Those funds and my time
+> are limited, so **there is no guarantee it will keep going**. What helps it keep going:
 >
 > - people to work with (see [how to get in touch](SUPPORT.md)),
 > - maintainers and contributors (see [CONTRIBUTING.md](CONTRIBUTING.md)),
@@ -177,8 +177,8 @@ For collaborations and business enquiries (not bug reports), write to
 
 ## Support the project
 
-Hybrid Launcher is **free**, and support helps cover its costs. Support is really appreciated: it encourages me to keep
-developing Hybrid Launcher. But be warned: for now, updates come at **random times and are not guaranteed**. Thank you.
+Hybrid Launcher is **free**. For now it is funded **only out of my own pocket, and those funds are limited**: there is
+**no guarantee it will keep going**. Your support could make that possible. Thank you.
 
 You can support it on [Ko-fi](https://ko-fi.com/lorenzoky), from the button at the top of this page or the **Sponsor**
 button of this repository.
