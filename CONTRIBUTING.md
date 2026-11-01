@@ -2,6 +2,7 @@
 
 Help is welcome. Without people to work with, updates stay rare, so contributors and maintainers make the biggest
 difference to this project.
+Want to help developing the project? Get in touch: LorenzoKy on discord, or write me at lorenzoillumino@gmail.com.
 
 ## Ways to help
 
