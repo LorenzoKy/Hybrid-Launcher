@@ -343,6 +343,9 @@ public static class OptiInstaller
             File.Copy(Path.Combine(target, "OptiScaler.ini"), keep, overwrite: true);
         }
 
+        // The custom dlls first, while OptiScaler.ini still says where OptiScaler's folder is.
+        Opti.CustomDlls.Sync(m, []);
+
         foreach (var (rel, hash) in m.Files)
         {
             var full = Path.Combine(target, rel);
@@ -362,7 +365,6 @@ public static class OptiInstaller
             if (File.Exists(full) && Hash(full) == hash) TryDelete(full);
         }
 
-        Opti.CustomDlls.Sync(m, []);
         foreach (var f in RuntimeFiles) TryDelete(Path.Combine(target, f));
 
         RemoveCreatedDirs(m);

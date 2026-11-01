@@ -17,12 +17,15 @@ out this build updates to it by itself.
 - **Rename a game.** Right-click it in the list or the library → *Rename…*. The new name shows everywhere in the app (list,
   library, game page, messages) and the search finds both names. The game keeps its store name underneath, so the
   OptiScaler wiki, PCGamingWiki and the store pages still find it. Empty the name to go back.
-- **Custom DLLs** (OptiScaler nightly, from 29 October 2026). A new card in the OptiScaler tab keeps extra upscalers and
-  DLSSG frame generation in one shared folder, like the ASI plugins: add the dlls (or a folder already laid out with `ffx`,
-  `dlss` or `dlssg` inside), say what they are and give them a name. A switch per game copies the entry into the game's
-  `custom` folder, where OptiScaler finds it by itself: upscalers appear under their name in its DX12 upscaler list,
-  DLSSG as *Nvngx Replacement (FG Nvngx)*. Rename and delete work for every game at once; uninstalling OptiScaler takes the
-  files out too.
+- **Custom DLLs** (OptiScaler nightly, end of October 2026). Use any FSR or DLSS upscaler dll you want, or a DLSSG
+  replacement, next to the ones the game or the driver gives you, without replacing any file. A new card in the OptiScaler
+  tab keeps them in one shared folder, grouped in entries: each entry has a name (the one OptiScaler's menu shows) and can
+  hold an FFX upscaler for DX12 (`ffx`) and Vulkan (`ffx_vk`), a DLSS runtime (`dlss`) and a DLSSG replacement (`dlssg`).
+  Add dlls and choose each one's name and kind, move a dll to another entry, rename or delete it; the dll OptiScaler will
+  load is marked. A switch per game copies the entry into OptiScaler's own `custom` folder (`OptiScaler\custom` next to the
+  renamed dll); pick it in OptiScaler's upscaler or FG list. Renaming an entry renames it in every game, and OptiScaler.ini
+  settings that picked it follow the new name. A folder already laid out for OptiScaler, or an old `Extra dlls\4.0.3`
+  folder, can be added as it is. Uninstalling OptiScaler takes the files out too.
 - **Two new colour themes: Dark and Venom.** *Dark* is a plain near-black background with a soft silver accent, *Venom* a
   deep purple night. Both are always dark.
 

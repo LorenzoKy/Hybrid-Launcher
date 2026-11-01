@@ -126,7 +126,7 @@ public sealed class InstallManifest
     public Dictionary<string, string> AsiPlugins { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Custom dlls copied from the shared folder into custom\&lt;name&gt; (see <see cref="Opti.CustomDlls"/>):
+    /// Custom dlls copied from the shared folder into OptiScaler's custom\&lt;name&gt; (see <see cref="Opti.CustomDlls"/>):
     /// entry name -> (file relative to <see cref="TargetDir"/> -> SHA-256).
     /// </summary>
     public Dictionary<string, Dictionary<string, string>> CustomDlls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -585,9 +585,6 @@ public sealed class AppSettings
 
     /// <summary>Names the user gave to ASI plugins (file name → shown name); the file keeps its own name.</summary>
     public Dictionary<string, string> AsiNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Names the user gave to custom dll entries (folder name → shown name); the folder keeps its own name.</summary>
-    public Dictionary<string, string> CustomDllNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Names the user gave to saved OptiScaler versions (version folder → shown name); the folder keeps its own name.</summary>
     public Dictionary<string, string> VersionNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);

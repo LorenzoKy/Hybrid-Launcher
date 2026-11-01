@@ -131,7 +131,6 @@ public static class SettingsStore
             s.InstallRoot = null;
         }
         s.AsiNames = new Dictionary<string, string>(s.AsiNames ?? [], StringComparer.OrdinalIgnoreCase);
-        s.CustomDllNames = new Dictionary<string, string>(s.CustomDllNames ?? [], StringComparer.OrdinalIgnoreCase);
         s.GameNames = new Dictionary<string, string>(s.GameNames ?? [], StringComparer.OrdinalIgnoreCase);
         s.VersionNames = new Dictionary<string, string>(s.VersionNames ?? [], StringComparer.OrdinalIgnoreCase);
         s.CollapsedGroups = new HashSet<string>(s.CollapsedGroups ?? [], StringComparer.OrdinalIgnoreCase);

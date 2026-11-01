@@ -47,44 +47,60 @@ switch (cmd)
 {
     case "customdlls":
     {
-        // Needs HL_DATA (the shared folder is written): a scratch install folder with a file that is not ours under custom\.
+        // Needs HL_DATA (the shared folder is written). A fake install with OptiScaler in its own "OptiScaler" folder, as the bat
+        // makes it: custom dlls go to OptiScaler/custom/<name>/<kind>.
         var game = Path.Combine(Path.GetTempPath(), "hl-customdlls-" + Guid.NewGuid().ToString("N")[..6]);
-        Directory.CreateDirectory(game);
-        var picked = Path.Combine(game, "..", Path.GetFileName(game) + "-src");
+        var opti = Path.Combine(game, "OptiScaler");
+        Directory.CreateDirectory(opti);
+        File.WriteAllText(Path.Combine(game, "OptiScaler.ini"), "[Upscalers]\nDx12Upscaler=Smoke FSR\nVulkanUpscaler=auto\n[FrameGen]\nFGNvngxReplacement=auto\n[Libraries]\nOptiDllPath=auto\n");
+        var picked = Path.Combine(Path.GetTempPath(), Path.GetFileName(game) + "-src");
         Directory.CreateDirectory(picked);
-        File.WriteAllText(Path.Combine(picked, "amd_fidelityfx_upscaler_dx12.dll"), "ffx v1");
+        File.WriteAllText(Path.Combine(picked, "a.dll"), "ffx dx12");
+        File.WriteAllText(Path.Combine(picked, "b.dll"), "ffx vk");
         File.WriteAllText(Path.Combine(picked, "helper.dll"), "helper");
-        CustomDlls.Add("Smoke FFX", CustomDllKind.Ffx, Directory.GetFiles(picked));
+        CustomDlls.AddFile("Smoke FSR", CustomDllKind.Ffx, Path.Combine(picked, "a.dll"), "amd_fidelityfx_upscaler_dx12.dll");
+        CustomDlls.AddFile("Smoke FSR", CustomDllKind.Ffx, Path.Combine(picked, "helper.dll"), "helper.dll");
+        CustomDlls.AddFile("Smoke FSR", CustomDllKind.FfxVk, Path.Combine(picked, "b.dll"), "my_vk.dll");
+        var entry = CustomDlls.Entries().Single(e => e.Name == "Smoke FSR");
+        Check(entry.Kinds.SequenceEqual([CustomDllKind.Ffx, CustomDllKind.FfxVk]), "one entry groups the DX12 and the Vulkan FFX dll");
+        Check(entry.Files.Single(f => f.Loaded && f.Kind == CustomDllKind.Ffx).FileName == "amd_fidelityfx_upscaler_dx12.dll", "the standard name is the one OptiScaler loads");
+        Check(CustomDlls.Guess("amd_fidelityfx_upscaler_vk.dll") == CustomDllKind.FfxVk && CustomDlls.Guess("nvngx_dlssg.dll") == CustomDllKind.Dlssg
+              && CustomDlls.Guess("nvngx.dll") == CustomDllKind.Dlss && CustomDlls.Guess("amd_fidelityfx_upscaler_dx12.dll") == CustomDllKind.Ffx, "kinds guessed from file names");
+
         var m = new InstallManifest { TargetDir = game };
-        CustomDlls.Sync(m, ["Smoke FFX"]);
-        var ffx = Path.Combine(game, "custom", "Smoke FFX", "ffx", "amd_fidelityfx_upscaler_dx12.dll");
-        Check(File.ReadAllText(ffx) == "ffx v1" && m.CustomDlls["Smoke FFX"].Count == 2, "entry copied into custom/<name>/ffx");
-        Check(CustomDlls.Entries().Any(e => e.Name == "Smoke FFX" && e.Kinds.SequenceEqual([CustomDllKind.Ffx])), "entry listed as an FFX upscaler");
+        CustomDlls.Sync(m, ["Smoke FSR"]);
+        var ffx = Path.Combine(opti, "custom", "Smoke FSR", "ffx", "amd_fidelityfx_upscaler_dx12.dll");
+        Check(File.ReadAllText(ffx) == "ffx dx12" && File.Exists(Path.Combine(opti, "custom", "Smoke FSR", "ffx_vk", "my_vk.dll")), "copied next to OptiScaler.dll: OptiScaler/custom/<name>/ffx and ffx_vk");
+        Check(!Directory.Exists(Path.Combine(game, "custom")), "nothing in the game folder's own custom folder");
 
-        // The shared copy changes (one dll only now): the install follows and drops the file that went away.
-        File.Delete(Path.Combine(picked, "helper.dll"));
-        File.WriteAllText(Path.Combine(picked, "amd_fidelityfx_upscaler_dx12.dll"), "ffx v2");
-        CustomDlls.Add("Smoke FFX", CustomDllKind.Ffx, Directory.GetFiles(picked));
-        CustomDlls.Sync(m, ["Smoke FFX"]);
-        Check(File.ReadAllText(ffx) == "ffx v2" && !File.Exists(Path.Combine(Path.GetDirectoryName(ffx)!, "helper.dll")), "replaced entry copied again, old file gone");
+        // A dll moved to another kind and renamed follows in the game; the old one leaves.
+        CustomDlls.MoveFile("Smoke FSR", CustomDllKind.FfxVk, "my_vk.dll", "Smoke FSR", CustomDllKind.FfxVk, "amd_fidelityfx_upscaler_vk.dll");
+        CustomDlls.Sync(m, ["Smoke FSR"]);
+        Check(!File.Exists(Path.Combine(opti, "custom", "Smoke FSR", "ffx_vk", "my_vk.dll")) && File.Exists(Path.Combine(opti, "custom", "Smoke FSR", "ffx_vk", "amd_fidelityfx_upscaler_vk.dll")), "renamed dll follows in the game");
 
-        // A file of the user's own in the same place is never overwritten nor deleted.
-        var foreign = Path.Combine(game, "custom", "Mine", "dlss", "nvngx.dll");
+        // Renaming the entry renames it in the game and in OptiScaler.ini.
+        CustomDlls.RenameEntry("Smoke FSR", "Smoke FSR 4.0.3");
+        CustomDlls.Sync(m, ["Smoke FSR 4.0.3"]);
+        CustomDlls.RenameInIni(game, "Smoke FSR", "Smoke FSR 4.0.3");
+        Check(!Directory.Exists(Path.Combine(opti, "custom", "Smoke FSR")) && File.Exists(Path.Combine(opti, "custom", "Smoke FSR 4.0.3", "ffx", "amd_fidelityfx_upscaler_dx12.dll")), "renamed entry renamed in the game");
+        Check(HybridLauncher.Core.Ini.IniDocument.Load(Path.Combine(game, "OptiScaler.ini")).Get("Upscalers", "Dx12Upscaler") == "Smoke FSR 4.0.3", "Dx12Upscaler follows the new name");
+
+        // A custom folder of the user's own stays; turning the entry off and uninstalling leave nothing of ours.
+        var foreign = Path.Combine(opti, "custom", "Mine", "dlss", "nvngx.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
         File.WriteAllText(foreign, "mine");
         CustomDlls.Sync(m, []);
-        Check(!File.Exists(ffx) && !Directory.Exists(Path.Combine(game, "custom", "Smoke FFX")) && m.CustomDlls.Count == 0, "turned off: entry removed from the install");
+        Check(!Directory.Exists(Path.Combine(opti, "custom", "Smoke FSR 4.0.3")) && m.CustomDlls.Count == 0, "turned off: entry removed from the install");
         Check(File.ReadAllText(foreign) == "mine", "a custom folder of the user's own stays");
-        File.Delete(foreign);
-        Directory.Delete(Path.Combine(game, "custom"), recursive: true);
-
-        // Uninstall takes it out with the rest, the custom folder it made included.
-        CustomDlls.Sync(m, ["Smoke FFX"]);
+        Directory.Delete(Path.Combine(opti, "custom"), recursive: true);
+        CustomDlls.Sync(m, ["Smoke FSR 4.0.3"]);
         OptiInstaller.Uninstall(m);
-        Check(!Directory.Exists(Path.Combine(game, "custom")), "uninstall removes the custom folder it made");
+        Check(!Directory.Exists(Path.Combine(opti, "custom")), "uninstall removes the custom folder it made");
 
-        CustomDlls.Delete("Smoke FFX");
-        Check(CustomDlls.Entries().All(e => e.Name != "Smoke FFX"), "entry deleted from the shared folder");
+        CustomDlls.DeleteFile("Smoke FSR 4.0.3", CustomDllKind.Ffx, "helper.dll");
+        Check(CustomDlls.Entries().Single(e => e.Name == "Smoke FSR 4.0.3").Files.Count == 2, "a single dll deleted");
+        CustomDlls.Delete("Smoke FSR 4.0.3");
+        Check(CustomDlls.Entries().All(e => !e.Name.StartsWith("Smoke")), "entry deleted from the shared folder");
         Directory.Delete(game, recursive: true);
         Directory.Delete(picked, recursive: true);
         break;

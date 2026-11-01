@@ -728,7 +728,7 @@
                                 <FontIcon Glyph="&#xE710;" FontSize="14" />
                                 <Button.Flyout>
                                     <MenuFlyout x:Name="CustomDllAddMenu" Placement="BottomEdgeAlignedRight">
-                                        <MenuFlyoutItem Text="DLL files…" Click="CustomDllAddFiles_Click">
+                                        <MenuFlyoutItem Text="DLL files…" Click="CustomDllAddFiles_Click" ToolTipService.ToolTip="Pick dlls, name them and say what they are">
                                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
                                         </MenuFlyoutItem>
                                         <MenuFlyoutItem Text="A folder laid out for OptiScaler…" Click="CustomDllAddFolder_Click">
@@ -746,7 +746,7 @@
                         </Grid>
                         <StackPanel x:Name="CustomDllBody" Spacing="10">
                         <TextBlock Style="{StaticResource RowDescription}"
-                                   Text="Extra upscalers and DLSSG frame generation for OptiScaler nightly builds, kept in one shared folder. The switches are for this game only: an entry turned on goes into its custom folder, and OptiScaler lists it in its menu (upscalers under the entry's name in the DX12 upscaler list)." />
+                                   Text="Any FSR or DLSS upscaler dll, or a DLSSG replacement, next to the ones the game or the driver gives you (OptiScaler nightly). Each entry groups dlls under one name, the name OptiScaler's menu shows; the switch is for this game only and copies the entry into OptiScaler's custom folder. Pick it in OptiScaler's upscaler or FG list." />
                         <StackPanel x:Name="CustomDllList" Spacing="4" />
                         <HyperlinkButton x:Name="CustomDllEmpty" Click="CustomDllAddFiles_Click" Padding="0">
                             <TextBlock Text="No custom dlls yet: add one" TextWrapping="Wrap" />
