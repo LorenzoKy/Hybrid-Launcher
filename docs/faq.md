@@ -1,5 +1,7 @@
 # FAQ and troubleshooting
 
+An error message in the app? See the [troubleshooting guide](troubleshooting.md): every red message links to its section.
+
 **A game is missing from the list.**
 Check that its launcher is ticked in *Settings → Features* (the stores to scan), or add it with **Add a game or games folder**.
 

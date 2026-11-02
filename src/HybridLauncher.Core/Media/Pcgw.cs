@@ -489,7 +489,7 @@ public static partial class Pcgw
                 if (!Directory.Exists(c)) continue;
                 if (parts[i].Contains('*') || parts[i].Contains('?'))
                 {
-                    next.AddRange(Directory.EnumerateDirectories(c, parts[i]).Take(8));
+                    next.AddRange(Directory.EnumerateDirectories(c, parts[i]).Take(32));
                     if (last && next.Count == 0 && Directory.EnumerateFiles(c, parts[i]).Any()) return c;
                 }
                 else
@@ -502,7 +502,21 @@ public static partial class Pcgw
             candidates = next;
             if (candidates.Count == 0) return null;
         }
-        return candidates.FirstOrDefault(Directory.Exists);
+        // A wildcard for an id often matches several folders: one per Steam account or profile that ever played here
+        // (Spider-Man 2 keeps four in Documents). The one in use is the one the game wrote in last, not the first by name.
+        return candidates.Where(Directory.Exists).OrderByDescending(LastWrite).FirstOrDefault();
+    }
+
+    /// <summary>When anything in the folder was last written (its files, a few levels down; the folder's own time when empty).</summary>
+    static DateTime LastWrite(string dir)
+    {
+        try
+        {
+            var options = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true };
+            return new DirectoryInfo(dir).EnumerateFiles("*", options).Take(5000).Select(f => f.LastWriteTimeUtc)
+                .DefaultIfEmpty(Directory.GetLastWriteTimeUtc(dir)).Max();
+        }
+        catch { return DateTime.MinValue; }
     }
 
     // ---------- page lookup ----------

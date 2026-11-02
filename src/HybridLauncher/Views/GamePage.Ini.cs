@@ -1061,7 +1061,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not restore the defaults"), ex.Message);
+            App.Window?.ShowError(L.T("Could not restore the defaults"), ex.Message, ex);
         }
     }
 }

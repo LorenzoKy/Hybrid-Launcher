@@ -102,7 +102,7 @@ public partial class App : Application
         Log.Info($"Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, {System.Globalization.CultureInfo.CurrentUICulture.Name}");
         SettingsStore.Load();
         L.Init(AppState.Settings.Language);
-        Helpers.Startup.CarryOver();
+        Helpers.Startup.CarryOver(AppState.Settings);
         Window = new MainWindow();
         // Started with Windows: only the icon in the notification area, the window opens from there.
         // From a desktop shortcut: the game starts, Hybrid Launcher stays in the notification area to watch it.

@@ -41,14 +41,22 @@ public sealed partial class GamePage
             return;
         }
         CloudStatus status;
+        bool unreachable = false;
         try
         {
-            if (CloudSaves.On && !settings.CloudOff && (settings.CloudSaveDir is null || !settings.CloudConfigChecked)) await CloudSync.PartsAsync(game, settings, _pageCts.Token);
-            status = await CloudSaves.StatusAsync(game, settings);
+            // The saves folder found on the wiki is looked for again now and then (a game with one folder per account).
+            if (CloudSaves.On && !settings.CloudOff && !settings.CloudSaveDirPicked) await CloudSync.PartsAsync(game, settings, _pageCts.Token);
+            // A cloud that does not answer leaves the button saying so, not waiting.
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(_pageCts.Token);
+            limit.CancelAfter(TimeSpan.FromSeconds(20));
+            status = await CloudSaves.StatusAsync(game, settings, ct: limit.Token);
+            if (status.State is not (CloudState.Off or CloudState.NoFolder)) _ = LoadHistoryAsync(game, null);
         }
         catch (Exception ex)
         {
+            if (_pageCts.IsCancellationRequested) return;
             Log.Warn($"Cloud status of {game.Name}: {ex.Message}");
+            unreachable = true;
             status = new CloudStatus(CloudState.NoFolder, settings.CloudSaveDir, null, settings.CloudSyncedAt);
         }
         if (ask != _cloudAsk || game != _game) return;
@@ -67,6 +75,7 @@ public sealed partial class GamePage
         {
             CloudState.Off when !CloudSaves.On => L.T("Set up"),
             CloudState.Off => L.T("Off"),
+            CloudState.NoFolder when unreachable => L.T("Cloud not reachable"),
             CloudState.NoFolder => L.T("No saves folder"),
             CloudState.Synced => status.Cloud is null ? L.T("Nothing to sync") : L.T("Synced"),
             CloudState.ChangedHere or CloudState.NotUploaded => L.T("Goes up after play"),
@@ -86,7 +95,7 @@ public sealed partial class GamePage
             : L.F("Cloud saves with {0}.", CloudSaves.StoreName));
     }
 
-    async void CloudButton_Click(object sender, RoutedEventArgs e)
+    void CloudButton_Click(object sender, RoutedEventArgs e)
     {
         if (_game is null) return;
         var game = _game;
@@ -120,23 +129,12 @@ public sealed partial class GamePage
                 if (!await ConfirmAsync(L.T("Use the cloud's saves?"), L.T("The saves on this PC are replaced by the cloud's copy. They are zipped into Hybrid Launcher's backups first."), L.T("Use the cloud's"))) return;
                 await RunCloud(() => CloudSaves.RestoreAsync(game, settings), L.T("The cloud's saves are on this PC now."));
             }, _cloud?.Cloud is not null && !GameSessions.IsActive(game.Id)));
-            // The older copies, asked of the provider when the menu opens (a slow answer leaves the list empty, not the menu waiting).
-            List<CloudCopy> history = [];
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                history = await CloudSaves.HistoryAsync(game, cts.Token);
-            }
-            catch (Exception ex) { Log.Warn($"Cloud history of {game.Name}: {ex.Message}"); }
-            if (game != _game) return;
-            var older = new MenuFlyoutSubItem { Text = L.T("Restore an older copy"), Icon = new FontIcon { Glyph = "" }, IsEnabled = history.Count > 0 && !GameSessions.IsActive(game.Id) };
-            foreach (var f in history)
-                older.Items.Add(Item($"{f.Name}  ·  {DiskUsage.Format(f.Bytes)}", "", async () =>
-                {
-                    if (!await ConfirmAsync(L.T("Restore this copy?"), L.F("The saves on this PC are replaced by the copy of {0}. They are zipped into Hybrid Launcher's backups first, and the restored copy goes up after you play.", f.Name), L.T("Restore"))) return;
-                    await RunCloud(() => CloudSaves.RestoreAsync(game, settings, f), L.T("The older copy is on this PC now."));
-                }));
+            // The older copies: the list read last (in the background, when the page showed the button's state) fills the menu
+            // at once, and a fresh one replaces it when the cloud answers. The menu never waits for the cloud.
+            var older = new MenuFlyoutSubItem { Text = L.T("Restore an older copy"), Icon = new FontIcon { Glyph = "" } };
+            FillOlder(older, game, settings);
             menu.Items.Add(older);
+            _ = LoadHistoryAsync(game, () => FillOlder(older, game, settings));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(Item(settings.CloudSaveDir is null ? L.T("Choose the saves folder…") : L.T("Change the saves folder…"), "", async () =>
             {
@@ -166,6 +164,39 @@ public sealed partial class GamePage
         menu.ShowAt(CloudButton);
     }
 
+    /// <summary>Each game's older cloud copies as last read, and when: the cloud menu shows them without asking the cloud.</summary>
+    static readonly Dictionary<string, (List<CloudCopy> Copies, DateTime At)> History = new(StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> HistoryLoading = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Reads the game's older copies in the background (not again within 30 s), then runs <paramref name="then"/> on the page.</summary>
+    async Task LoadHistoryAsync(Game game, Action? then)
+    {
+        if (History.TryGetValue(game.Id, out var known) && DateTime.UtcNow - known.At < TimeSpan.FromSeconds(30)) { then?.Invoke(); return; }
+        if (!HistoryLoading.Add(game.Id)) return;
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            History[game.Id] = (await CloudSaves.HistoryAsync(game, limit.Token), DateTime.UtcNow);
+        }
+        catch (Exception ex) { Log.Warn($"Cloud history of {game.Name}: {ex.Message}"); }
+        finally { HistoryLoading.Remove(game.Id); }
+        if (game == _game) then?.Invoke();
+    }
+
+    void FillOlder(MenuFlyoutSubItem older, Game game, GameSettings settings)
+    {
+        older.Items.Clear();
+        var copies = History.TryGetValue(game.Id, out var known) ? known.Copies : null;
+        older.Text = copies is null ? L.T("Restore an older copy (reading the cloud…)") : L.T("Restore an older copy");
+        older.IsEnabled = copies is { Count: > 0 } && !GameSessions.IsActive(game.Id);
+        foreach (var f in copies ?? [])
+            older.Items.Add(Item($"{f.Name}  ·  {DiskUsage.Format(f.Bytes)}", "", async () =>
+            {
+                if (!await ConfirmAsync(L.T("Restore this copy?"), L.F("The saves on this PC are replaced by the copy of {0}. They are zipped into Hybrid Launcher's backups first, and the restored copy goes up after you play.", f.Name), L.T("Restore"))) return;
+                await RunCloud(() => CloudSaves.RestoreAsync(game, settings, f), L.T("The older copy is on this PC now."));
+            }));
+    }
+
     static MenuFlyoutItem Item(string text, string glyph, Action click, bool enabled = true)
     {
         var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph }, IsEnabled = enabled };
@@ -184,7 +215,7 @@ public sealed partial class GamePage
             SettingsStore.Save();
             App.Window?.ShowSuccess(done);
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Cloud saves"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Cloud saves"), ex.Message, ex); }
         CloudSync.Raise(id);
     }
 }

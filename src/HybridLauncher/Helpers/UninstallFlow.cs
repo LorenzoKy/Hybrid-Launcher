@@ -56,7 +56,7 @@ static class UninstallFlow
             if (route != UninstallRoute.Launcher && await Task.Run(() => Uninstaller.IsGone(game))) await GoneAsync(game);
             else _ = WatchAsync(game);
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not uninstall"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not uninstall"), ex.Message, ex); }
     }
 
     /// <summary>Checks the disk every 2 s for 20 minutes (the launcher's own dialog may wait for the user).</summary>

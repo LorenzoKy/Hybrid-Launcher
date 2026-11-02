@@ -15,46 +15,96 @@ public sealed class MirrorStore(IReadOnlyList<ICloudStore> stores) : ICloudStore
 
     sealed record Answer(int Index, ICloudStore Store, CloudManifest? Manifest, Exception? Error);
 
-    /// <summary>Every cloud's manifest of the game, asked at once; throws only when none of them answered.</summary>
+    /// <summary>How long the other clouds get once one has answered: a cloud that hangs does not hold the ones that work.</summary>
+    public static TimeSpan Patience { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Clouds found silent, by name, until when nobody waits for them again (Play asks the clouds two or three times in a row:
+    /// each must not wait the patience again). A cloud that answers meanwhile is waited for again at once.
+    /// </summary>
+    static readonly Dictionary<string, DateTime> Silent = new(StringComparer.OrdinalIgnoreCase);
+
+    static bool IsSilent(ICloudStore s)
+    {
+        lock (Silent) return Silent.TryGetValue(s.Name, out var until) && DateTime.UtcNow < until;
+    }
+
+    /// <summary>
+    /// Every cloud's manifest of the game, asked at once; a cloud still silent <see cref="Patience"/> after another answered
+    /// counts as not answering (its call goes on and ends by itself). Throws only when none of them answered.
+    /// </summary>
     async Task<List<Answer>> AskAllAsync(string key, CancellationToken ct)
     {
-        var answers = await Task.WhenAll(stores.Select(async (s, i) =>
+        var asks = stores.Select(async (s, i) =>
         {
-            try { return new Answer(i, s, await s.ManifestAsync(key, ct), null); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            try
+            {
+                var answer = new Answer(i, s, await s.ManifestAsync(key, ct), null);
+                lock (Silent) Silent.Remove(s.Name);
+                return answer;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 Log.Warn($"Cloud: {s.Name} did not answer: {ex.Message}");
                 return new Answer(i, s, null, ex);
             }
-        }));
+        }).ToList();
+        // Waited for: the clouds not found silent lately (all of them when every one is).
+        var awaited = asks.Where((_, i) => !IsSilent(stores[i])).ToList();
+        if (awaited.Count == 0) awaited = asks;
+        var all = Task.WhenAll(awaited);
+        await Task.WhenAny(awaited);
+        if (!all.IsCompleted) await Task.WhenAny(all, Task.Delay(Patience, ct));
+        ct.ThrowIfCancellationRequested();
+        var answers = asks.Select((t, i) => t.IsCompletedSuccessfully ? t.Result : Late(i)).ToList();
         if (answers.All(a => a.Error is not null)) ExceptionDispatchInfo.Throw(answers[0].Error!);
-        return answers.ToList();
+        return answers;
+
+        Answer Late(int i)
+        {
+            bool known = IsSilent(stores[i]);
+            lock (Silent) Silent[stores[i].Name] = DateTime.UtcNow.AddSeconds(60);
+            if (!known) Log.Warn($"Cloud: {stores[i].Name} did not answer within {Patience.TotalSeconds:0} s, left for the next sync");
+            return new Answer(i, stores[i], null, new TimeoutException(L.F("{0} did not answer in time.", stores[i].Name)));
+        }
     }
 
     static IEnumerable<Answer> NewestFirst(List<Answer> answers) =>
         answers.Where(a => a.Manifest is not null).OrderByDescending(a => a.Manifest!.UpdatedUtc);
 
-    /// <summary>The newest copy, marked <see cref="CloudManifest.Partial"/> when a cloud that answered lacks it.</summary>
+    /// <summary>
+    /// The newest copy, marked <see cref="CloudManifest.Partial"/> when a cloud lacks it, or did not answer: "Synced" only when
+    /// every cloud was seen holding it (a cloud that is down is not in sync, its upload goes again at the next sync).
+    /// </summary>
     public async Task<CloudManifest?> ManifestAsync(string key, CancellationToken ct)
     {
         var answers = await AskAllAsync(key, ct);
         if (NewestFirst(answers).FirstOrDefault()?.Manifest is not { } newest) return null;
-        newest.Partial = answers.Any(a => a.Error is null && a.Manifest?.Hash != newest.Hash);
+        newest.Partial = answers.Any(a => a.Error is not null || a.Manifest?.Hash != newest.Hash);
         return newest;
     }
 
     public async Task PutAsync(string key, string zip, CloudManifest manifest, CloudManifest? old, int keep, CancellationToken ct)
     {
-        var todo = (await AskAllAsync(key, ct)).Where(a => a.Error is null && a.Manifest?.Hash != manifest.Hash).ToList();
-        var errors = new List<Exception>();
-        foreach (var a in todo)
-            try { await a.Store.PutAsync(key, zip, manifest, a.Manifest, keep, ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+        var answers = await AskAllAsync(key, ct);
+        var todo = answers.Where(a => a.Error is null && a.Manifest?.Hash != manifest.Hash).ToList();
+        var missed = answers.Where(a => a.Error is not null).Select(a => (a.Store.Name, a.Error!)).ToList();
+        if (missed.Count > 0)
+            Log.Info($"Cloud: {key} not sent to {string.Join(", ", missed.Select(m => m.Name))} (did not answer), left for the next sync");
+        // To every cloud at once: a slow one (MEGA, a big save) does not hold the others.
+        var errors = (await Task.WhenAll(todo.Select(async a =>
+        {
+            try { await a.Store.PutAsync(key, zip, manifest, a.Manifest, keep, ct); return ((string, Exception)?)null; }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 Log.Warn($"Cloud: sending to {a.Store.Name} failed: {ex.Message}");
-                errors.Add(ex);
+                return (a.Store.Name, ex);
             }
-        if (todo.Count > 0 && errors.Count == todo.Count) ExceptionDispatchInfo.Throw(errors[0]);
+        }))).OfType<(string Name, Exception Error)>().ToList();
+        if (todo.Count > 0 && errors.Count == todo.Count && missed.Count == 0) ExceptionDispatchInfo.Throw(errors[0].Error);
+        missed.AddRange(errors);
+        // Some clouds have the saves and others not: said to the user, the missing ones get them at the next sync.
+        if (missed.Count > 0) throw new CloudPartialException(stores.Select(s => s.Name).Except(missed.Select(m => m.Name)).ToList(), missed);
     }
 
     public async Task GetAsync(string key, string? copyId, string toFile, CancellationToken ct)
@@ -90,4 +140,13 @@ public sealed class MirrorStore(IReadOnlyList<ICloudStore> stores) : ICloudStore
             catch (Exception ex) when (ex is not OperationCanceledException) { Log.Warn($"Cloud: removing from {s.Name} failed: {ex.Message}"); errors.Add(ex); }
         if (errors.Count == stores.Count) ExceptionDispatchInfo.Throw(errors[0]);
     }
+}
+
+/// <summary>An upload that reached some of the clouds only: the others did not answer or failed, and catch up at the next sync.</summary>
+public sealed class CloudPartialException(IReadOnlyList<string> sent, IReadOnlyList<(string Name, Exception Error)> missed)
+    : Exception(L.F("not in {0} yet: {1}", string.Join(", ", missed.Select(m => m.Name)), missed[0].Error.Message), missed[0].Error)
+{
+    /// <summary>The clouds that have the saves (none, when every one missed them).</summary>
+    public IReadOnlyList<string> Sent => sent;
+    public IReadOnlyList<(string Name, Exception Error)> Missed => missed;
 }

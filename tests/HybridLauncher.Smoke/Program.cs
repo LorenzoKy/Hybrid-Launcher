@@ -21,6 +21,12 @@
 //   dotnet run -- report            the bug report: log scrubbed of personal details, the form's address fits, the saved log
 //   dotnet run -- cloud-mirror      two clouds at once (two temp folders): both get each upload, one that missed it catches up
 //   dotnet run -- cloud-live mega   the same against the account signed in under HL_DATA (mega), on a test game it removes
+//   dotnet run -- cloud-live all [folder]  the same on OneDrive, MEGA and a folder at once (default: Google Drive's drive),
+//                                   checking after each upload that every cloud holds the copy
+//   dotnet run -- cloud-stall       MEGA hanging (its requests go to a local proxy that never answers) beside OneDrive, on a
+//                                   test game: nothing waits for MEGA past the patience, nothing calls it in sync
+//   dotnet run -- cloud-timing [n]  read-only: how long HL_DATA's clouds take for n games, alone and together; a 3 MB MEGA upload (removed)
+//   dotnet run -- cloud-play <id>…  what Play does for real games of HL_DATA (back their saves up first), timed; uploads go on in the background
 //   dotnet run -- art [appid] [name]  banner, logo and cover a game page uses (store asset list, screenshot fallback)
 //   dotnet run -- signin-page [hold] MEGA's browser sign-in page served on 127.0.0.1: form, token guard, empty-form check, cancel
 //   dotnet run -- friends           signs in with HL_DATA's Steam token and lists the account's friends (read-only)
@@ -630,6 +636,133 @@ switch (cmd)
         catch (OperationCanceledException) { Check(true, "cancel ends the sign-in"); }
         break;
     }
+    case "cloud-timing":
+    {
+        // Read-only: how long each cloud of HL_DATA's settings takes to answer for the games of this PC, alone and together.
+        var games = (await GameScanner.ScanAsync(SettingsStore.Current)).Take(args.Length > 1 ? int.Parse(args[1]) : 4).ToList();
+        foreach (var round in new[] { "first", "again" })
+            foreach (var id in CloudSaves.Settings.Providers.Append("both"))
+            {
+                SettingsStore.Current.Cloud.Providers = id == "both" ? ["onedrive", "mega"] : [id];
+                var store = CloudSaves.Store();
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var g in games)
+                {
+                    var t = watch.Elapsed;
+                    var m = await store!.ManifestAsync(CloudSaves.Key(g), default);
+                    Console.WriteLine($"  {round,-5} {store.Name,-16} {g.Name,-34} {(watch.Elapsed - t).TotalSeconds,6:0.00} s  {(m is null ? "none" : m.Hash[..8] + (m.Partial ? " partial" : ""))}");
+                }
+                Console.WriteLine($"  {round,-5} {store!.Name,-16} total {watch.Elapsed.TotalSeconds:0.00} s");
+            }
+        // An upload of a save-sized zip (random bytes, so it does not compress) to MEGA, under a test key removed afterwards.
+        var zip = Path.Combine(Path.GetTempPath(), "hl-timing.zip");
+        File.WriteAllBytes(zip, RandomNumberGenerator.GetBytes(3 << 20));
+        var key = "Hybrid Launcher smoke [timing-" + Guid.NewGuid().ToString("N")[..6] + "]";
+        var mega = HybridLauncher.Core.Cloud.MegaStore.Instance;
+        try
+        {
+            for (int i = 1; i <= 3; i++)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var old = await mega.ManifestAsync(key, default);
+                await mega.PutAsync(key, zip, new CloudManifest { GameId = key, Hash = "T" + i, UpdatedUtc = DateTime.UtcNow, Machine = "smoke" }, old, 2, default);
+                Console.WriteLine($"  MEGA upload {i} (3 MB): {watch.Elapsed.TotalSeconds:0.00} s");
+            }
+        }
+        finally
+        {
+            await mega.DeleteAsync(key, default);
+            Check(await mega.ManifestAsync(key, default) is null, "timing key removed from MEGA");
+            File.Delete(zip);
+        }
+        break;
+    }
+
+    case "cloud-play":
+    {
+        // What Play does for real games of HL_DATA's settings (back their saves up first): the check and the sync, timed, with the app's 45 s limit.
+        var library = await GameScanner.ScanAsync(SettingsStore.Load());
+        Console.WriteLine($"  cloud on: {CloudSaves.On} ({CloudSaves.Settings.Enabled}, {string.Join("+", CloudSaves.Settings.Providers)}, store {CloudSaves.Store()?.Name ?? "none"})");
+        foreach (var id in args.Skip(1))
+        {
+            var g = library.First(x => x.Id == id);
+            var settings = SettingsStore.Current.For(g.Id);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var status = await CloudSaves.StatusAsync(g, settings, fresh: true);
+            Console.WriteLine($"  {g.Name}: {status.State}{(status.Cloud?.Partial == true ? " (partial)" : "")} in {watch.Elapsed.TotalSeconds:0.00} s");
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                watch.Restart();
+                Task? sending = null;
+                var message = await CloudSaves.BeforeLaunchAsync(g, settings, _ => Task.FromResult(CloudSaves.Choice.Skip), cts.Token, s => sending = s);
+                Console.WriteLine($"  {g.Name}: game could start after {watch.Elapsed.TotalSeconds:0.00} s {message}");
+                if (sending is not null)
+                {
+                    await sending;
+                    Console.WriteLine($"  {g.Name}: sent in the background, done after {watch.Elapsed.TotalSeconds:0.00} s");
+                }
+            }
+            catch (OperationCanceledException) { Console.WriteLine($"  {g.Name}: TOO LONG after {watch.Elapsed.TotalSeconds:0.00} s"); }
+            status = await CloudSaves.StatusAsync(g, settings, fresh: true);
+            Console.WriteLine($"  {g.Name}: now {status.State}{(status.Cloud?.Partial == true ? " (partial)" : "")}");
+        }
+        break;
+    }
+
+    case "cloud-stall":
+    {
+        // MEGA hanging, as on a stalled network: its requests go through a local "proxy" that takes the connection and never
+        // answers. OneDrive (the folder of HL_DATA's PC) must work as usual, nothing may wait for MEGA past the patience, and
+        // a cloud that did not answer must not count as in sync. A test game is used; only OneDrive's copy needs removing.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var held = new List<System.Net.Sockets.TcpClient>();
+        _ = Task.Run(async () => { while (true) held.Add(await listener.AcceptTcpClientAsync()); });
+        Environment.SetEnvironmentVariable("HTTPS_PROXY", $"http://127.0.0.1:{((System.Net.IPEndPoint)listener.LocalEndpoint).Port}");
+        SettingsStore.Current.Cloud = new CloudSaveSettings { Enabled = true, Providers = ["onedrive", "mega"], KeepVersions = 2 };
+        Check(CloudSaves.On, $"clouds ready ({CloudSaves.StoreName})");
+        var root = Path.Combine(Path.GetTempPath(), "hl-stall-" + Guid.NewGuid().ToString("N")[..8]);
+        var game = new Game { Id = "steam:smoke-stall-" + Guid.NewGuid().ToString("N")[..6], Name = "Hybrid Launcher smoke: Stall", Store = GameStore.Steam, InstallDir = root };
+        var s = new GameSettings { CloudSaveDir = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName };
+        File.WriteAllText(Path.Combine(s.CloudSaveDir, "slot.sav"), "stall");
+        var oneDrive = ((HybridLauncher.Core.Cloud.MirrorStore)CloudSaves.Store()!).Stores[0];
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var status = await CloudSaves.StatusAsync(game, s, fresh: true);
+            Console.WriteLine($"  status: {status.State} in {watch.Elapsed.TotalSeconds:0.0} s");
+            Check(watch.Elapsed < TimeSpan.FromSeconds(25), "the state comes without waiting for MEGA (under 25 s)");
+            watch.Restart();
+            Task? later = null;
+            using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+                await CloudSaves.BeforeLaunchAsync(game, s, _ => Task.FromResult(CloudSaves.Choice.Skip), limit.Token, t => later = t);
+            Console.WriteLine($"  game could start after {watch.Elapsed.TotalSeconds:0.0} s");
+            Check(watch.Elapsed < TimeSpan.FromSeconds(5), "Play does not wait for MEGA again once it was found silent (under 5 s)");
+            Check(later is not null, "the upload goes on in the background");
+            try { if (later is not null) await later; Check(false, "an upload MEGA missed is reported"); }
+            catch (HybridLauncher.Core.Cloud.CloudPartialException ex)
+            {
+                Console.WriteLine($"  reported: {ex.Message}");
+                Check(ex.Sent.SequenceEqual([oneDrive.Name]) && ex.Missed.Count == 1, $"reported as in {string.Join(", ", ex.Sent)}, not in {string.Join(", ", ex.Missed.Select(m => m.Name))}");
+                Check(Troubleshoot.Cause(ex.Missed[0].Error) is { } cause && cause.Contains("internet"), "the error comes with its likely cause");
+            }
+            Console.WriteLine($"  upload done after {watch.Elapsed.TotalSeconds:0.0} s");
+            Check(await oneDrive.ManifestAsync(CloudSaves.Key(game), default) is { } od && od.Hash == CloudSaves.Fingerprint(s.CloudSaveDir).Hash, "OneDrive got the saves");
+            status = await CloudSaves.StatusAsync(game, s, fresh: true);
+            Check(status.State != CloudState.Synced, $"not \"Synced\" while MEGA does not answer ({status.State})");
+        }
+        catch (OperationCanceledException ex) { Check(false, $"a MEGA stall surfaced as a cancellation: {ex.Message}"); }
+        finally
+        {
+            await oneDrive.DeleteAsync(CloudSaves.Key(game), default);
+            Check(await oneDrive.ManifestAsync(CloudSaves.Key(game), default) is null, "test game removed from OneDrive");
+            try { Directory.Delete(root, true); Directory.Delete(CloudSaves.LocalBackupsDir(game), true); } catch { }
+            listener.Stop();
+        }
+        break;
+    }
+
     case "cloud":
     case "cloud-live":
     {
@@ -639,8 +772,22 @@ switch (cmd)
         var cloudDir = Directory.CreateDirectory(Path.Combine(root, "cloud")).FullName;
         string savesA = Directory.CreateDirectory(Path.Combine(root, "pcA", "saves")).FullName, savesB = Path.Combine(root, "pcB", "saves");
         var provider = cmd == "cloud" ? "folder" : args.ElementAtOrDefault(1) ?? "mega";
-        SettingsStore.Current.Cloud = new CloudSaveSettings { Enabled = true, Providers = [provider], Folder = cloudDir, KeepVersions = 2 };
-        Check(CloudSaves.On, $"provider {provider} ready");
+        // "cloud-live all [folder]": OneDrive, MEGA and a folder at once (by default Google Drive's drive, as a person picks it).
+        var gdrive = DriveInfo.GetDrives().FirstOrDefault(d => d.IsReady && Directory.Exists(Path.Combine(d.RootDirectory.FullName, ".shortcut-targets-by-id")))?.RootDirectory.FullName;
+        SettingsStore.Current.Cloud = provider == "all"
+            ? new CloudSaveSettings { Enabled = true, Providers = ["onedrive", "mega", "folder"], Folder = args.ElementAtOrDefault(2) ?? gdrive ?? cloudDir, KeepVersions = 2 }
+            : new CloudSaveSettings { Enabled = true, Providers = [provider], Folder = cloudDir, KeepVersions = 2 };
+        Check(CloudSaves.On, $"provider {provider} ready ({CloudSaves.StoreName})");
+        // With several clouds: each one, asked alone, holds the copy the sync sees.
+        async Task EveryCloud(Game g, string what)
+        {
+            if (CloudSaves.Store() is not HybridLauncher.Core.Cloud.MirrorStore mirror) return;
+            var key = CloudSaves.Key(g);
+            var hashes = new List<string>();
+            foreach (var s in mirror.Stores) hashes.Add((await s.ManifestAsync(key, default))?.Hash ?? "none");
+            var seen = (await CloudSaves.ReadManifestAsync(g, fresh: true))?.Hash ?? "none";
+            Check(hashes.All(h => h == seen), $"{what}: {string.Join(", ", mirror.Stores.Select((s, i) => $"{s.Name} {hashes[i][..Math.Min(8, hashes[i].Length)]}"))}");
+        }
         var game = new Game { Id = "steam:smoke-" + Guid.NewGuid().ToString("N")[..6], Name = "Hybrid Launcher smoke: Game", Store = GameStore.Steam, InstallDir = root };
         var a = new GameSettings { CloudSaveDir = savesA };
         var b = new GameSettings { CloudSaveDir = savesB };
@@ -655,12 +802,14 @@ switch (cmd)
             Check((await CloudSaves.StatusAsync(game, a, fresh: true)).State == CloudState.NotUploaded, "new saves: not uploaded");
             Check(await CloudSaves.AfterSessionAsync(game, a), "after session: sent");
             Check(await CloudSaves.ReadManifestAsync(game, fresh: true) is { Files: 2 }, "manifest lists 2 files");
+            await EveryCloud(game, "A's first upload is in every cloud");
             Check((await CloudSaves.StatusAsync(game, a, fresh: true)).State == CloudState.Synced, "A synced");
             Check((await CloudSaves.StatusAsync(game, b, fresh: true)).State == CloudState.ChangedInCloud, "B (empty) sees newer in cloud");
             await CloudSaves.BeforeLaunchAsync(game, b, keepHere);
             Check(File.ReadAllText(Path.Combine(savesB, "slot1.sav")) == "A1" && File.Exists(Path.Combine(savesB, "sub", "profile.dat")), "B restored before launch");
             File.WriteAllText(Path.Combine(savesB, "slot1.sav"), "B2");
             await CloudSaves.AfterSessionAsync(game, b);
+            await EveryCloud(game, "B's upload replaced it in every cloud");
             Check((await CloudSaves.HistoryAsync(game)).Count == 1, "older cloud copy kept in history");
             Check((await CloudSaves.StatusAsync(game, a, fresh: true)).State == CloudState.ChangedInCloud, "A sees B's newer saves");
             await CloudSaves.BeforeLaunchAsync(game, a, keepHere);
@@ -678,11 +827,57 @@ switch (cmd)
             await CloudSaves.AfterSessionAsync(game, b);
             await CloudSaves.BeforeLaunchAsync(game, a, keepHere);
             Check((await CloudSaves.ReadManifestAsync(game, fresh: true))?.Hash == CloudSaves.Fingerprint(savesA).Hash, "conflict -> keep here uploads A4");
+            await EveryCloud(game, "the conflict's choice is in every cloud");
             var history = await CloudSaves.HistoryAsync(game);
             Check(history.Count == 2, $"history trimmed to KeepVersions (2): {history.Count}");
             await CloudSaves.RestoreAsync(game, a, history.Last());
             Check((await CloudSaves.StatusAsync(game, a, fresh: true)).State == CloudState.ChangedHere, "restored history copy goes up next");
             Check(CloudSaves.TooBroad(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)) && CloudSaves.TooBroad(@"C:\") && !CloudSaves.TooBroad(savesA), "broad folders refused");
+
+            // Before Play an upload only zips the saves: the sending is handed back to go on while the game runs, it carries the
+            // saves as they were (the game changes them meanwhile), and the next upload waits for it.
+            var laterGame = new Game { Id = game.Id + "-later", Name = "Hybrid Launcher smoke: Later", Store = GameStore.Steam, InstallDir = root };
+            var l = new GameSettings { CloudSaveDir = Directory.CreateDirectory(Path.Combine(root, "pcA", "later")).FullName };
+            try
+            {
+                File.WriteAllText(Path.Combine(l.CloudSaveDir, "slot.sav"), "before play");
+                var before = CloudSaves.Fingerprint(l.CloudSaveDir).Hash;
+                Task? later = null;
+                using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+                    await CloudSaves.BeforeLaunchAsync(laterGame, l, keepHere, limit.Token, s => later = s);
+                Check(later is not null, "before launch: the upload goes on in the background");
+                File.WriteAllText(Path.Combine(l.CloudSaveDir, "slot.sav"), "while playing");
+                var after = CloudSaves.AfterSessionAsync(laterGame, l);
+                await later!;
+                Check(await after, "the upload after the session waited for it and went up too");
+                var hist = await CloudSaves.HistoryAsync(laterGame);
+                Check(hist.Count == 1, $"the background copy is the history's ({hist.Count})");
+                await EveryCloud(laterGame, "Play's background upload and the session's are in every cloud");
+                var lb = new GameSettings { CloudSaveDir = Path.Combine(root, "pcB", "later") };
+                await CloudSaves.RestoreAsync(laterGame, lb, hist[0]);
+                Check(CloudSaves.Fingerprint(lb.CloudSaveDir).Hash == before, "the background copy holds the saves from before Play");
+            }
+            finally { await CloudSaves.DeleteFromCloudAsync(laterGame); try { Directory.Delete(CloudSaves.LocalBackupsDir(laterGame), true); } catch { } }
+
+            // One saves folder per account (Spider-Man 2: Documents\Marvel's Spider-Man 2\<steam id>): the wiki's wildcard picks
+            // the one the game wrote in last, not the first by name.
+            var accounts = Directory.CreateDirectory(Path.Combine(root, "Documents", "Some Game")).FullName;
+            foreach (var (id, age) in new[] { ("76561197960271872", 300), ("76561198833423527", 0), ("76561199685111768", 30) })
+            {
+                var f = Path.Combine(Directory.CreateDirectory(Path.Combine(accounts, id)).FullName, "slot1.save");
+                File.WriteAllText(f, id);
+                File.SetLastWriteTimeUtc(f, DateTime.UtcNow.AddDays(-age));
+            }
+            var picked = HybridLauncher.Core.Media.Pcgw.ExistingFolder([new HybridLauncher.Core.Media.PcgwPath("Steam", Path.Combine(accounts, "*"))], GameStore.Steam);
+            Check(Path.GetFileName(picked) == "76561198833423527", $"several account folders: the one in use is synced ({Path.GetFileName(picked)})");
+
+            // Google Drive for desktop's G:\ takes no files at its root: its "My Drive" folder is used; any other folder as it is.
+            Check(HybridLauncher.Core.Cloud.FolderStore.Resolve(savesA) == savesA, "a plain folder is used as picked");
+            foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady && Directory.Exists(Path.Combine(d.RootDirectory.FullName, ".shortcut-targets-by-id"))))
+            {
+                var mine = HybridLauncher.Core.Cloud.FolderStore.Resolve(drive.RootDirectory.FullName);
+                Check(mine != drive.RootDirectory.FullName && HybridLauncher.Core.Cloud.FolderStore.Writable(mine), $"Google Drive {drive.Name} goes to {Path.GetFileName(mine)}");
+            }
             var cancelled = new GameSettings { CloudSaveDir = Path.Combine(root, "pcC", "saves") };
             try { await CloudSaves.BeforeLaunchAsync(game, cancelled, keepHere, new CancellationToken(true)); Check(false, "cancelled restore throws"); }
             catch (OperationCanceledException) { Check(!Directory.Exists(cancelled.CloudSaveDir), "cancelled restore touched nothing"); }
@@ -790,6 +985,25 @@ switch (cmd)
             await mirror.PutAsync(key, Zip("three"), M("h3", 8), null, 3, CancellationToken.None);
             Check((await b.ManifestAsync(key, default))?.Hash == "h3", "the cloud added later receives them");
             await mirror.DeleteAsync(key, default);
+            // A cloud that fails (here a folder that cannot exist, under a file): the others get the saves, the failure is reported.
+            File.WriteAllText(Path.Combine(root, "file"), "");
+            var broken = new HybridLauncher.Core.Cloud.MirrorStore([a, new HybridLauncher.Core.Cloud.FolderStore(Path.Combine(root, "file", "x"), "Broken")]);
+            try { await broken.PutAsync(key, Zip("four"), M("h4", 9), null, 3, CancellationToken.None); Check(false, "a failing cloud is reported"); }
+            catch (HybridLauncher.Core.Cloud.CloudPartialException ex)
+            {
+                Check(ex.Sent.SequenceEqual(["A"]) && ex.Missed.Single().Name == "Broken", $"partial upload: in {string.Join(", ", ex.Sent)}, not in {string.Join(", ", ex.Missed.Select(m => m.Name))}");
+                Check((await a.ManifestAsync(key, default))?.Hash == "h4", "the working cloud has the saves");
+            }
+            await a.DeleteAsync(key, default);
+            // Every cloud failing is a plain error, not a partial one.
+            var dead = new HybridLauncher.Core.Cloud.MirrorStore([new HybridLauncher.Core.Cloud.FolderStore(Path.Combine(root, "file", "y"), "Dead")]);
+            try { await dead.PutAsync(key, Zip("five"), M("h5", 10), null, 3, CancellationToken.None); Check(false, "a dead cloud throws"); }
+            catch (Exception ex) { Check(ex is not HybridLauncher.Core.Cloud.CloudPartialException, $"no cloud reached: a plain error ({ex.GetType().Name})"); }
+            // The likely causes under error messages.
+            Check(Troubleshoot.Cause(new TimeoutException()) is { } t && t.Contains("internet"), "a timeout points at the connection");
+            Check(Troubleshoot.Cause(new IOException("x", unchecked((int)0x80070020))) is { } u && u.Contains("using the file"), "a sharing violation points at a program holding the file");
+            Check(Troubleshoot.Cause("Access to the path 'saves' is denied.") is { } d && d.Contains("in use or protected"), "access denied, from the text alone");
+            Check(Troubleshoot.Link("Cloud saves", "x").EndsWith("#cloud-saves") && Troubleshoot.Link("The game did not start", "x").EndsWith("#a-game-does-not-start"), "errors link to their troubleshooting section");
             // The folder takes the new name over an earlier one.
             var old = Directory.CreateDirectory(Path.Combine(root, "c", "Hybrid Game Launcher Saves", key)).FullName;
             File.WriteAllText(Path.Combine(old, "manifest.json"), "{}");

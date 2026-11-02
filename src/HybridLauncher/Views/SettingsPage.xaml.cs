@@ -67,6 +67,8 @@ public sealed partial class SettingsPage : Page
         FillIconsAndParts();
         HardwareToggle.IsOn = S.HardwareAcceleration;
         TrayToggle.IsOn = S.CloseToTray;
+        // Turned off in Windows' Startup apps (or removed) since: the toggle says what Windows will do.
+        try { if (S.StartWithWindows && !Startup.IsOn) S.StartWithWindows = false; } catch { }
         StartupToggle.IsOn = S.StartWithWindows;
         PopupToggle.IsOn = S.AchievementPopups;
         var o = S.Popup;
@@ -168,7 +170,7 @@ public sealed partial class SettingsPage : Page
             FillTabs();
             App.Window?.ShowSuccess(L.F("{0}: defaults restored.", name));
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     void SettingsTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
@@ -540,7 +542,7 @@ public sealed partial class SettingsPage : Page
     static void Open(string url)
     {
         try { GameLauncher.OpenUri(url); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     /// <summary>
@@ -628,7 +630,7 @@ public sealed partial class SettingsPage : Page
             }
             catch (Exception ex)
             {
-                App.Window?.ShowError(L.T("Could not change the start with Windows setting"), ex.Message);
+                App.Window?.ShowError(L.T("Could not change the start with Windows setting"), ex.Message, ex);
                 _loading = true;
                 StartupToggle.IsOn = S.StartWithWindows;
                 _loading = false;
@@ -802,7 +804,7 @@ public sealed partial class SettingsPage : Page
             var work = Path.Combine(AppInfo.CacheDir, "work");
             if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not clear the cache"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not clear the cache"), ex.Message, ex); }
         Fill();
         _ = VersionsList.ReloadAsync();
     }

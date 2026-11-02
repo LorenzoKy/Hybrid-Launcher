@@ -89,7 +89,7 @@ public sealed partial class MainWindow : Window
                 if (ContentFrame.Content is not LibraryPage) ContentFrame.Navigate(typeof(LibraryPage), _filter);
                 SyncSelection();
             }
-            catch (Exception ex) { ShowError(L.T("Could not open the library"), ex.Message); }
+            catch (Exception ex) { ShowError(L.T("Could not open the library"), ex.Message, ex); }
         };
         Nav.Loaded += (_, _) => UpdateTitleBrand();
         // The page reads its game in OnNavigatedTo, after this event: look once it has.
@@ -113,7 +113,15 @@ public sealed partial class MainWindow : Window
         // Closing keeps Hybrid Launcher in the notification area (Settings, Features); Quit there, or the setting off, really closes it.
         AppWindow.Closing += (_, e) =>
         {
-            if (_quitting || !AppState.Settings.CloseToTray) return;
+            if (_quitting || !AppState.Settings.CloseToTray)
+            {
+                if (CloudSync.IsSending && !_cloudWaitStarted)
+                {
+                    e.Cancel = true;
+                    QuitAfterCloudAsync().ContinueWith(t => Log.Warn($"Quit after cloud: {t.Exception?.GetBaseException().Message}"), TaskContinuationOptions.OnlyOnFaulted);
+                }
+                return;
+            }
             e.Cancel = true;
             HideToTray();
         };
@@ -215,7 +223,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             ShowFromTray();
-            ShowError(L.T("The game did not start"), ex.Message);
+            ShowError(L.T("The game did not start"), ex.Message, ex);
         }
     }
 
@@ -239,6 +247,23 @@ public sealed partial class MainWindow : Window
     {
         EnsureTray();
         _hidden = true;
+    }
+
+    bool _cloudWaitStarted;
+
+    /// <summary>
+    /// Quitting while saves are still on their way to the cloud (sent in the background since Play): the window goes away at
+    /// once and Hybrid Launcher closes when they are there, three minutes at most. Quitting again meanwhile closes it at once.
+    /// </summary>
+    async Task QuitAfterCloudAsync()
+    {
+        _cloudWaitStarted = true;
+        Log.Info("Quit: waiting for the saves still going to the cloud");
+        (ContentFrame.Content as GamePage)?.StopMedia();
+        AppWindow.Hide();
+        _hidden = true;
+        await CloudSync.WaitForSendingAsync(TimeSpan.FromMinutes(3));
+        Quit();
     }
 
     void HideToTray()
@@ -276,6 +301,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void Quit()
     {
+        if (CloudSync.IsSending && !_cloudWaitStarted) { _ = QuitAfterCloudAsync(); return; }
         _quitting = true;
         DispatcherQueue.TryEnqueue(() =>
         {
@@ -363,7 +389,7 @@ public sealed partial class MainWindow : Window
             ContentFrame.GoBack();
             AfterHistoryMove();
         }
-        catch (Exception ex) { ShowError(L.T("Could not go back"), ex.Message); }
+        catch (Exception ex) { ShowError(L.T("Could not go back"), ex.Message, ex); }
     }
 
     public void GoForward()
@@ -374,7 +400,7 @@ public sealed partial class MainWindow : Window
             ContentFrame.GoForward();
             AfterHistoryMove();
         }
-        catch (Exception ex) { ShowError(L.T("Could not go forward"), ex.Message); }
+        catch (Exception ex) { ShowError(L.T("Could not go forward"), ex.Message, ex); }
     }
 
     void AfterHistoryMove()
@@ -569,6 +595,9 @@ public sealed partial class MainWindow : Window
     /// When the focused element leaves the tree (the item clicked in a list that is redrawn, the page that is replaced), WinUI hands
     /// the focus to the first control of the window: the search box, which then looked clicked. The page takes it back instead.
     /// </summary>
+    /// <summary>For a page that rebuilds itself under the focused control (Settings → Cloud saves after one of its buttons).</summary>
+    public void KeepFocusOffSearch() => KeepFocusOffSearch(SearchHasFocus());
+
     void KeepFocusOffSearch(bool searchHadFocus)
     {
         if (searchHadFocus) return;
@@ -1013,7 +1042,7 @@ public sealed partial class MainWindow : Window
     {
         if (game.Installing || GameSessions.IsActive(game.Id)) return;
         try { await AppState.LaunchAsync(game); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("The game did not start"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("The game did not start"), ex.Message, ex); }
     }
 
     /// <summary>A running game's row in the list gets a green dot (as Steam marks it), however the game was started.</summary>
@@ -1075,7 +1104,7 @@ public sealed partial class MainWindow : Window
         mi.Click += (_, _) =>
         {
             try { action(); }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
         };
         return mi;
     }
@@ -1178,7 +1207,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowError(L.T("Could not add the game"), ex.Message);
+            ShowError(L.T("Could not add the game"), ex.Message, ex);
         }
     }
 
@@ -1196,7 +1225,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowError(L.T("Could not add the folder"), ex.Message);
+            ShowError(L.T("Could not add the folder"), ex.Message, ex);
         }
     }
 
@@ -1541,7 +1570,7 @@ public sealed partial class MainWindow : Window
             if (ContentFrame.Content is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
             SyncSelection();
         }
-        catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     /// <summary>Opens Settings on one of its tabs ("appearance", "features"...): from a game page's menus.</summary>
@@ -1553,7 +1582,7 @@ public sealed partial class MainWindow : Window
             if (ContentFrame.Content is not SettingsPage) ContentFrame.Navigate(typeof(SettingsPage));
             SyncSelection();
         }
-        catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     void SyncSelection()
@@ -1591,17 +1620,28 @@ public sealed partial class MainWindow : Window
         tb.ButtonInactiveForegroundColor = dark ? Windows.UI.Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF) : Windows.UI.Color.FromArgb(0x80, 0, 0, 0);
     }
 
-    public void ShowError(string title, string message) => Toast(InfoBarSeverity.Error, title, message, TimeSpan.FromSeconds(12));
+    /// <summary>
+    /// An error in red, with the likely cause on a line of its own (read from <paramref name="error"/> when there is one, else from
+    /// the text) and a Troubleshooting link to the guide's section for it.
+    /// </summary>
+    public void ShowError(string title, string message, Exception? error = null)
+    {
+        var cause = error is null ? Troubleshoot.Cause(message) : Troubleshoot.Cause(error);
+        var text = cause is null || message.Contains(cause, StringComparison.Ordinal) ? message : message + "\n" + cause;
+        Toast(InfoBarSeverity.Error, title, text, TimeSpan.FromSeconds(cause is null ? 12 : 16), Troubleshoot.Link(title, message));
+    }
+
     public void ShowInfo(string message) => Toast(InfoBarSeverity.Informational, "", message, TimeSpan.FromSeconds(5));
     public void ShowSuccess(string message) => Toast(InfoBarSeverity.Success, "", message, TimeSpan.FromSeconds(5));
 
-    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration)
+    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration, string? help = null)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             ToastBar.Severity = severity;
             ToastBar.Title = title;
             ToastBar.Message = message;
+            ToastBar.ActionButton = help is null ? null : new HyperlinkButton { Content = L.T("Troubleshooting"), NavigateUri = new Uri(help) };
             ToastBar.IsOpen = true;
             ToastHost.Visibility = Visibility.Visible;
             _toastTimer?.Stop();

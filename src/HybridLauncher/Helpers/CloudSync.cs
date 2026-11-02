@@ -18,7 +18,11 @@ public static class CloudSync
 
     static readonly HashSet<string> Busy = new(StringComparer.OrdinalIgnoreCase);
 
-    public static bool IsBusy(string id) => Busy.Contains(id);
+    public static bool IsBusy(string id)
+    {
+        if (Busy.Contains(id)) return true;
+        lock (Sending) return Sending.Any(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>Hooked once at start: every game that closes, however it was started, sends its changed saves.</summary>
     public static void Start() => GameSessions.Ended += game => _ = AfterSessionAsync(game);
@@ -27,19 +31,36 @@ public static class CloudSync
     /// The folders the sync uses (<see cref="CloudSaves.Parts"/>): the saves folder picked, else the one PCGamingWiki names that
     /// exists on this PC; the game's settings folder PCGamingWiki names (asked once); the Steam emulator's folder of the game.
     /// </summary>
-    public static async Task<List<CloudPart>> PartsAsync(Game game, GameSettings settings, CancellationToken ct = default)
+    /// <summary>When each game's saves folder (found on the wiki, not picked) was last looked for again.</summary>
+    static readonly Dictionary<string, DateTime> Rechecked = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A saves folder found on the wiki is looked for again (<paramref name="fresh"/>: now, before Play and after the game
+    /// closes; otherwise every two minutes at most): a game that keeps one folder per account writes in another one when the
+    /// account changes, and the sync must follow it. A folder the user picked is never changed.
+    /// </summary>
+    public static async Task<List<CloudPart>> PartsAsync(Game game, GameSettings settings, CancellationToken ct = default, bool fresh = false)
     {
-        bool needSaves = !(settings.CloudSaveDirPicked && settings.CloudSaveDir is not null) && !(settings.CloudSaveDir is { } known && Directory.Exists(known));
+        bool picked = settings.CloudSaveDirPicked && settings.CloudSaveDir is not null;
+        bool known = settings.CloudSaveDir is { } d && Directory.Exists(d);
+        bool due;
+        lock (Rechecked) due = fresh || !Rechecked.TryGetValue(game.Id, out var at) || DateTime.UtcNow - at > TimeSpan.FromMinutes(2);
+        bool needSaves = !picked && (!known || due);
         if (needSaves || !settings.CloudConfigChecked)
         {
+            if (needSaves) lock (Rechecked) Rechecked[game.Id] = DateTime.UtcNow;
             try
             {
                 var art = await GameInfo.GetAsync(game, ct);
                 var wiki = await Pcgw.GetAsync(game, art.SteamAppId ?? game.SteamAppId, ct);
                 if (wiki is not null)
                 {
-                    if (needSaves && await Task.Run(() => Pcgw.ExistingFolder(wiki.SavePaths, game.Store), ct) is { } dir && !CloudSaves.TooBroad(dir))
+                    if (needSaves && await Task.Run(() => Pcgw.ExistingFolder(wiki.SavePaths, game.Store), ct) is { } dir && !CloudSaves.TooBroad(dir)
+                        && !string.Equals(dir, settings.CloudSaveDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (settings.CloudSaveDir is not null) Log.Info($"Cloud: {game.Name} saves now in {dir} (was {settings.CloudSaveDir}): the game writes there");
                         settings.CloudSaveDir = dir;
+                    }
                     if (!settings.CloudConfigChecked)
                     {
                         settings.CloudConfigDir = await Task.Run(() => Pcgw.ExistingFolder(wiki.ConfigPaths, game.Store), ct);
@@ -58,16 +79,18 @@ public static class CloudSync
     public static async Task BeforeLaunchAsync(Game game)
     {
         var settings = AppState.Settings.For(game.Id);
-        if (!CloudSaves.On || settings.CloudOff || game.NotInstalled) return;
+        if (!Ready(game, settings) || game.NotInstalled) return;
         Busy.Add(game.Id);
         Changed?.Invoke(game.Id);
         try
         {
-            if ((await PartsAsync(game, settings)).Count == 0) return;
+            if ((await PartsAsync(game, settings, fresh: true)).Count == 0) { Log.Info($"Cloud: {game.Name} has no saves folder, nothing to sync"); return; }
             // A cloud app still waking up (an online-only file being fetched) gets its time, but the game is not held for ever:
             // past it, the restore stops before touching anything here and the game starts with this PC's saves.
+            // An upload only zips the saves here: the sending goes on while the game runs (minutes, for a big save to MEGA).
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
-            if (await CloudSaves.BeforeLaunchAsync(game, settings, s => AskAsync(game, s), cts.Token) is { } message) App.Window?.ShowSuccess(message);
+            // Done quietly: the cloud button says "Synced". Only an error is shown.
+            if (await CloudSaves.BeforeLaunchAsync(game, settings, s => AskAsync(game, s), cts.Token, sending => Track(game, sending)) is { } message) Log.Info($"Cloud: {message}");
             SettingsStore.Save();
         }
         catch (OperationCanceledException)
@@ -78,7 +101,8 @@ public static class CloudSync
         catch (Exception ex)
         {
             Log.Error($"Cloud before {game.Name}", ex);
-            App.Window?.ShowError(L.T("Cloud saves"), L.F("The cloud check failed, {0} starts with the saves on this PC: {1}", game.Title, ex.Message));
+            if (ex is CloudPartialException) Failed(game, ex);
+            else App.Window?.ShowError(L.T("Cloud saves"), L.F("The cloud check failed, {0} starts with the saves on this PC: {1}", game.Title, ex.Message), ex);
         }
         finally
         {
@@ -87,25 +111,74 @@ public static class CloudSync
         }
     }
 
+    /// <summary>Uploads going on in the background (started before Play), with their game's id.</summary>
+    static readonly List<(string Id, Task Task)> Sending = [];
+
+    /// <summary>An upload is still going on in the background: quitting waits for it.</summary>
+    public static bool IsSending
+    {
+        get { lock (Sending) return Sending.Count > 0; }
+    }
+
+    /// <summary>Waits for the background uploads, at most <paramref name="limit"/>.</summary>
+    public static async Task WaitForSendingAsync(TimeSpan limit)
+    {
+        Task[] all;
+        lock (Sending) all = Sending.Select(s => s.Task).ToArray();
+        await Task.WhenAny(Task.WhenAll(all), Task.Delay(limit));
+    }
+
+    /// <summary>A sending that goes on after Play: the game's cloud button stays busy until it is done, a failure is said.</summary>
+    static async void Track(Game game, Task sending)
+    {
+        lock (Sending) Sending.Add((game.Id, sending));
+        Changed?.Invoke(game.Id);
+        try
+        {
+            await sending;
+            SettingsStore.Save();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Cloud before {game.Name}, sending", ex);
+            Failed(game, ex);
+        }
+        finally
+        {
+            lock (Sending) Sending.Remove((game.Id, sending));
+            Changed?.Invoke(game.Id);
+        }
+    }
+
+    /// <summary>Whether the game syncs now; when cloud saves are on but no cloud is ready, the log says why nothing happens.</summary>
+    static bool Ready(Game game, GameSettings settings)
+    {
+        if (settings.CloudOff || !CloudSaves.Settings.Enabled) return false;
+        if (CloudSaves.On) return true;
+        Log.Warn($"Cloud: {game.Name} not synced, none of {string.Join(", ", CloudSaves.Settings.Providers)} is ready (OneDrive folder: {(OneDrive.Folder() is null ? "not found" : "found")}, MEGA: {(MegaAuth.SignedIn ? "signed in" : "signed out")})");
+        return false;
+    }
+
     static async Task AfterSessionAsync(Game game)
     {
         var settings = AppState.Settings.For(game.Id);
-        if (!CloudSaves.On || settings.CloudOff) return;
+        if (!Ready(game, settings)) return;
         Busy.Add(game.Id);
         Changed?.Invoke(game.Id);
         try
         {
             // A few seconds for the game's last writes (some save while closing, or from a helper process).
             await Task.Delay(TimeSpan.FromSeconds(4));
-            if (GameSessions.IsActive(game.Id) || (await PartsAsync(game, settings)).Count == 0) return;
-            if (await CloudSaves.AfterSessionAsync(game, settings))
-                App.Window?.ShowSuccess(L.F("Saves of {0} sent to {1}.", game.Title, CloudSaves.StoreName));
+            if (GameSessions.IsActive(game.Id)) return;
+            if ((await PartsAsync(game, settings, fresh: true)).Count == 0) { Log.Info($"Cloud: {game.Name} has no saves folder, nothing to send"); return; }
+            await CloudSaves.AfterSessionAsync(game, settings);
             SettingsStore.Save();
         }
         catch (Exception ex)
         {
             Log.Error($"Cloud after {game.Name}", ex);
-            App.Window?.ShowError(L.T("Cloud saves"), L.F("The saves of {0} could not be sent: {1}", game.Title, ex.Message));
+            SettingsStore.Save();
+            Failed(game, ex);
         }
         finally
         {
@@ -118,7 +191,7 @@ public static class CloudSync
     public static async Task SyncNowAsync(Game game)
     {
         var settings = AppState.Settings.For(game.Id);
-        if ((await PartsAsync(game, settings)).Count == 0)
+        if ((await PartsAsync(game, settings, fresh: true)).Count == 0)
         {
             App.Window?.ShowError(L.T("Cloud saves"), L.F("Hybrid Launcher did not find the saves folder of {0}. Pick it in the cloud menu.", game.Title));
             return;
@@ -129,9 +202,13 @@ public static class CloudSync
         {
             var message = await CloudSaves.BeforeLaunchAsync(game, settings, s => AskAsync(game, s));
             SettingsStore.Save();
-            App.Window?.ShowSuccess(message ?? L.F("Saves of {0} are in sync.", game.Title));
+            if (message is not null) Log.Info($"Cloud: {message}");
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Cloud saves"), ex.Message); }
+        catch (Exception ex)
+        {
+            SettingsStore.Save();
+            Failed(game, ex);
+        }
         finally
         {
             Busy.Remove(game.Id);
@@ -150,7 +227,7 @@ public static class CloudSync
             progress?.Report(game.Title);
             try
             {
-                if ((await PartsAsync(game, settings)).Count == 0) continue;
+                if ((await PartsAsync(game, settings, fresh: true)).Count == 0) continue;
                 var status = await CloudSaves.StatusAsync(game, settings);
                 switch (status.State)
                 {
@@ -160,6 +237,7 @@ public static class CloudSync
                     case CloudState.Synced when status.Cloud is { } c: settings.CloudSyncedHash = c.Hash; break;
                 }
             }
+            catch (CloudPartialException ex) { Log.Warn($"Cloud sync all, {game.Name}: {ex.Message}"); up++; }
             catch (Exception ex) { Log.Warn($"Cloud sync all, {game.Name}: {ex.Message}"); skipped++; }
             Changed?.Invoke(game.Id);
         }
@@ -168,6 +246,20 @@ public static class CloudSync
     }
 
     public static void Raise(string id) => Changed?.Invoke(id);
+
+    /// <summary>
+    /// The one cloud message the user sees on their own: what went wrong, in red. Saves that reached only some of the clouds say
+    /// which ones missed them (they get them at the next sync); the line under it gives the likely cause.
+    /// </summary>
+    static void Failed(Game game, Exception ex)
+    {
+        if (ex is CloudPartialException p)
+            App.Window?.ShowError(L.T("Cloud saves"), L.F("The saves of {0} are in {1} but not in {2} yet: {3} They go there at the next sync.", game.Title,
+                string.Join(", ", p.Sent), string.Join(", ", p.Missed.Select(m => m.Name)), Sentence(p.Missed[0].Error.Message)), p.Missed[0].Error);
+        else App.Window?.ShowError(L.T("Cloud saves"), L.F("The saves of {0} could not be sent: {1}", game.Title, ex.Message), ex);
+    }
+
+    static string Sentence(string text) => text.TrimEnd().EndsWith('.') ? text.TrimEnd() : text.TrimEnd() + ".";
 
     /// <summary>Both sides changed: the user picks which saves stay; the other copy is kept (history or Hybrid Launcher's backups).</summary>
     static async Task<CloudSaves.Choice> AskAsync(Game game, CloudStatus status)

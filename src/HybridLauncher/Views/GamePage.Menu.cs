@@ -269,7 +269,7 @@ public sealed partial class GamePage
         b.Click += (_, _) =>
         {
             try { click(); }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
         };
         return b;
     }

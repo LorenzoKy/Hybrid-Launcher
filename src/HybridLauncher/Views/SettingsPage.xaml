@@ -202,7 +202,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Start with Windows" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Hybrid Launcher starts in the notification area when you sign in to Windows, without opening its window." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Hybrid Launcher starts in the notification area when you sign in to Windows, without opening its window. Its icon may be among the hidden icons (the arrow by the clock)." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
                 </Grid>

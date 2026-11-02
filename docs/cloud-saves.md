@@ -32,5 +32,8 @@ Every option uses the same layout: a folder named **Hybrid Cloud Saves** with on
   Folders that hold far more than one game's saves (Documents, your user folder, a whole drive) are never synced.
 - A cloud that is slow or offline never stops a game: it starts with the saves on this PC, and they go up after the next session.
 - Use the same OneDrive or MEGA account (or the same folder) on every PC.
+- The game's **Cloud** button shows where things stand (*Synced*, *Syncing…*). Nothing pops up when a sync works; a red
+  message appears only when something went wrong, for instance a copy that reached OneDrive but not MEGA, with its likely
+  cause and a link to [Troubleshooting](troubleshooting.md#cloud-saves).
 
 *Sync all now* checks every game at once; games that changed on both sides are left for you to decide from their page.

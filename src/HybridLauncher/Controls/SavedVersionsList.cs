@@ -126,7 +126,7 @@ public sealed partial class SavedVersionsList : UserControl
             }
             catch (Exception ex)
             {
-                App.Window?.ShowError(L.T("Could not delete the version"), ex.Message);
+                App.Window?.ShowError(L.T("Could not delete the version"), ex.Message, ex);
             }
             await ReloadAsync();
             Changed?.Invoke();

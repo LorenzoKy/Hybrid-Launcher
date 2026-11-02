@@ -109,7 +109,7 @@ public static class OwnedLibrary
             App.Window?.ShowInfo(L.F("{0} opened the install of {1}. Confirm there; the progress shows in Downloads.", StoreLogos.Label(game.Store), game.Name));
             started?.Invoke();
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open the launcher"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open the launcher"), ex.Message, ex); }
     }
 
     /// <summary>
@@ -488,7 +488,7 @@ public sealed partial class DownloadsPage : Page
         // A finished download's game is in the list now: its line gets its Play button.
         FillJobs();
         try { await OwnedLibrary.LoadAsync(force); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not read the launcher libraries"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not read the launcher libraries"), ex.Message, ex); }
         _ring.Visibility = Visibility.Collapsed;
         OnLoaded();
     }
@@ -806,7 +806,7 @@ public sealed partial class DownloadsPage : Page
                 play.Click += async (_, _) =>
                 {
                     try { await AppState.LaunchAsync(game); }
-                    catch (Exception ex) { App.Window?.ShowError(L.T("The game did not start"), ex.Message); }
+                    catch (Exception ex) { App.Window?.ShowError(L.T("The game did not start"), ex.Message, ex); }
                 };
                 buttons.Children.Add(play);
             }
@@ -923,7 +923,7 @@ public sealed partial class DownloadsPage : Page
             catch (Exception ex)
             {
                 Log.Error("Cancel download", ex);
-                App.Window?.ShowError(L.T("Could not cancel the download"), ex.Message);
+                App.Window?.ShowError(L.T("Could not cancel the download"), ex.Message, ex);
             }
         }
 

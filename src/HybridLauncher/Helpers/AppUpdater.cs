@@ -44,7 +44,7 @@ static class AppUpdater
         catch (Exception ex)
         {
             Log.Warn($"Update check: {ex.Message}");
-            if (!quiet) App.Window?.ShowError(L.T("Could not check for updates"), ex.Message);
+            if (!quiet) App.Window?.ShowError(L.T("Could not check for updates"), ex.Message, ex);
             return null;
         }
         Changed?.Invoke();

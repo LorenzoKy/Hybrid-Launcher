@@ -46,11 +46,26 @@ public sealed class Tray : IDisposable
 
     public string Tooltip { get; set; }
 
+    Timer? _retry;
+
     void Add()
     {
         var data = Data();
         _added = Shell_NotifyIcon(NIM_ADD, ref data);
-        if (!_added) Log.Warn("Tray icon could not be added");
+        if (_added || _retry is not null) return;
+        // Started with Windows before the taskbar is ready: tried again every 3 s for two minutes (TaskbarCreated may never come).
+        Log.Warn("Tray icon could not be added yet, trying again");
+        int tries = 0;
+        _retry = new Timer(_ =>
+        {
+            var again = Data();
+            if (!_added) _added = Shell_NotifyIcon(NIM_ADD, ref again);
+            if (_added || ++tries >= 40)
+            {
+                if (!_added) Log.Warn("Tray icon could not be added");
+                _retry?.Dispose();
+            }
+        }, null, 3000, 3000);
     }
 
     NOTIFYICONDATA Data() => new()
@@ -111,6 +126,7 @@ public sealed class Tray : IDisposable
 
     public void Dispose()
     {
+        _retry?.Dispose();
         if (_added)
         {
             var data = Data();
@@ -172,37 +188,89 @@ public sealed class Tray : IDisposable
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(nint hwnd);
 }
 
-/// <summary>Start with Windows: a value under the user's Run key, starting Hybrid Launcher in the notification area.</summary>
+/// <summary>
+/// Start with Windows: a value under the user's Run key, starting Hybrid Launcher in the notification area, plus its "enabled"
+/// mark in Windows' Startup apps list (StartupApproved). Recent Windows 11 builds skip a Run value that has no mark at sign-in,
+/// which is what Settings → Apps → Startup writes when you turn an app on there (issue #3).
+/// </summary>
 public static class Startup
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     const string ValueName = AppInfo.Name;
     /// <summary>The value under the app's earlier name: it pointed at the old exe, so it is written again under the new one.</summary>
     const string PreviousValueName = AppInfo.PreviousName;
 
-    public static bool IsOn
+    static string Command => $"\"{Environment.ProcessPath}\" --tray";
+
+    /// <summary>The Run value is there (under either name).</summary>
+    static bool Registered
     {
         get
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-            if (key?.GetValue(ValueName) is string) return true;
-            if (key?.GetValue(PreviousValueName) is not string) return false;
-            Set(true);
-            return true;
+            return key?.GetValue(ValueName) is string || key?.GetValue(PreviousValueName) is string;
         }
     }
 
-    /// <summary>At start: an entry under the earlier name is moved to the new one (reading <see cref="IsOn"/> does it).</summary>
-    public static void CarryOver()
+    /// <summary>Turned off in Windows' Startup apps (Settings or Task Manager): the mark's first byte is odd.</summary>
+    public static bool OffInWindows
     {
-        try { _ = IsOn; } catch (Exception ex) { Log.Warn($"Start with Windows: {ex.Message}"); }
+        get
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(ApprovedKey);
+            return key?.GetValue(ValueName) is byte[] { Length: > 0 } mark && (mark[0] & 1) == 1;
+        }
+    }
+
+    /// <summary>Windows starts Hybrid Launcher at sign-in: registered and not turned off in Windows.</summary>
+    public static bool IsOn => Registered && !OffInWindows;
+
+    /// <summary>
+    /// At start, with the setting on: the entry is written again when it is under the earlier name, points at another exe (the
+    /// folder was moved, or a new version unpacked elsewhere) or lacks its mark. The setting turns off when the entry was
+    /// removed or turned off in Windows, so the toggle never says On for an app Windows will not start.
+    /// </summary>
+    public static void CarryOver(AppSettings settings)
+    {
+        try
+        {
+            if (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase)) Log.Info("Started with Windows (in the notification area)");
+            if (!settings.StartWithWindows) return;
+            if (!Registered || OffInWindows)
+            {
+                Log.Warn($"Start with Windows: {(Registered ? "turned off in Windows' Startup apps" : "the entry was removed")}, the setting follows");
+                settings.StartWithWindows = false;
+                SettingsStore.Save();
+                return;
+            }
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+            using var approved = Registry.CurrentUser.OpenSubKey(ApprovedKey);
+            if (key?.GetValue(ValueName) as string != Command || approved?.GetValue(ValueName) is not byte[])
+            {
+                Log.Info($"Start with Windows: entry written again (it was \"{key?.GetValue(ValueName) ?? key?.GetValue(PreviousValueName)}\")");
+                Set(true);
+            }
+        }
+        catch (Exception ex) { Log.Warn($"Start with Windows: {ex.Message}"); }
     }
 
     public static void Set(bool on)
     {
         using var key = Registry.CurrentUser.CreateSubKey(RunKey, true);
+        using var approved = Registry.CurrentUser.CreateSubKey(ApprovedKey, true);
         key.DeleteValue(PreviousValueName, false);
-        if (on) key.SetValue(ValueName, $"\"{Environment.ProcessPath}\" --tray");
-        else key.DeleteValue(ValueName, false);
+        approved.DeleteValue(PreviousValueName, false);
+        if (on)
+        {
+            key.SetValue(ValueName, Command);
+            // 02 then eight zero bytes for "no date": the value Windows writes for an app turned on in Startup apps.
+            approved.SetValue(ValueName, new byte[] { 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, RegistryValueKind.Binary);
+        }
+        else
+        {
+            key.DeleteValue(ValueName, false);
+            approved.DeleteValue(ValueName, false);
+        }
     }
 }

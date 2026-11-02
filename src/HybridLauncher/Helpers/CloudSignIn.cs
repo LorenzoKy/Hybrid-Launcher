@@ -43,7 +43,7 @@ static class CloudSignIn
         {
             Log.Warn($"{name} sign-in: {ex.Message}");
             window.Close();
-            App.Window?.ShowError(L.F("Could not sign in to {0}", name), ex.Message);
+            App.Window?.ShowError(L.F("Could not sign in to {0}", name), ex.Message, ex);
             return null;
         }
     }

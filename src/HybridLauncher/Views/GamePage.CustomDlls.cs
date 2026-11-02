@@ -206,7 +206,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not change the custom dlls"), ex.Message);
+            App.Window?.ShowError(L.T("Could not change the custom dlls"), ex.Message, ex);
         }
         LoadCustomDllList();
     }
@@ -230,7 +230,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not delete the entry"), ex.Message);
+            App.Window?.ShowError(L.T("Could not delete the entry"), ex.Message, ex);
         }
         LoadCustomDllList();
     }
@@ -275,7 +275,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not rename the entry"), ex.Message);
+            App.Window?.ShowError(L.T("Could not rename the entry"), ex.Message, ex);
         }
         LoadCustomDllList();
     }
@@ -324,7 +324,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message);
+            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message, ex);
         }
     }
 
@@ -356,7 +356,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message);
+            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message, ex);
         }
     }
 

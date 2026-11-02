@@ -81,7 +81,7 @@ public static class CloudSaves
     {
         "onedrive" when OneDrive.Folder() is { } od => new FolderStore(od, "OneDrive"),
         "mega" when MegaAuth.SignedIn => MegaStore.Instance,
-        "folder" when Settings.Folder is { Length: > 0 } f && Directory.Exists(f) => new FolderStore(f),
+        "folder" when Settings.Folder is { Length: > 0 } f && Directory.Exists(FolderStore.Resolve(f)) => new FolderStore(FolderStore.Resolve(f)),
         _ => null,
     };
 
@@ -278,42 +278,69 @@ public static class CloudSaves
         return hereChanged && cloudChanged ? CloudState.Conflict : hereChanged ? CloudState.ChangedHere : CloudState.ChangedInCloud;
     }
 
-    /// <summary>Sends this PC's saves to the cloud; the cloud's copy before them goes to the game's history.</summary>
-    public static async Task UploadAsync(Game game, GameSettings settings, CancellationToken ct = default)
+    /// <summary>
+    /// Sends this PC's saves to the cloud; the cloud's copy before them goes to the game's history. With <paramref name="sendLater"/>
+    /// only the zip is made within <paramref name="ct"/> (the saves as they are now, before a game changes them) and the sending
+    /// goes on without a time limit: the task is handed to <paramref name="sendLater"/>, and the next upload waits for it.
+    /// </summary>
+    public static async Task UploadAsync(Game game, GameSettings settings, CancellationToken ct = default, Action<Task>? sendLater = null)
     {
         await Gate.WaitAsync(ct);
-        try { await Upload(game, settings, ct); }
-        finally { Gate.Release(); }
+        Task? sending = null;
+        try { sending = await Upload(game, settings, ct, sendLater is not null); }
+        finally { if (sending is null) Gate.Release(); }
+        if (sending is not null) sendLater!(ReleaseAfter(sending));
+
+        static async Task ReleaseAfter(Task sending)
+        {
+            try { await sending; }
+            finally { Gate.Release(); }
+        }
     }
 
-    static async Task Upload(Game game, GameSettings settings, CancellationToken ct)
+    /// <summary>Zips the saves and sends them, or (<paramref name="later"/>) returns the sending once the zip is made; null: nothing left to send.</summary>
+    static async Task<Task?> Upload(Game game, GameSettings settings, CancellationToken ct, bool later)
     {
         var parts = Parts(game, settings);
         if (parts.Count == 0) throw new InvalidOperationException(L.T("No saves folder for this game."));
         var store = Store() ?? throw new InvalidOperationException(L.T("The cloud is not available."));
         var (hash, bytes, files) = await Task.Run(() => Fingerprint(parts), ct);
-        if (files == 0) { Log.Info($"Cloud: {game.Name} has no saves to send"); return; }
+        if (files == 0) { Log.Info($"Cloud: {game.Name} has no saves to send"); return null; }
         var old = await ReadManifestAsync(game, fresh: true, ct);
-        if (old?.Hash == hash && !old.Partial) { Remember(settings, hash); return; }
+        if (old?.Hash == hash && !old.Partial) { Remember(settings, hash); return null; }
 
         var zip = Path.Combine(AppInfo.Ensure(Path.Combine(AppInfo.CacheDir, "cloud-upload")), Guid.NewGuid().ToString("N") + ".zip");
-        try
-        {
-            await Task.Run(() => Zip(parts, zip, CompressionLevel.Optimal), ct);
-            var manifest = new CloudManifest
-            {
-                GameId = game.Id, Name = game.Name, Hash = hash, Bytes = bytes, Files = files, UpdatedUtc = DateTime.UtcNow, Machine = Environment.MachineName,
-                Parts = SavesOnly(parts) ? null : parts.Select(p => p.Name).ToList(),
-            };
-            await store.PutAsync(Key(game), zip, manifest, old, Settings.KeepVersions, ct);
-        }
-        finally
+        try { await Task.Run(() => Zip(parts, zip, CompressionLevel.Optimal), ct); }
+        catch
         {
             try { File.Delete(zip); } catch { }
-            Forget(game);
+            throw;
         }
-        Remember(settings, hash);
-        Log.Info($"Cloud: {game.Name} sent to {store.Name} ({string.Join(", ", parts.Select(p => p.Name))}: {files} files, {DiskUsage.Format(bytes)})");
+        var manifest = new CloudManifest
+        {
+            GameId = game.Id, Name = game.Name, Hash = hash, Bytes = bytes, Files = files, UpdatedUtc = DateTime.UtcNow, Machine = Environment.MachineName,
+            Parts = SavesOnly(parts) ? null : parts.Select(p => p.Name).ToList(),
+        };
+
+        async Task Send(CancellationToken token)
+        {
+            // In some of the clouds only: remembered as sent (the next status sees the copy is not everywhere and sends it again),
+            // and the error still goes up so the user hears which cloud missed it.
+            CloudPartialException? partial = null;
+            try { await store.PutAsync(Key(game), zip, manifest, old, Settings.KeepVersions, token); }
+            catch (CloudPartialException ex) when (ex.Sent.Count > 0) { partial = ex; }
+            finally
+            {
+                try { File.Delete(zip); } catch { }
+                Forget(game);
+            }
+            Remember(settings, hash);
+            Log.Info($"Cloud: {game.Name} sent to {(partial is null ? store.Name : string.Join(" + ", partial.Sent))} ({string.Join(", ", parts.Select(p => p.Name))}: {files} files, {DiskUsage.Format(bytes)})");
+            if (partial is not null) throw partial;
+        }
+        if (!later) { await Send(ct); return null; }
+        // A big save to a slow cloud (MEGA filling in beside OneDrive, say) takes minutes: the game does not wait for it.
+        return Send(CancellationToken.None);
     }
 
     /// <summary>The parts as one zip: the saves alone at its root (the first layout), else one folder per part and the marker.</summary>
@@ -442,24 +469,26 @@ public static class CloudSaves
     /// <summary>
     /// Before the game starts: saves changed in the cloud (and not here) come down; changed here only go up; changed on both
     /// sides asks <paramref name="conflict"/>. Returns a short line for the user when something was done, else null.
+    /// With <paramref name="sendLater"/>, an upload does not hold the game: see <see cref="UploadAsync"/>.
     /// </summary>
-    public static async Task<string?> BeforeLaunchAsync(Game game, GameSettings settings, Func<CloudStatus, Task<Choice>> conflict, CancellationToken ct = default)
+    public static async Task<string?> BeforeLaunchAsync(Game game, GameSettings settings, Func<CloudStatus, Task<Choice>> conflict, CancellationToken ct = default, Action<Task>? sendLater = null)
     {
         var status = await StatusAsync(game, settings, fresh: true, ct);
+        Log.Info($"Cloud: {game.Name} before launch: {status.State}{(status.Cloud?.Partial == true ? " (not in every cloud)" : "")}");
         switch (status.State)
         {
             case CloudState.ChangedInCloud:
                 await RestoreAsync(game, settings, null, ct);
                 return L.F("Saves from {0} ({1}) brought to this PC.", status.Cloud?.Machine, status.Cloud?.UpdatedUtc.ToLocalTime().ToString("g"));
             case CloudState.ChangedHere or CloudState.NotUploaded:
-                await UploadAsync(game, settings, ct);
+                await UploadAsync(game, settings, ct, sendLater);
                 return null;
             case CloudState.Conflict:
                 switch (await conflict(status))
                 {
                     // The user answered: no time limit on what they chose (the question may have waited longer than it).
                     case Choice.UseCloud: await RestoreAsync(game, settings, null, CancellationToken.None); return L.T("The cloud's saves are on this PC now; the ones here are in Hybrid Launcher's backups.");
-                    case Choice.KeepHere: await UploadAsync(game, settings, CancellationToken.None); return L.T("This PC's saves are in the cloud now; the cloud's are kept in its history.");
+                    case Choice.KeepHere: await UploadAsync(game, settings, CancellationToken.None, sendLater); return L.T("This PC's saves are in the cloud now; the cloud's are kept in its history.");
                 }
                 return null;
             default:
@@ -472,7 +501,11 @@ public static class CloudSaves
     public static async Task<bool> AfterSessionAsync(Game game, GameSettings settings, CancellationToken ct = default)
     {
         var status = await StatusAsync(game, settings, fresh: true, ct);
-        if (status.State is not (CloudState.ChangedHere or CloudState.NotUploaded or CloudState.Conflict)) return false;
+        if (status.State is not (CloudState.ChangedHere or CloudState.NotUploaded or CloudState.Conflict))
+        {
+            Log.Info($"Cloud: {game.Name} after the session: {status.State}, nothing to send ({status.SaveDir})");
+            return false;
+        }
         await UploadAsync(game, settings, ct);
         return true;
     }

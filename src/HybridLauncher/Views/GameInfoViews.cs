@@ -246,7 +246,7 @@ static class Ui
         catch (Exception ex)
         {
             Log.Warn($"Action failed: {ex}");
-            App.Window?.ShowError(L.T("Action failed"), ex.Message);
+            App.Window?.ShowError(L.T("Action failed"), ex.Message, ex);
         }
     }
 
@@ -1110,7 +1110,7 @@ public sealed partial class OverviewView : UserControl
         catch (Exception ex)
         {
             Log.Warn($"Trailer {movie.Name}: {ex.Message}");
-            if (_userPicked) App.Window?.ShowError(L.T("Could not play the trailer"), ex.Message);
+            if (_userPicked) App.Window?.ShowError(L.T("Could not play the trailer"), ex.Message, ex);
             _viewer.Stop();
         }
     }
@@ -2593,7 +2593,7 @@ public sealed partial class LinksView : UserControl
         button.Click += async (_, _) =>
         {
             try { Ui.Open(await link.Url()); }
-            catch (Exception ex) { App.Window?.ShowError(L.F("Could not open {0}", link.Title), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.F("Could not open {0}", link.Title), ex.Message, ex); }
         };
         return button;
     }

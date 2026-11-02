@@ -498,7 +498,7 @@ public sealed partial class ReShadeView : UserControl
                     ReShadePresets.SetActive(dir, toggle.IsOn ? p.Path : null);
                     App.Window?.ShowSuccess(toggle.IsOn ? L.F("ReShade will load \"{0}\". In game it can still be changed from its menu.", p.Name) : L.T("ReShade will load its default preset."));
                 }
-                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the preset"), ex.Message); }
+                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the preset"), ex.Message, ex); }
                 FillPresets(dir, installed);
             };
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -529,7 +529,7 @@ public sealed partial class ReShadeView : UserControl
             {
                 if (!await _ctx.ConfirmAsync(this, L.F("Delete the preset \"{0}\"?", p.Name), L.F("Deletes {0}", p.Path) + (p.Active ? "\n\n" + L.T("It is the active one: ReShade goes back to its default preset.") : ""), L.T("Delete"))) return;
                 try { ReShadePresets.Delete(dir, p); }
-                catch (Exception ex) { App.Window?.ShowError(L.T("Could not delete the preset"), ex.Message); }
+                catch (Exception ex) { App.Window?.ShowError(L.T("Could not delete the preset"), ex.Message, ex); }
                 FillPresets(dir, installed);
             };
             var grid = new Grid { ColumnSpacing = 10 };
@@ -558,7 +558,7 @@ public sealed partial class ReShadeView : UserControl
             var added = await Task.Run(() => ReShadePresets.Import(dir, files));
             App.Window?.ShowSuccess(L.N(added.Count, "{0} preset imported. Turn it on to use it.", "{0} presets imported. Turn one on to use it."));
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not import the preset"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not import the preset"), ex.Message, ex); }
         Refresh();
     }
 
@@ -648,7 +648,7 @@ public sealed partial class ReShadeView : UserControl
             SettingsStore.Save();
             App.Window?.ShowSuccess(message);
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not remove ReShade"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not remove ReShade"), ex.Message, ex); }
         Refresh();
         _ctx.OptiChanged();
     }
@@ -674,7 +674,7 @@ public sealed partial class ReShadeView : UserControl
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not get ReShade"), ex.Message);
+            App.Window?.ShowError(L.T("Could not get ReShade"), ex.Message, ex);
         }
         finally
         {
@@ -704,7 +704,7 @@ public sealed partial class ReShadeView : UserControl
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not set it up"), ex.Message);
+            App.Window?.ShowError(L.T("Could not set it up"), ex.Message, ex);
             return;
         }
         // The redraw is not part of the setup: a failure there must not read as "could not set it up".
@@ -729,7 +729,7 @@ public sealed partial class ReShadeView : UserControl
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not undo it"), ex.Message);
+            App.Window?.ShowError(L.T("Could not undo it"), ex.Message, ex);
         }
         Ui.Safe(Refresh);
         _ctx.OptiChanged();
@@ -1045,7 +1045,7 @@ public sealed partial class RenoDxView : UserControl
             App.Window?.ShowSuccess(L.F("{0} installed. Start the game and press Home for its settings.", Path.GetFileName(path)));
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the mod"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the mod"), ex.Message, ex); }
         finally
         {
             _busy = false;
@@ -1072,7 +1072,7 @@ public sealed partial class RenoDxView : UserControl
             App.Window?.ShowSuccess(L.F("Installed {0}.", string.Join(", ", added)));
             _found.IsOpen = false;
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the file"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the file"), ex.Message, ex); }
         finally
         {
             _busy = false;
@@ -1190,7 +1190,7 @@ public sealed partial class QuickAccessView : UserControl
         mi.Click += async (_, _) =>
         {
             try { await click(); }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
         };
         return mi;
     }
@@ -1911,7 +1911,7 @@ public sealed partial class LumaView : UserControl
             _ctx.OptiChanged();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install Luma"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not install Luma"), ex.Message, ex); }
         finally
         {
             _busy = false;
@@ -1938,7 +1938,7 @@ public sealed partial class LumaView : UserControl
             else App.Window?.ShowSuccess(L.F("{0} removed and the folder put back as it was.", state.Mod));
             _ctx.OptiChanged();
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not uninstall Luma"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not uninstall Luma"), ex.Message, ex); }
         finally
         {
             _busy = false;

@@ -289,7 +289,7 @@ public sealed partial class GamePage : Page
                 RebuildTabs();
                 ShowTab(_tab, remember: false);
             }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the tabs"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the tabs"), ex.Message, ex); }
         };
     }
 
@@ -873,7 +873,7 @@ public sealed partial class GamePage : Page
                 App.Window?.ShowInfo(L.F("{0} was added by hand and no store page was found for it.", game.Title));
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     // ---------- layout ----------
@@ -1049,13 +1049,13 @@ public sealed partial class GamePage : Page
     async void OptiWiki_Click(object sender, RoutedEventArgs e)
     {
         try { GameLauncher.OpenUri(await CompatWiki.PageForAsync(GameNames.PlainOrClean(GameNames.LookupName(_game!)))); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open the wiki"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open the wiki"), ex.Message, ex); }
     }
 
     async void Nexus_Click(object sender, RoutedEventArgs e)
     {
         try { GameLauncher.OpenUri(await NexusMods.PageForAsync(GameNames.PlainOrClean(GameNames.LookupName(_game!)))); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open Nexus Mods"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not open Nexus Mods"), ex.Message, ex); }
     }
 
     void SteamDb_Click(object sender, RoutedEventArgs e)
@@ -1290,7 +1290,7 @@ public sealed partial class GamePage : Page
         SaveArgs();
         // Watched from then on: Stop, time played (non-Steam) and Smart HDR follow the game's exe.
         try { await AppState.LaunchAsync(_game); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 
     async Task StopGameAsync()
@@ -1584,7 +1584,7 @@ public sealed partial class GamePage : Page
                 ? L.F("The desktop shortcut for {0} was updated.", game.Title)
                 : L.F("{0} is on the desktop: the shortcut starts it through Hybrid Launcher.", game.Title));
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("The shortcut was not created"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("The shortcut was not created"), ex.Message, ex); }
     }
 
     // ---------- launch options and the game's page (the gear) ----------
@@ -1706,7 +1706,7 @@ public sealed partial class GamePage : Page
             Frame.Navigate(typeof(GamePage), game.Id);
             if (Frame.BackStack.Count > 0) Frame.BackStack.RemoveAt(Frame.BackStack.Count - 1);
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the game's page"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the game's page"), ex.Message, ex); }
     }
 
     /// <summary>One choice of the page list: a capsule picture (when there is one), the name, a muted line, and a mark on the current one.</summary>
@@ -2056,7 +2056,7 @@ public sealed partial class GamePage : Page
         catch (Exception ex)
         {
             Log.Warn($"Import of {source} failed: {ex.Message}");
-            App.Window?.ShowError(L.T("Could not import the build"), ex.Message);
+            App.Window?.ShowError(L.T("Could not import the build"), ex.Message, ex);
             VersionCombo.PlaceholderText = L.T("No builds yet: use Import");
         }
         finally
@@ -2079,7 +2079,7 @@ public sealed partial class GamePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not delete the build"), ex.Message);
+            App.Window?.ShowError(L.T("Could not delete the build"), ex.Message, ex);
         }
         await LoadCustomBuildsAsync(null, _pageCts.Token);
         _ = VersionsList.ReloadAsync();
@@ -2247,7 +2247,7 @@ public sealed partial class GamePage : Page
             LogExpander.IsExpanded = true;
             if (settings.Install is not null && !File.Exists(Path.Combine(settings.Install.TargetDir, settings.Install.DllName))) settings.Install = null;
             SettingsStore.Save();
-            App.Window?.ShowError(L.T("Install failed"), ex.Message);
+            App.Window?.ShowError(L.T("Install failed"), ex.Message, ex);
         }
         catch (Exception ex)
         {
@@ -2256,7 +2256,7 @@ public sealed partial class GamePage : Page
             AppendLog(ex.ToString());
             if (settings.Install is not null && !File.Exists(Path.Combine(settings.Install.TargetDir, settings.Install.DllName))) settings.Install = null;
             SettingsStore.Save();
-            App.Window?.ShowError(L.T("Install failed"), ex.Message);
+            App.Window?.ShowError(L.T("Install failed"), ex.Message, ex);
         }
         finally
         {
@@ -2292,7 +2292,7 @@ public sealed partial class GamePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Uninstall failed"), ex.Message);
+            App.Window?.ShowError(L.T("Uninstall failed"), ex.Message, ex);
         }
         finally
         {
@@ -2456,7 +2456,7 @@ public sealed partial class GamePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not delete the plugin"), ex.Message);
+            App.Window?.ShowError(L.T("Could not delete the plugin"), ex.Message, ex);
         }
         LoadAsiList();
     }
@@ -2527,7 +2527,7 @@ public sealed partial class GamePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not add the plugin"), ex.Message);
+            App.Window?.ShowError(L.T("Could not add the plugin"), ex.Message, ex);
         }
     }
     void AsiRefresh_Click(object sender, RoutedEventArgs e) => LoadAsiList();
@@ -2622,7 +2622,7 @@ public sealed partial class GamePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not save the profile"), ex.Message);
+            App.Window?.ShowError(L.T("Could not save the profile"), ex.Message, ex);
         }
     }
 
@@ -2887,6 +2887,6 @@ public sealed partial class GamePage : Page
     static void Try(Action action)
     {
         try { action(); }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
     }
 }

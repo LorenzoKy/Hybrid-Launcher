@@ -16,6 +16,8 @@ public static class CloudSettingsView
 {
     public static void Fill(Panel host)
     {
+        // The button just clicked leaves with the old rows: the focus must not land in the game list's search box.
+        App.Window?.KeepFocusOffSearch();
         host.Children.Clear();
         var s = CloudSaves.Settings;
 
@@ -167,12 +169,36 @@ public static class CloudSettingsView
             pick.Click += async (_, _) =>
             {
                 if (App.Window is null || await Pickers.PickFolderAsync(App.Window) is not { } dir) return;
+                // Google Drive's G:\ takes no files at its root: its "My Drive" folder is used instead.
+                dir = FolderStore.Resolve(dir);
+                if (!FolderStore.Writable(dir))
+                {
+                    App.Window.ShowError(L.T("Cloud saves"), L.F("Hybrid Launcher cannot write in \"{0}\": pick a folder inside it.", dir));
+                    return;
+                }
                 CloudSaves.Use("folder", true);
                 s.Folder = dir;
                 SettingsStore.Save();
                 Fill(host);
             };
             actions.Children.Add(pick);
+            // Remove: the folder leaves the sync and is forgotten; what is already in it stays there.
+            if (s.Folder is not null)
+            {
+                var remove = new Button { Content = L.T("Remove"), MinWidth = 96 };
+                ToolTipService.SetToolTip(remove, L.T("Stop using this folder and forget it. The saves already in it stay there."));
+                remove.Click += (_, _) =>
+                {
+                    CloudSaves.Use("folder", false);
+                    s.Folder = null;
+                    SettingsStore.Save();
+                    Fill(host);
+                    App.Window?.ShowSuccess(CloudSaves.Settings.Providers.Count > 0
+                        ? L.F("Cloud saves go to {0} now.", CloudSaves.StoreName)
+                        : L.T("The folder is no longer used for cloud saves."));
+                };
+                actions.Children.Add(remove);
+            }
             list.Children.Add(Row(text, actions, compact: true));
         }
         host.Children.Add(list);

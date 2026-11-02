@@ -132,7 +132,18 @@ public sealed class MegaStore : ICloudStore
     static MegaApiClient? _client;
     static readonly SemaphoreSlim Lock = new(1);
 
-    internal static MegaApiClient NewClient() => new(new Options());
+    /// <summary>
+    /// A client that never waits for ever: the library's default has no network time limit (a stalled request held every cloud
+    /// call behind it: the cloud menu, the button's state, Play) and answers MEGA's "try again" with 17 rising waits, minutes
+    /// in all. A request (an API call, or one 1 MB piece of an upload) gets 60 s; "try again" a few short waits.
+    /// </summary>
+    internal static MegaApiClient NewClient() => new(new Options(computeApiRequestRetryWaitDelay: RetryDelay), new WebClient(responseTimeout: 60_000));
+
+    static bool RetryDelay(int attempt, out TimeSpan delay)
+    {
+        delay = TimeSpan.FromMilliseconds(250 << Math.Min(attempt, 4));
+        return attempt < 5;
+    }
 
     internal static void Adopt(MegaApiClient client) => _client = client;
 
@@ -171,6 +182,12 @@ public sealed class MegaStore : ICloudStore
                     if (ex.ApiResultCode == ApiResultCode.BadSessionId) _client = null;
                     throw new InvalidOperationException(Explain(ex));
                 }
+                // A request past its time limit comes as a cancellation nobody asked for: it is MEGA not answering, an error
+                // like any other (beside OneDrive it must not stop OneDrive's part).
+                catch (Exception ex) when (!ct.IsCancellationRequested && (ex is OperationCanceledException || ex.InnerException is OperationCanceledException or TimeoutException))
+                {
+                    throw new TimeoutException(L.T("MEGA did not answer in time: check the connection, the saves go up at the next sync."), ex);
+                }
             }, ct);
         }
         finally { Lock.Release(); }
@@ -186,7 +203,7 @@ public sealed class MegaStore : ICloudStore
         for (int attempt = 0; ; attempt++)
         {
             try { return call(); }
-            catch (ApiException ex) when (attempt < 6 && ex.ApiResultCode is ApiResultCode.RequestFailedRetry or ApiResultCode.TooManyRequests
+            catch (ApiException ex) when (attempt < 3 && ex.ApiResultCode is ApiResultCode.RequestFailedRetry or ApiResultCode.TooManyRequests
                 or ApiResultCode.ToManyRequestsForThisResource or ApiResultCode.ResourceTemporarilyNotAvailable or ApiResultCode.InternalError
                 or ApiResultCode.TooManyConnectionsOnThisResource)
             {

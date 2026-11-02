@@ -224,7 +224,7 @@ public sealed partial class ReShadeSettingsView : UserControl
             _doc.Set(entry.Section, entry.Key, value);
             _doc.Save();
         }
-        catch (Exception ex) { App.Window?.ShowError(L.T("Could not save ReShade.ini"), ex.Message); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not save ReShade.ini"), ex.Message, ex); }
     }
 
     /// <summary>"36,0,0,0" (key code, Ctrl, Shift, Alt) as "Home"; "0,0,0,0" as "None".</summary>

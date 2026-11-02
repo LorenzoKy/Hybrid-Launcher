@@ -62,7 +62,7 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md
   pins, search, filters, renaming, controller support.
 - **A page per game** with Play, store details, trailer, reviews, HowLongToBeat, PCGamingWiki fixes, links and notes.
 - **Direct downloads** from your Steam, Epic and GOG accounts, with pause, resume and updates that leave your mods in place.
-- **Cloud saves** on OneDrive, MEGA or a folder, with history and conflict handling.
+- **Cloud saves** on OneDrive, MEGA or a folder (Google Drive, a NAS, a USB drive), one or several at once, with history and conflict handling.
 
 **Mods**
 - **OptiScaler** through its own installer, with a quick panel, profiles, saved versions, custom builds and
@@ -111,12 +111,26 @@ They can, in games and services that forbid them. Never use mods in online or co
 Yes, it is GPL v3: see the [license](#license) and [docs/development.md](docs/development.md).
 </details>
 
-More in [FAQ and troubleshooting](docs/faq.md).
+More in the [FAQ](docs/faq.md).
+
+## Troubleshooting
+
+Every error in the app is shown in red with a **Possible causes** line under it and a **Troubleshooting** link to the
+right section of the [troubleshooting guide](docs/troubleshooting.md). The usual ones:
+
+| Problem | First thing to check |
+|---|---|
+| Cloud saves: *in OneDrive but not in MEGA yet* | One cloud missed this copy (offline, or MEGA's sign-in ended); it catches up at the next sync. [More](docs/troubleshooting.md#cloud-saves) |
+| Cloud button never says *Synced* | Press **Sync now** from the game's Cloud button; sign in to MEGA again if it asks. [More](docs/troubleshooting.md#cloud-saves) |
+| *Start with Windows* does nothing | It starts in the notification area (look under the arrow by the clock); check it is on in Windows' **Settings → Apps → Startup**. [More](docs/troubleshooting.md#start-with-windows) |
+| *Access denied* / *file in use* | Close the game and its launcher; let OneDrive or the antivirus finish with the folder. [More](docs/troubleshooting.md#common-windows-errors) |
+| OptiScaler does not show up in the game | Try another dll name (dxgi, winmm, version…) in the setup options. [More](docs/troubleshooting.md#mods-optiscaler-and-reshade) |
+| A game does not start | Is it still running? Is the right exe picked (gear beside Play → *Change game exe*)? [More](docs/troubleshooting.md#a-game-does-not-start) |
 
 ## Documentation
 
 [Getting started](docs/getting-started.md) · [User guide](docs/user-guide.md) · [Cloud saves](docs/cloud-saves.md) ·
-[Updates](docs/updates.md) · [Privacy and data](docs/privacy.md) · [FAQ](docs/faq.md) · [Contributing](CONTRIBUTING.md) ·
+[Updates](docs/updates.md) · [Privacy and data](docs/privacy.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md) ·
 [Changelog](CHANGELOG.md) · [For developers](docs/development.md)
 
 ## Reporting bugs

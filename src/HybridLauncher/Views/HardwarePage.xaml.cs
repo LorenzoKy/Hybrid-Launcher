@@ -64,7 +64,7 @@ public sealed partial class HardwarePage : Page
         catch (Exception ex)
         {
             Log.Error("Hardware read failed", ex);
-            App.Window?.ShowError(L.T("Could not read the hardware"), ex.Message);
+            App.Window?.ShowError(L.T("Could not read the hardware"), ex.Message, ex);
             LoadingRing.Visibility = Visibility.Collapsed;
             return;
         }
@@ -289,7 +289,7 @@ public sealed partial class HardwarePage : Page
                     await Task.Delay(1500);
                     if (!ct.IsCancellationRequested) _ = LoadAsync();
                 }
-                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change HDR"), ex.Message); }
+                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change HDR"), ex.Message, ex); }
             };
             panel.Children.Add(Row("HDR", L.T("Brighter highlights and wider colours in HDR games. Windows' own switch (Settings → Display → HDR)."), hdr));
         }
@@ -316,7 +316,7 @@ public sealed partial class HardwarePage : Page
                     DisplaySettings.SetColorProfile(d, profiles[combo.SelectedIndex]);
                     App.Window?.ShowSuccess(L.F("{0} is now the colour profile of {1}.", Path.GetFileNameWithoutExtension(profiles[combo.SelectedIndex]), d.Name));
                 }
-                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the colour profile"), ex.Message); }
+                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the colour profile"), ex.Message, ex); }
             };
             panel.Children.Add(Row(L.T("Colour profile"), d.HdrOn ? L.T("Profiles for HDR mode") : L.T("Profiles for SDR mode"), combo));
         }
@@ -362,7 +362,7 @@ public sealed partial class HardwarePage : Page
                 if (!await Task.Run(() => DisplaySettings.SetBrightness(d, percent)))
                     App.Window?.ShowError(L.T("Could not change the brightness"), L.T("The display did not accept the new value."));
             }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the brightness"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the brightness"), ex.Message, ex); }
             finally { setting = false; }
         };
         slider.ValueChanged += (_, e) =>
@@ -386,7 +386,7 @@ public sealed partial class HardwarePage : Page
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not change the display mode"), ex.Message);
+            App.Window?.ShowError(L.T("Could not change the display mode"), ex.Message, ex);
             _ = LoadAsync();
             return;
         }
@@ -421,7 +421,7 @@ public sealed partial class HardwarePage : Page
         if (result != ContentDialogResult.Primary)
         {
             try { await Task.Run(() => DisplaySettings.SetMode(d.GdiName, before)); }
-            catch (Exception ex) { App.Window?.ShowError(L.T("Could not put the previous mode back"), ex.Message); }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Could not put the previous mode back"), ex.Message, ex); }
         }
         _ = LoadAsync();
     }
@@ -477,7 +477,7 @@ public sealed partial class HardwarePage : Page
             try { ok = await apply(wanted); }
             catch (Exception ex)
             {
-                App.Window?.ShowError(L.F("Could not change {0}", title), ex.Message);
+                App.Window?.ShowError(L.F("Could not change {0}", title), ex.Message, ex);
                 ok = false;
             }
             if (ok) return;

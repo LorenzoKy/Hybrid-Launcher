@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.2.2 — 2026-11-02 · Several clouds at once
+
+**Hybrid Launcher 1.2.2** makes cloud saves work well with several clouds at once (OneDrive, MEGA and a folder such as Google
+Drive), fixes *Start with Windows* and explains errors better. If you already have 1.2, the app offers this update by itself a
+few seconds after it starts.
+
+### ✨ New
+
+- **Remove the custom folder.** Settings → Cloud saves → *A folder of your choice* has a *Remove* button: the folder stops
+  being used and is forgotten (the saves already in it stay there).
+- **Errors say what to check.** Every red message now has a *Possible causes* line under it (no connection, a file in use, a
+  disconnected drive, a full disk…) and a *Troubleshooting* link to the matching section of the new
+  [troubleshooting guide](docs/troubleshooting.md).
+- **Quieter cloud saves.** No more green message after every upload: the game's Cloud button says *Synced*. A message shows
+  only when something went wrong, in red, and says which cloud missed the saves (for example *in OneDrive but not in MEGA
+  yet*) and why.
+
+### 🐞 Fixed
+
+- **Start with Windows did nothing** ([#3](https://github.com/LorenzoKy/Hybrid-Launcher/issues/3)). Recent Windows 11 builds
+  skip a startup entry that is not marked as allowed in Windows' Startup apps, and Hybrid Launcher never wrote that mark. It
+  does now, keeps the entry pointing at the copy you run (after moving the folder or unpacking a new version elsewhere), and
+  its toggle shows Off when Windows has it turned off. If it was on in an earlier version, 1.2.2 fixes the entry the first
+  time it starts. The icon also comes back if the taskbar was not ready yet when Windows started the app.
+- **"Synced" when the saves were not in the cloud, and saves not sent after playing.** For games that keep one saves folder per
+  account (Marvel's Spider-Man 2 keeps one per Steam account that ever played on the PC), Hybrid Launcher could watch an old
+  account's folder that never changes. It now follows the folder the game writes in, and looks again before each game and
+  after it closes (a folder you picked yourself is never changed).
+- **A cloud that does not answer no longer stops everything.** When MEGA hung on the network, the cloud menu took seconds to
+  open, the cloud button got stuck or read "No saves folder", and Play waited. Now each MEGA request has a time limit, a cloud
+  that does not answer is left for the next sync while the others work as usual, uploads go to every cloud at once, and the
+  button says "Cloud not reachable" instead. With several clouds, "Synced" now means that every one of them holds the saves.
+- **The cloud menu opens at once.** The older copies are read in the background and fill in when the cloud answers.
+- **A game could wait 45 seconds at Play and then start without its saves in every cloud.** With OneDrive and MEGA both in
+  use, a game whose saves were only in one of them had to send them to the other before starting; big saves (Cyberpunk 2077,
+  80 MB) never made it in time, so every Play waited and MEGA never got them. Now Play only packs the saves as they are and
+  the game starts at once (Cyberpunk: 2 seconds instead of 45); the saves go up while you play.
+- **Quitting right after a game no longer drops its upload.** When saves are still on their way to the cloud, Hybrid
+  Launcher closes its window at once and quits when they are there (three minutes at most).
+- **OneDrive could miss an upload.** Two uploads a few seconds apart (for example after a short game) could find a file
+  OneDrive was still sending, and that copy stayed out of OneDrive until the next sync. Hybrid Launcher now waits a moment
+  and tries again (Google Drive and other sync apps too).
+- **Google Drive as "a folder of your choice".** Picking the Google Drive drive itself (G:) failed at every upload, since
+  Google Drive takes no files at its root: Hybrid Launcher now uses its "My Drive" folder. A folder it cannot write in is
+  refused when you pick it, with a message, instead of failing later.
+
 ## 1.2.1 — 2026-11-02 · Smart HDR fix
 
 **Hybrid Launcher 1.2.1** keeps Smart HDR on for the whole game, also for games that start through a launcher. If you already

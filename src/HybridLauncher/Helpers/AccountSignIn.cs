@@ -53,7 +53,7 @@ static class AccountSignIn
         catch (Exception ex)
         {
             Log.Warn($"{store} sign-in: {ex.Message}");
-            App.Window?.ShowError(L.F("Could not sign in to {0}", StoreLogos.Label(store)), ex.Message);
+            App.Window?.ShowError(L.F("Could not sign in to {0}", StoreLogos.Label(store)), ex.Message, ex);
             return null;
         }
     }
