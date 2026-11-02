@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.1 — 2026-11-02 · Smart HDR fix
+
+**Hybrid Launcher 1.2.1** keeps Smart HDR on for the whole game, also for games that start through a launcher. If you already
+have 1.2, the app offers this update by itself a few seconds after it starts.
+
+### 🐞 Fixed
+
+- **Smart HDR turned off while some games were still running.** Games that start through a launcher exe and then run another
+  exe in a sub-folder, such as Gears of War: E-Day and other Xbox Game Pass games, or many Unreal games, were seen as closed
+  when the launcher exited: HDR went off and Stop could not close them. Hybrid Launcher now follows the game's whole folder,
+  so HDR stays on until the game itself closes.
+- **Smart HDR now works however the game is started.** A game with Smart HDR started from the Xbox app, Steam or a shortcut
+  turns HDR on too, not only one started with Play.
+
 ## 1.2.0 — 2026-11-01 · Glass and fixes
 
 **Hybrid Launcher 1.2** gives the game page a new launch bar, shows an Update button when a new version is out, and makes OptiScaler install on every Windows, whatever its

@@ -8,10 +8,13 @@ public enum GameRunState { Stopped, Starting, Running, Stopping }
 
 /// <summary>
 /// Which games are running: the ones started from Hybrid Launcher (watched from the click on Play) and any other game found running from
-/// its folder. Every 2 seconds the game's folder is checked for a running exe, so a game closed in any way (its own menu, Alt+F4,
-/// a crash, Task Manager, Stop in Hybrid Launcher) is seen as closed. On top of that:
+/// its folder. Every 2 seconds the game's whole install folder (every sub-folder too) is checked for a running exe, so a game that hands
+/// over from a launcher exe to one in a sub-folder (Xbox games: gamelaunchhelper → start_protected_game → Binaries\WinGDK\Game.exe;
+/// Unreal games: Game.exe → Game\Binaries\Win64\Game-Win64-Shipping.exe) stays one session, and a game closed in any way (its own menu,
+/// Alt+F4, a crash, Task Manager, Stop in Hybrid Launcher) is seen as closed. On top of that:
 ///  • time played for non-Steam games (Steam counts its own);
-///  • Smart HDR: Windows HDR is turned on when a game with Smart HDR starts (only if it was off) and off again when it closes.
+///  • Smart HDR: Windows HDR is turned on when a game with Smart HDR starts, from Hybrid Launcher or not (only if it was off), and off
+///    again when it closes.
 /// Events are raised on the thread that started the first session (the UI thread).
 /// </summary>
 public static class GameSessions
@@ -20,6 +23,7 @@ public static class GameSessions
     {
         public required Game Game;
         public required GameSettings Settings;
+        // The folder watched: the game's install folder when its exe sits inside it (see WatchDir), with every sub-folder.
         public required string Dir;
         public GameRunState State;
         public DateTime StartedAt;
@@ -73,7 +77,7 @@ public static class GameSessions
         if (settings.SmartHdr) HdrOn(game);
         lock (Sessions)
         {
-            Sessions[game.Id] = new Session { Game = game, Settings = settings, Dir = dir, State = GameRunState.Starting, StartedAt = DateTime.UtcNow, Launched = true };
+            Sessions[game.Id] = new Session { Game = game, Settings = settings, Dir = WatchDir(game, dir), State = GameRunState.Starting, StartedAt = DateTime.UtcNow, Launched = true };
         }
         Raise(game.Id);
         EnsureTimer();
@@ -87,9 +91,10 @@ public static class GameSessions
     {
         _ui ??= SynchronizationContext.Current;
         if (dir is null || IsActive(game.Id)) return;
+        dir = WatchDir(game, dir);
         _ = Task.Run(() =>
         {
-            var running = OptiInstaller.RunningGameProcess(dir);
+            var running = RunningUnder(dir);
             if (running is null) return;
             lock (Sessions)
             {
@@ -101,6 +106,7 @@ public static class GameSessions
                 };
             }
             Log.Info($"Session: {game.Name} found running ({running})");
+            if (settings.SmartHdr) OnUi(() => HdrOn(game));
             OnUi(() => Raise(game.Id));
             EnsureTimer();
         });
@@ -111,7 +117,8 @@ public static class GameSessions
     static Func<IEnumerable<(Game Game, GameSettings Settings)>>? _library;
     static Timer? _scanTimer;
     static int _scanning;
-    // The exe path of each process seen (asked once per process id; a reused id with another start time is asked again).
+    // The exe path of each process seen (asked once per process id; a reused id with another start time is asked again). Shared by
+    // the library scan and the sessions' own checks, so it is locked.
     static readonly Dictionary<int, (DateTime Start, string? Path)> Seen = [];
 
     /// <summary>
@@ -136,7 +143,7 @@ public static class GameSessions
             // the top of a drive ("D:\Games") is never a single game.
             var games = _library()
                 .Select(g => (g.Game, g.Settings, Dir: g.Game.InstallDir?.TrimEnd('\\', '/') ?? ""))
-                .Where(g => g.Dir.Length > 3 && g.Dir.Count(c => c == '\\') >= 2 && !g.Game.NotInstalled && !g.Game.Installing)
+                .Where(g => IsGameFolder(g.Dir) && !g.Game.NotInstalled && !g.Game.Installing)
                 .OrderByDescending(g => g.Dir.Length).ToList();
             if (games.Count == 0) return;
             var alive = new HashSet<int>();
@@ -145,14 +152,9 @@ public static class GameSessions
             {
                 using (p)
                 {
-                    int pid = p.Id;
-                    if (pid <= 4) continue;
-                    alive.Add(pid);
-                    DateTime start;
-                    try { start = p.StartTime; } catch { start = default; }
-                    if (!Seen.TryGetValue(pid, out var seen) || seen.Start != start)
-                        Seen[pid] = seen = (start, ImagePath(pid));
-                    if (seen.Path is not { } path) continue;
+                    if (p.Id <= 4) continue;
+                    alive.Add(p.Id);
+                    if (PathOf(p) is not { } path) continue;
                     foreach (var g in games)
                     {
                         if (!path.StartsWith(g.Dir + "\\", StringComparison.OrdinalIgnoreCase)) continue;
@@ -162,7 +164,7 @@ public static class GameSessions
                     }
                 }
             }
-            foreach (var pid in Seen.Keys.Where(k => !alive.Contains(k)).ToList()) Seen.Remove(pid);
+            lock (Seen) foreach (var pid in Seen.Keys.Where(k => !alive.Contains(k)).ToList()) Seen.Remove(pid);
 
             foreach (var (id, (game, settings, exe)) in found)
             {
@@ -173,19 +175,21 @@ public static class GameSessions
                     {
                         Sessions[id] = new Session
                         {
-                            Game = game, Settings = settings, Dir = Path.GetDirectoryName(exe)!, State = GameRunState.Running,
+                            Game = game, Settings = settings, Dir = WatchDir(game, Path.GetDirectoryName(exe)!), State = GameRunState.Running,
                             StartedAt = DateTime.UtcNow, RunningSince = DateTime.UtcNow, Process = Path.GetFileName(exe),
                         };
                         added = true;
                     }
-                    else if (s.State == GameRunState.Starting)
+                    else if (s.State == GameRunState.Starting && !Below(exe, s.Dir))
                     {
                         // Started from Hybrid Launcher through a launcher: the game's own exe may sit in another folder than the one watched.
-                        s.Dir = Path.GetDirectoryName(exe)!;
+                        s.Dir = WatchDir(game, Path.GetDirectoryName(exe)!);
                     }
                 }
                 if (!added) continue;
                 Log.Info($"Session: {game.Name} found running ({Path.GetFileName(exe)}), started outside Hybrid Launcher");
+                // Smart HDR follows the game however it was started (the Xbox app, Steam, a shortcut), not only from Play here.
+                if (settings.SmartHdr) OnUi(() => HdrOn(game));
                 if (game.Store != GameStore.Steam) OnUi(() =>
                 {
                     settings.LastPlayed = DateTime.Now;
@@ -219,6 +223,53 @@ public static class GameSessions
         return name.Contains("crashreport", StringComparison.OrdinalIgnoreCase) || name.Contains("crashhandler", StringComparison.OrdinalIgnoreCase)
             || name.Contains("crashpad", StringComparison.OrdinalIgnoreCase) || name.StartsWith("unins", StringComparison.OrdinalIgnoreCase)
             || name.Contains("redist", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A folder that can be one game's: not the top of a drive and not a library root like "D:\Games".</summary>
+    static bool IsGameFolder(string dir) => dir.Length > 3 && dir.Count(c => c == '\\') >= 2;
+
+    static bool Below(string path, string dir) => path.StartsWith(dir.TrimEnd('\\', '/') + "\\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The folder to watch for a game: its install folder when the exe sits inside it, so the launcher exe handing over to the real
+    /// game in a sub-folder (Xbox, Unreal) is still the same game; else the exe's own folder (an exe picked by hand elsewhere).
+    /// </summary>
+    static string WatchDir(Game game, string exeDir)
+    {
+        var root = game.InstallDir?.TrimEnd('\\', '/');
+        exeDir = exeDir.TrimEnd('\\', '/');
+        return root is not null && IsGameFolder(root) && (exeDir.Equals(root, StringComparison.OrdinalIgnoreCase) || Below(exeDir, root)) ? root : exeDir;
+    }
+
+    /// <summary>A process's exe path, asked of Windows once per process (a reused id with another start time is asked again).</summary>
+    static string? PathOf(Process p)
+    {
+        DateTime start;
+        try { start = p.StartTime; } catch { start = default; }
+        lock (Seen) if (Seen.TryGetValue(p.Id, out var seen) && seen.Start == start) return seen.Path;
+        var path = ImagePath(p.Id);
+        lock (Seen) Seen[p.Id] = (start, path);
+        return path;
+    }
+
+    /// <summary>The processes whose exe sits in this folder or any folder below it, matched by their real path.</summary>
+    static List<Process> Under(string dir, bool helpers)
+    {
+        var list = new List<Process>();
+        foreach (var p in Process.GetProcesses())
+        {
+            if (p.Id > 4 && PathOf(p) is { } path && Below(path, dir) && (helpers || !IsHelperExe(path))) list.Add(p);
+            else p.Dispose();
+        }
+        return list;
+    }
+
+    /// <summary>The exe name of a game process running from this folder or below it, or null (crash handlers and the like do not count).</summary>
+    static string? RunningUnder(string dir)
+    {
+        var procs = Under(dir, helpers: false);
+        try { return procs.Count > 0 ? procs[0].ProcessName + ".exe" : null; }
+        finally { foreach (var p in procs) p.Dispose(); }
     }
 
     /// <summary>The processes whose exe sits right in this folder, matched by their real path (never by name alone).</summary>
@@ -276,7 +327,7 @@ public static class GameSessions
             for (int i = 0; i < 16; i++)
             {
                 await Task.Delay(500);
-                if (OptiInstaller.RunningGameProcess(dir) is null) return true;
+                if (RunningUnder(dir) is null) return true;
             }
             foreach (var p in Processes(dir))
                 using (p)
@@ -287,7 +338,7 @@ public static class GameSessions
             for (int i = 0; i < 10; i++)
             {
                 await Task.Delay(300);
-                if (OptiInstaller.RunningGameProcess(dir) is null) return true;
+                if (RunningUnder(dir) is null) return true;
             }
             return false;
         });
@@ -298,8 +349,8 @@ public static class GameSessions
         return gone;
     }
 
-    /// <summary>Every process whose exe sits in the game's folder (its crash handler included, so nothing is left behind).</summary>
-    static List<Process> Processes(string dir) => InFolder(dir, helpers: true);
+    /// <summary>Every process whose exe sits in the game's folder or below it (its crash handler included, so nothing is left behind).</summary>
+    static List<Process> Processes(string dir) => Under(dir, helpers: true);
 
     static void Raise(string id) => OnUi(() => Changed?.Invoke(id));
 
@@ -318,7 +369,7 @@ public static class GameSessions
             lock (Sessions) sessions = Sessions.Values.Where(s => s.State != GameRunState.Stopped).ToList();
             foreach (var s in sessions)
             {
-                var running = OptiInstaller.RunningGameProcess(s.Dir);
+                var running = RunningUnder(s.Dir);
                 var now = DateTime.UtcNow;
                 switch (s.State)
                 {
@@ -484,8 +535,8 @@ public static class GameSessions
             var game = find(r.GameId);
             var settings = game is null ? null : SettingsStore.Current.For(game.Id);
             var exe = game is null ? null : Detection.GameScanner.EffectiveExe(game, settings!);
-            var dir = exe is null ? null : Path.GetDirectoryName(exe);
-            if (game is not null && dir is not null && OptiInstaller.RunningGameProcess(dir) is { } running)
+            var dir = exe is null ? null : WatchDir(game!, Path.GetDirectoryName(exe)!);
+            if (game is not null && dir is not null && RunningUnder(dir) is { } running)
             {
                 // Still running: watch it, and turn HDR off when it closes.
                 lock (Sessions)

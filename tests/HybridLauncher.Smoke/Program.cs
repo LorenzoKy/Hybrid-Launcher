@@ -45,6 +45,52 @@ void Check(bool ok, string what)
 var cmd = args.Length > 0 ? args[0] : "scan";
 switch (cmd)
 {
+    case "sessions":
+    {
+        // A fake game shaped like an Xbox / Unreal one: a launcher exe at the top hands over to the game exe in a sub-folder and
+        // exits. The session must stay one session across the handover, end only when the game exe is gone, and Stop must reach
+        // the sub-folder too. Smart HDR stays off here (the real display is never touched); HL_DATA goes to a temp folder.
+        Environment.SetEnvironmentVariable("HL_DATA", Path.Combine(Path.GetTempPath(), "hl-sessions-data-" + Guid.NewGuid().ToString("N")[..6]));
+        var root = Path.Combine(Path.GetTempPath(), "hl-sessions-" + Guid.NewGuid().ToString("N")[..6], "Content");
+        var bin = Path.Combine(root, "Game", "Binaries", "Win64");
+        Directory.CreateDirectory(bin);
+        var ping = Path.Combine(Environment.SystemDirectory, "PING.EXE");
+        var launcher = Path.Combine(root, "gamelaunchhelper.exe");
+        var gameExe = Path.Combine(bin, "Game-Win64-Shipping.exe");
+        File.Copy(ping, launcher);
+        File.Copy(ping, gameExe);
+        System.Diagnostics.Process Run(string exe, int seconds) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, $"-n {seconds + 1} 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!;
+        var game = new Game { Id = "smoke:sessions", Name = "Smoke Sessions", Store = GameStore.Xbox, InstallDir = root, MainExe = launcher };
+        var settings = new GameSettings();
+        async Task<bool> WaitFor(Func<bool> cond, int seconds)
+        {
+            for (int i = 0; i < seconds * 4; i++) { if (cond()) return true; await Task.Delay(250); }
+            return cond();
+        }
+
+        // 1. Started "from Play": launcher 3 s, then the game in the sub-folder for 12 s.
+        var l = Run(launcher, 3);
+        GameSessions.Launched(game, settings, root);
+        await Task.Delay(1500);
+        var g = Run(gameExe, 12);
+        Check(await WaitFor(() => GameSessions.State(game.Id) == GameRunState.Running, 6), "running once the launcher is up");
+        l.WaitForExit();
+        await Task.Delay(7000); // well past the 2 misses (4 s) that used to end the session
+        Check(!g.HasExited && GameSessions.State(game.Id) == GameRunState.Running, "still running after the launcher exited (game in a sub-folder)");
+        g.WaitForExit();
+        Check(await WaitFor(() => GameSessions.State(game.Id) == GameRunState.Stopped, 8), "stopped once the game exe in the sub-folder is gone");
+
+        // 2. Started outside Hybrid Launcher, game exe only: the library watch finds it, Stop ends the sub-folder exe.
+        GameSessions.WatchAll(() => [(game, settings)]);
+        var g2 = Run(gameExe, 60);
+        Check(await WaitFor(() => GameSessions.State(game.Id) == GameRunState.Running, 8), "game exe in a sub-folder found running when started outside");
+        Check(await GameSessions.StopAsync(game.Id) && await WaitFor(() => g2.HasExited, 3), "Stop ends the game exe in the sub-folder");
+        Check(await WaitFor(() => GameSessions.State(game.Id) == GameRunState.Stopped, 6), "stopped after Stop");
+        foreach (var p in new[] { l, g, g2 }) { try { if (!p.HasExited) p.Kill(); } catch { } p.Dispose(); }
+        try { Directory.Delete(Path.GetDirectoryName(root)!, true); } catch { }
+        break;
+    }
+
     case "customdlls":
     {
         // Needs HL_DATA (the shared folder is written). A fake install with OptiScaler in its own "OptiScaler" folder, as the bat
