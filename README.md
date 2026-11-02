@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" width="128" alt="Hybrid Launcher logo: a white game controller shaped like an H on a red rounded square" />
+  <img src="docs/images/logo-controller.png" width="128" alt="Hybrid Launcher logo: a white game controller shaped like an H on a red rounded square" />
 </p>
 
 <h1 align="center">Hybrid Launcher</h1>
