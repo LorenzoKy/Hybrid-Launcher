@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.3 — 2026-11-02 · New logo
+
+**Hybrid Launcher 1.2.3** has a new logo: a white game controller shaped like an H, on a red tile. If you already have 1.2, the
+app offers this update by itself a few seconds after it starts.
+
+### ✨ New
+
+- **New logo everywhere.** The window, the taskbar, the tray icon, the start page, the tour and `HybridLauncher.exe` itself
+  show the new controller H. The small sizes (16 to 48 px) are drawn on their own, with thicker lines, so the icon stays
+  sharp in the tray and the taskbar.
+
 ## 1.2.2 — 2026-11-02 · Several clouds at once
 
 **Hybrid Launcher 1.2.2** makes cloud saves work well with several clouds at once (OneDrive, MEGA and a folder such as Google
