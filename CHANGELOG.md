@@ -77,29 +77,17 @@ between games faster. If you already have 1.2, the app offers this update by its
 ### 🐛 Fixes
 
 - Animated GIFs in a game's description no longer stop when you pause the trailer.
-- Picking another fork while the first one's versions were still loading could list (and install) the first fork's builds
-  under the second one's name.
-- Several new versions found in one check now raise one notification; before, the second replaced the first and its click
-  opened the wrong game.
-- One failed update check (offline, GitHub busy) no longer stops the background checks until the next start.
 - Leaving a game while OptiScaler was installing, then coming back, showed the build that was there before (a Stable install
-  read as Nightly) and offered a second install into the same folder. Installs and removals of OptiScaler, ReShade, RenoDX,
-  Luma and Ultra+ now keep running when you look at something else, show their progress when you come back, and only one
-  runs per game at a time.
-- ReShade, RenoDX, Luma and Ultra+ downloads were silently cancelled when you opened another page.
+  read as Nightly) and offered a second install into the same folder. Installs and removals now keep running when you look
+  at something else, show their progress when you come back, and only one runs per game at a time.
+- ReShade, RenoDX and Luma downloads were silently cancelled when you opened another page.
 - A settings file written by a newer version no longer resets an older one to a first start: what it can't read is left
   out, and a file it can't read at all is kept aside (`settings.unreadable-…`) instead of being written over.
-- Zip releases (most forks) are unpacked directly; before, every zip went through Windows' `tar` after a failed first try.
+- Zip archives are unpacked directly; before, every zip went through Windows' `tar` after a failed first try.
 - The game-running check no longer runs into "access denied" on Windows' protected processes every three seconds.
-- Closing the feature picker no longer leaves the typing cursor in the game list's search box.
-- Changing which features you use no longer leaves the typing cursor in the search box (WinUI put it there when the selected
-  item left the list, and it then stayed for good).
-- The *Release notes* section showed the notes of a fork other than the one named on its tab (the tab kept the first fork
-  picked, the list followed a later pick). It now follows the fork installed in the game, and changes with an install.
+- Closing the feature picker, or changing which features you use, no longer leaves the typing cursor in the game list's
+  search box.
 - The first heading of OptiScaler's nightly notes showed as raw `###` text.
-- Update checks for forks no longer download each fork's list twice (once per spelling of its name), which used up GitHub's
-  hourly limit sooner; the first check runs half a minute after start instead of a minute.
-- The Ultra+, fork and notification texts are translated into Italian.
 
 ## 1.2.3 — 2026-11-02 · New logo
 
