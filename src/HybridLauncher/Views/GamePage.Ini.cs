@@ -146,6 +146,9 @@ public sealed partial class GamePage
     bool _fillingIniBar;
     double _iniWidth = 1200;
 
+    /// <summary>The installed OptiScaler is a fork or an imported build: the settings it adds (not in the official file) are marked.</summary>
+    bool ForkBuild => _settings.Install?.Channel is OptiChannel.Fork or OptiChannel.Custom;
+
     string? IniPath
     {
         get
@@ -169,9 +172,11 @@ public sealed partial class GamePage
             catch (Exception ex) { Log.Warn($"Reading {path} failed: {ex.Message}"); }
         }
         var doc = _doc;
-        IniPathText.Text = path ?? L.T("Not installed yet");
+        IniPathText.Text = path ?? L.T("OptiScaler is not installed");
         IniUnavailable.Visibility = doc is null ? Visibility.Visible : Visibility.Collapsed;
         IniBody.Visibility = doc is null ? Visibility.Collapsed : Visibility.Visible;
+        // Without the file there is nothing to search, save as a profile or restore: the tools wait for the install.
+        IniSearch.Visibility = ProfilesButton.Visibility = RestoreDefaultsButton.Visibility = doc is null ? Visibility.Collapsed : Visibility.Visible;
         IniSearch.IsEnabled = doc is not null;
         RestoreDefaultsButton.IsEnabled = doc is not null;
         if (doc is null)
@@ -514,6 +519,14 @@ public sealed partial class GamePage
                     var entries = Find(doc, keys);
                     if (entries.Count > 0) cards.Add(SettingsCard(glyph, title, hint, entries, TopicTints[i % TopicTints.Length]));
                 }
+                // A fork or an imported build: the settings it adds to OptiScaler's, a folded card per section, after the essentials.
+                if (ForkBuild)
+                {
+                    var own = doc.Entries.Where(e => !e.Official).GroupBy(e => e.Section).ToList();
+                    if (own.Count > 0)
+                        IniPaneHint.Text += " " + L.N(own.Sum(g => g.Count()), "This build adds {0} setting of its own: the cards marked \"this build only\".", "This build adds {0} settings of its own: the cards marked \"this build only\".");
+                    foreach (var g in own) cards.Add(SectionCard(g.Key, g.ToList(), L.T("this build only")));
+                }
                 break;
         }
         IniRows.Child = Masonry(cards, stable: view == "all");
@@ -588,15 +601,15 @@ public sealed partial class GamePage
     }
 
     /// <summary>A section of the file, folded: its editors are built the first time it opens (the file has hundreds of keys).</summary>
-    FrameworkElement SectionCard(string section, List<IniEntry> entries)
+    FrameworkElement SectionCard(string section, List<IniEntry> entries, string? note = null)
     {
         int changed = entries.Count(e => !IsAuto(e.Value));
         var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 6, 0, 6) };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.Children.Add(Ui.Badge("", changed > 0 ? Ui.Blue : Ui.Slate, 30));
+        header.Children.Add(Ui.Badge("", changed > 0 ? Ui.Blue : note is null ? Ui.Slate : Ui.Pink, 30));
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = $"[{section}]", FontWeight = FontWeights.SemiBold, FontSize = 15 });
+        text.Children.Add(new TextBlock { Text = note is null ? $"[{section}]" : $"[{section}]  ·  {note}", FontWeight = FontWeights.SemiBold, FontSize = 15 });
         text.Children.Add(new TextBlock { Text = L.N(entries.Count, "{0} setting", "{0} settings") + (changed > 0 ? "  ·  " + L.F("{0} changed", changed) : ""), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowDescription"] });
         Grid.SetColumn(text, 1);
         header.Children.Add(text);
@@ -628,7 +641,8 @@ public sealed partial class GamePage
         var hits = _doc.Entries.Where(e => e.Key.Contains(text, StringComparison.OrdinalIgnoreCase)
                                         || FriendlyName(e).Contains(text, StringComparison.OrdinalIgnoreCase)
                                         || e.Section.Contains(text, StringComparison.OrdinalIgnoreCase)
-                                        || e.Comment.Contains(text, StringComparison.OrdinalIgnoreCase)).Take(80).ToList();
+                                        || e.Comment.Contains(text, StringComparison.OrdinalIgnoreCase)
+                                        || e.SharedComment.Contains(text, StringComparison.OrdinalIgnoreCase)).Take(80).ToList();
         IniPaneTitle.Text = hits.Count == 0 ? L.T("No setting matches") : L.F("{0} settings match \"{1}\"", hits.Count + (hits.Count == 80 ? "+" : ""), text);
         IniPaneHint.Text = L.T("Searched in every section of OptiScaler.ini. Clear the search to go back.");
         RestartNote.Visibility = Visibility.Collapsed;
@@ -655,13 +669,13 @@ public sealed partial class GamePage
         name.Children.Add(new TextBlock { Text = FriendlyName(e), FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap });
         name.Children.Add(new TextBlock
         {
-            Text = showSection || _dupKeys.Contains(e.Key) ? $"[{e.Section}] {e.Key}" : e.Key,
+            Text = (showSection || _dupKeys.Contains(e.Key) ? $"[{e.Section}] {e.Key}" : e.Key) + (ForkBuild && !e.Official ? "  ·  " + L.T("this build only") : ""),
             FontSize = 11,
             FontFamily = new FontFamily("Cascadia Mono, Consolas"),
             Foreground = (Brush)res["TextFillColorTertiaryBrush"],
             IsTextSelectionEnabled = true,
         });
-        ToolTipService.SetToolTip(name, new ToolTip { Content = new TextBlock { Text = $"[{e.Section}] {e.Key}\n\n{e.Comment}", TextWrapping = TextWrapping.Wrap, MaxWidth = 520 } });
+        ToolTipService.SetToolTip(name, new ToolTip { Content = new TextBlock { Text = $"[{e.Section}] {e.Key}\n\n{(e.Comment.Length > 0 ? e.Comment : e.SharedComment)}", TextWrapping = TextWrapping.Wrap, MaxWidth = 520 } });
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         right.Children.Add(reset);
@@ -762,7 +776,8 @@ public sealed partial class GamePage
         {
             var values = new List<(string Value, string Label)> { ("auto", "Auto") };
             if (numbered is not null) values.AddRange(numbered);
-            else values.AddRange(e.Options.Select(o => (o, ValueNames.TryGetValue(o, out var n) ? L.T(n) : o)));
+            // A fork's list can name Auto itself ("Auto, PTX, or Cubin"): it is the first button already.
+            else values.AddRange(e.Options.Where(o => !IsAuto(o)).Select(o => (o, ValueNames.TryGetValue(o, out var n) ? L.T(n) : o)));
             if (!values.Any(v => v.Value.Equals(e.Value, StringComparison.OrdinalIgnoreCase))) values.Add((e.Value, e.Value));
 
             if (values.Count <= 5 && values.Sum(v => v.Label.Length) <= 46)
@@ -868,14 +883,14 @@ public sealed partial class GamePage
         return step >= 1 ? Math.Round(snapped).ToString(CultureInfo.InvariantCulture) : Math.Round(snapped, 2).ToString("0.0#", CultureInfo.InvariantCulture);
     }
 
-    /// <summary>The slider range of a number: a known one, or "0.5 to 2.0" / "0.5 - 3.0" / "between 0.0 and 1.0" in the file's comment.</summary>
+    /// <summary>The slider range of a number: a known one, or "0.5 to 2.0" / "0.5 - 3.0" / "between 0.0 and 1.0" / "1..3" in the file's comment.</summary>
     static (double Min, double Max, double Step)? RangeOf(IniEntry e)
     {
         if (KnownRanges.TryGetValue(e.Path, out var known)) return known;
         if (!IsAuto(e.Value) && ParseNumber(e.Value) is null) return null;
         foreach (var line in e.Comment.Split('\n'))
         {
-            var m = Regex.Match(line, @"(?:between\s+)?(-?\d+(?:\.\d+)?)\s*(?:to|-|–|and)\s*(-?\d+(?:\.\d+)?)", RegexOptions.IgnoreCase);
+            var m = Regex.Match(line, @"(?:between\s+)?(-?\d+(?:\.\d+)?)\s*(?:to|-|–|and|\.\.)\s*(-?\d+(?:\.\d+)?)", RegexOptions.IgnoreCase);
             if (!m.Success) continue;
             if (!double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var min)
                 || !double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var max) || max <= min) continue;
@@ -898,7 +913,18 @@ public sealed partial class GamePage
     static List<(string Value, string Label)>? NumberedChoices(IniEntry e)
     {
         var line = e.Comment.Split('\n').FirstOrDefault(l => Regex.Matches(l, @"\b\d+\s*=\s*[A-Za-z]").Count >= 2);
-        if (line is null) return null;
+        if (line is null)
+        {
+            // Forks also write "0 bilinear, 1 Catmull-Rom, 2 Lanczos 2": numbers then names, comma separated, at least three.
+            if (!IsAuto(e.Value) && ParseNumber(e.Value) is null) return null;
+            foreach (var l in e.Comment.Split('\n'))
+            {
+                var bare = Regex.Matches(Regex.Replace(l, @"\([^)]*\)", ""), @"(?:^|[,:]\s*)(\d+)\s+([A-Za-z][A-Za-z0-9 \-]*?)\s*(?=,|\.\s|\.$|$)")
+                    .Select(m => (m.Groups[1].Value, m.Groups[2].Value.Trim())).DistinctBy(v => v.Item1).ToList();
+                if (bare.Count >= 3 && bare.All(b => b.Item2.Length <= 28)) return bare;
+            }
+            return null;
+        }
         var list = Regex.Matches(line, @"\b(\d+)\s*=\s*([A-Za-z][A-Za-z0-9 +\-]*?)\s*(?=/|,|;|\b\d+\s*=|$)")
             .Select(m => (m.Groups[1].Value, $"{m.Groups[2].Value.Trim()}")).DistinctBy(v => v.Item1).ToList();
         return list.Count >= 2 ? list : null;
@@ -961,7 +987,8 @@ public sealed partial class GamePage
     /// <summary>The file's description without the "true or false - Default (auto) is..." line (the control shows that).</summary>
     static string Description(IniEntry e)
     {
-        var lines = e.Comment.Split('\n').Select(l => l.Trim())
+        // Keys a fork lists under one note (no comment of their own) show that note.
+        var lines = (e.Comment.Length > 0 ? e.Comment : e.SharedComment).Split('\n').Select(l => l.Trim())
             .Where(l => l.Length > 0 && !l.StartsWith("true or false", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(l, @"^Default\s*\(auto\)", RegexOptions.IgnoreCase))
             .Where(l => !(e.Kind == IniValueKind.Choice && (l.Contains(" - Default", StringComparison.OrdinalIgnoreCase) || IniDocument.OptionList([l], needsDefaultAfter: false) is not null)));
         return string.Join(" ", lines);

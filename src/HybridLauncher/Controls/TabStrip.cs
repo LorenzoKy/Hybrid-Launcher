@@ -11,8 +11,11 @@ using Windows.UI;
 namespace HybridLauncher.Controls;
 
 /// <summary>A tab of the game page: its id (saved in settings), name, icon and the icon's colour.</summary>
-public sealed record GameTab(string Id, string Title, string Glyph, Color Tint, string Description)
+public sealed record GameTab(string Id, string Title, string Glyph, Color BaseTint, string Description)
 {
+    /// <summary>The icon's colour as the palette wants it (Cozy softens it).</summary>
+    public Color Tint => HybridLauncher.Helpers.Palettes.Adapt(BaseTint);
+
     /// <summary>The title and description in the UI language (the English ones are the keys).</summary>
     public string Name => L.T(Title);
     public string Info => L.T(Description);
@@ -31,6 +34,7 @@ public static class GameTabs
         new("overview", "Game", "\uE7FC", C(0xFFE05CB8), "Trailer, screenshots, description, requirements, languages"),
         new("opti", "OptiScaler", "\uE740", C(0xFF9A7CFF), "Install, update and remove OptiScaler, its settings, ASI plugins and the wiki entry"),
         new("mods", "ReShade & Mods", "\uE790", C(0xFFF07F2A), "ReShade, RenoDX and Luma: effects and HDR mods for this game"),
+        new("ultra", "Ultra+", "\uE8B9", C(0xFF4FD6B0), "Ultra+ graphics mods for Unreal Engine games: builds, updates, add-ons and settings"),
         new("pcgw", "PCGamingWiki", "\uE774", C(0xFF3D9BFF), "Fixes, issues and settings from PCGamingWiki"),
         new("ach", "Achievements", HybridLauncher.Helpers.Icons.TrophyGlyph, C(0xFFF2B82E), "Steam achievements (only for games that have them)"),
         new("quick", "Quick access", "\uECA5", C(0xFF00C2D8), "Your own folders, programs and files for this game"),
@@ -55,6 +59,12 @@ public static class GameTabs
             new("renodx", "RenoDX", "\uE706", C(0xFFF2B82E), "HDR mods for this game (ReShade add-ons)"),
             new("luma", "Luma", "\uE793", C(0xFFFF8A3D), "Luma Framework mods: HDR and DLSS for DirectX 11 games"),
         ],
+        ["ultra"] =
+        [
+            new("install", "Install & versions", "\uE896", C(0xFF4FD6B0), "Install, update, go back to an older build or remove Ultra+"),
+            new("addons", "Add-ons", "\uE71D", C(0xFFE05CB8), "Optional add-ons of this game's Ultra+ mod"),
+            new("settings", "Settings", "\uE9E9", C(0xFF5FA8FF), "UltraPlusConfig.ini as switches, sliders and choices, with presets"),
+        ],
     };
 
     public static GameTab[] Sections(string tab) => SectionsOf.TryGetValue(tab, out var list) ? list : [];
@@ -71,6 +81,7 @@ public static class GameTabs
         "reshade" => ("mods", "reshade"),
         "renodx" => ("mods", "renodx"),
         "luma" => ("mods", "luma"),
+        "ultraplus" => ("ultra", null),
         _ => (id, null),
     };
 
@@ -155,18 +166,25 @@ public sealed partial class TabStrip : UserControl
         _gear.Click += (_, _) => CustomizeRequested?.Invoke();
 
         var grid = new Grid { ColumnSpacing = 4 };
+        // The tabs sit in the middle of the bar: an empty cell as wide as the gear on the left keeps them centred.
+        var spacer = new Border { Width = 0 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(spacer);
+        _gear.SizeChanged += (_, e) => spacer.Width = e.NewSize.Width;
         var scroller = new ScrollViewer
         {
+            HorizontalAlignment = HorizontalAlignment.Center,
             Content = _row,
             HorizontalScrollMode = ScrollMode.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
             VerticalScrollMode = ScrollMode.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
+        Grid.SetColumn(scroller, 1);
         grid.Children.Add(scroller);
-        Grid.SetColumn(_gear, 1);
+        Grid.SetColumn(_gear, 2);
         grid.Children.Add(_gear);
 
         var subScroller = new ScrollViewer
@@ -182,7 +200,7 @@ public sealed partial class TabStrip : UserControl
         lead.Children.Add(_subIcon);
         lead.Children.Add(_subTitle);
         lead.Children.Add(new FontIcon { Glyph = "", FontSize = 10, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
-        var subGrid = new Grid { ColumnSpacing = 6 };
+        var subGrid = new Grid { ColumnSpacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
         subGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         subGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(subScroller, 1);
@@ -268,7 +286,7 @@ public sealed partial class TabStrip : UserControl
         var subIcon = HybridLauncher.Helpers.Icons.Make(t.Glyph, 13);
         subIcon.VerticalAlignment = VerticalAlignment.Center;
         content.Children.Add(subIcon);
-        content.Children.Add(new TextBlock { Text = t.Name, FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = t.Name, FontSize = 13.5, VerticalAlignment = VerticalAlignment.Center });
         var b = new Button
         {
             Content = content,
@@ -309,7 +327,7 @@ public sealed partial class TabStrip : UserControl
             else icon.Foreground = (Brush)res["TextFillColorSecondaryBrush"];
             var text = (TextBlock)content.Children[1];
             text.FontWeight = on ? FontWeights.Bold : FontWeights.SemiBold;
-            text.Opacity = on ? 1 : 0.82;
+            text.Opacity = on ? 1 : 0.88;
         }
     }
 
@@ -359,7 +377,8 @@ public sealed partial class TabStrip : UserControl
                 }
                 var text = (TextBlock)g.Children[1];
                 text.FontWeight = on ? FontWeights.Bold : FontWeights.SemiBold;
-                text.Opacity = on ? 1 : 0.7;
+                // The others a step back, still clearly readable on the art behind the glass.
+                text.Opacity = on ? 1 : 0.85;
                 // The open tab's mark: a short accent bar under its name.
                 ((Border)g.Children[2]).Opacity = on ? 1 : 0;
             }

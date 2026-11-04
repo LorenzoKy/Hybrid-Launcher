@@ -137,6 +137,51 @@ public static class UpscalerFiles
 
     static bool IsFrameGen(string t) => Regex.IsMatch(t, @"\b(M?FG)\b", RegexOptions.IgnoreCase);
 
+    /// <summary>
+    /// One maker's tags as the game page shows them: its upscaler and frame generation in one chip. The labels carry the exact
+    /// version of the game's own library when it has one ("DLSS 3.7.10", "FG 3.8.10"); a 310.x DLSS is "DLSS 4.5" with the
+    /// library's number (310.5.0) as the detail. Without a library the wiki's words stand ("DLSS 4", "MFG").
+    /// </summary>
+    public sealed record TechGroup(string Family, string? Upscaler, string? UpscalerDetail, string? FrameGen, string? FrameGenDetail, string Tooltip);
+
+    // Libraries whose file version is the technology's own (the others carry an SDK number, and their tag is fixed).
+    static readonly HashSet<string> VersionedLibs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "nvngx_dlss.dll", "nvngx_dlssg.dll", "libxess.dll", "libxess_fg.dll", "amd_fidelityfx_upscaler_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll",
+    };
+
+    static string FamilyOf(string tag) => tag.Split(' ')[0];
+
+    /// <summary>"3.7.0" → "3.7", "4.0.3" stays; a version of one or two parts is kept as it is.</summary>
+    static string Trim(string version) => version.EndsWith(".0", StringComparison.Ordinal) && version.Count(c => c == '.') >= 2 ? version[..^2] : version;
+
+    /// <summary>The merged tags (see <see cref="Merge"/>) grouped by maker, each with the exact versions the game's libraries carry.</summary>
+    public static List<TechGroup> Group(IEnumerable<string> tags, IReadOnlyList<UpscalerFile> files)
+    {
+        var list = tags.ToList();
+        var result = new List<TechGroup>();
+        foreach (var family in list.Select(FamilyOf).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var up = list.FirstOrDefault(t => !IsFrameGen(t) && FamilyOf(t).Equals(family, StringComparison.OrdinalIgnoreCase));
+            var fg = list.FirstOrDefault(t => IsFrameGen(t) && FamilyOf(t).Equals(family, StringComparison.OrdinalIgnoreCase));
+            var upFile = files.Where(f => !f.FrameGen && f.Family.Equals(family, StringComparison.OrdinalIgnoreCase) && f.Tag == up).MaxBy(f => f.Number);
+            var fgFile = files.Where(f => f.FrameGen && f.Family.Equals(family, StringComparison.OrdinalIgnoreCase) && f.Tag == fg).MaxBy(f => f.Number);
+
+            // The tag already carries the version the library says (Merge: "DLSS 4.5" from 310.5.0, "FSR 4.1"); a library whose
+            // number is the technology's own and not a 310.x one adds its point release ("DLSS 3.7.10" rather than "DLSS 3.7").
+            string? upLabel = up, upDetail = upFile?.Version;
+            if (upFile is not null && VersionedLibs.Contains(Path.GetFileName(upFile.RelativePath)) && !upFile.Version.StartsWith("310.", StringComparison.Ordinal))
+                upLabel = $"{family} {Trim(upFile.Version)}";
+            // Frame generation keeps its short name (FG / MFG): its version follows the upscaler's and is in the tooltip.
+            string? fgLabel = fg is null ? null : fg[(fg.IndexOf(' ') + 1)..], fgDetail = fgFile?.Version;
+            var shown = files.Where(f => f.Family.Equals(family, StringComparison.OrdinalIgnoreCase)).ToList();
+            var tip = string.Join("\n", new[] { up, fg }.Where(t => t is not null).Select(t => t!));
+            if (shown.Count > 0) tip += "\n" + Describe(shown);
+            result.Add(new TechGroup(family, upLabel, upDetail, fgLabel, fgDetail, tip));
+        }
+        return result;
+    }
+
     /// <summary>"nvngx_dlss.dll 310.5.0, libxess.dll 2.0.2": what the tags were read from, for a tooltip.</summary>
     public static string Describe(IReadOnlyList<UpscalerFile> files) =>
         string.Join("\n", files.GroupBy(f => f.Tag).Select(g => $"{g.Key}: {Path.GetFileName(g.First().RelativePath)} {g.MaxBy(f => f.Number)!.Version}"));

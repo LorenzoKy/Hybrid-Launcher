@@ -432,7 +432,9 @@ public static partial class MarkdownText
         var lines = new List<RichLine>();
         if (string.IsNullOrWhiteSpace(markdown)) return lines;
         bool fence = false;
-        foreach (var raw in markdown.Replace("\r", "").Split('\n'))
+        // A byte-order mark some release tools put first (OptiScaler's nightly notes) is not whitespace to the patterns below:
+        // "﻿### Changes..." was not read as a heading.
+        foreach (var raw in markdown.Replace("﻿", "").Replace("\r", "").Split('\n'))
         {
             var s = raw.TrimEnd();
             if (s.TrimStart().StartsWith("```")) { fence = !fence; continue; }

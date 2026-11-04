@@ -20,6 +20,24 @@ public static class Http
         return client;
     }
 
+    /// <summary>When GitHub's API limit (60 requests an hour without sign-in) ran out: the time it resets, else null.
+    /// Until then requests to api.github.com are not sent: each would fail and push the reset no further.</summary>
+    public static DateTime? GitHubLimitedUntil
+    {
+        get { var t = _gitHubLimitedUntil; return t is { } u && u > DateTime.UtcNow ? u : null; }
+    }
+
+    static DateTime? _gitHubLimitedUntil;
+
+    /// <summary>Raised (off the UI thread) when GitHub's limit runs out: the app offers to sign in to GitHub, which lifts it.</summary>
+    public static event Action<DateTime>? GitHubLimitReached;
+
+    /// <summary>A new sign-in (or sign-out) comes with its own limit: requests may go again.</summary>
+    public static void ResetGitHubLimit() => _gitHubLimitedUntil = null;
+
+    // One request per address at a time: pages opened together (or a refresh while a load runs) share it.
+    static readonly Dictionary<string, Task<string?>> InFlight = [];
+
     /// <summary>GET a string with a timeout, served from a disk cache while it is younger than <paramref name="maxAge"/>.
     /// When the network fails, a stale cache entry is returned instead of an error.</summary>
     public static async Task<string?> GetCachedAsync(string url, string cacheName, TimeSpan maxAge, bool force = false,
@@ -28,27 +46,81 @@ public static class Http
         var cacheFile = Path.Combine(AppInfo.CacheDir, cacheName);
         if (!force && File.Exists(cacheFile) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cacheFile) < maxAge)
             return await File.ReadAllTextAsync(cacheFile, ct);
+        if (IsGitHubApi(url) && GitHubLimitedUntil is not null)
+            return File.Exists(cacheFile) ? await File.ReadAllTextAsync(cacheFile, ct) : null;
 
+        Task<string?> task;
+        lock (InFlight)
+        {
+            if (!InFlight.TryGetValue(url, out task!))
+            {
+                // Not tied to this caller's token: another caller may still want the answer when this one leaves.
+                task = FetchAsync(url, cacheFile, accept);
+                InFlight[url] = task;
+                _ = task.ContinueWith(_ => { lock (InFlight) InFlight.Remove(url); }, TaskScheduler.Default);
+            }
+        }
+        var text = await task.WaitAsync(ct);
+        if (text is not null) return text;
+        // Another caller's request may have filled a different cache name for the same address.
+        return File.Exists(cacheFile) ? await File.ReadAllTextAsync(cacheFile, ct) : null;
+    }
+
+    static bool IsGitHubApi(string url) => url.StartsWith("https://api.github.com/", StringComparison.OrdinalIgnoreCase);
+
+    static async Task<string?> FetchAsync(string url, string cacheFile, string? accept)
+    {
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(20));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             if (accept is not null) req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
-            using var resp = await Client.SendAsync(req, cts.Token);
+            // Signed in to GitHub: 5000 requests an hour instead of 60. The token goes to api.github.com only.
+            var token = IsGitHubApi(url) ? GitHubAuth.Token : null;
+            if (token is not null) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var resp = await Client.SendAsync(req, cts.Token);
+            if (token is not null && resp.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                // Revoked or expired: dropped, and the request goes again without it.
+                resp.Dispose();
+                GitHubAuth.TokenRejected(token);
+                using var again = new HttpRequestMessage(HttpMethod.Get, url);
+                if (accept is not null) again.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
+                resp = await Client.SendAsync(again, cts.Token);
+            }
+            using var _ = resp;
+            if (IsGitHubApi(url)) NoteGitHubLimit(resp);
             resp.EnsureSuccessStatusCode();
             var text = await resp.Content.ReadAsStringAsync(cts.Token);
             Directory.CreateDirectory(Path.GetDirectoryName(cacheFile)!);
             var tmp = $"{cacheFile}.{Guid.NewGuid():N}.tmp";
-            await File.WriteAllTextAsync(tmp, text, ct);
+            await File.WriteAllTextAsync(tmp, text);
             File.Move(tmp, cacheFile, overwrite: true);
             return text;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception ex)
         {
             Log.Warn($"GET {url} failed: {ex.Message}");
-            return File.Exists(cacheFile) ? await File.ReadAllTextAsync(cacheFile, ct) : null;
+            return null;
         }
+    }
+
+    /// <summary>A 403 or 429 with no requests left: GitHub says in x-ratelimit-reset (Unix seconds) when it lets more through.</summary>
+    static void NoteGitHubLimit(HttpResponseMessage resp)
+    {
+        if (resp.StatusCode is not (HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)) return;
+        string? Header(string name) => resp.Headers.TryGetValues(name, out var v) ? v.FirstOrDefault() : null;
+        DateTime? until = null;
+        if (Header("x-ratelimit-remaining") == "0" && long.TryParse(Header("x-ratelimit-reset"), out var reset))
+            until = DateTimeOffset.FromUnixTimeSeconds(reset).UtcDateTime;
+        else if (resp.Headers.RetryAfter?.Delta is { } wait)
+            until = DateTime.UtcNow + wait;
+        if (until is not { } u || u <= DateTime.UtcNow) return;
+        bool fresh = _gitHubLimitedUntil is null || _gitHubLimitedUntil < DateTime.UtcNow;
+        _gitHubLimitedUntil = u;
+        if (!fresh) return;
+        Log.Warn($"GitHub API limit reached ({(GitHubAuth.SignedIn ? "signed in" : "not signed in")}): no more requests to it until {u.ToLocalTime():HH:mm:ss}.");
+        GitHubLimitReached?.Invoke(u);
     }
 
     /// <summary>Download a file to <paramref name="destination"/> through a .part file, reporting 0..1 progress.</summary>

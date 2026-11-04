@@ -3,7 +3,7 @@ namespace HybridLauncher.Core.Opti;
 /// <summary>An OptiScaler version kept on this PC: a downloaded release (stable / nightly) or an imported custom build.</summary>
 public sealed record SavedVersion(OptiChannel Channel, string Name, string Folder, long Bytes, DateTime Date, CustomBuild? Build)
 {
-    public string ChannelLabel => Channel switch { OptiChannel.Nightly => "Nightly", OptiChannel.Custom => "Custom", _ => "Stable" };
+    public string ChannelLabel => Channel switch { OptiChannel.Nightly => "Nightly", OptiChannel.Custom => "Custom", OptiChannel.Fork => "Fork", _ => "Stable" };
 }
 
 /// <summary>Lists and deletes the saved versions. Games keep working when one is deleted: installs never point back at it.</summary>
@@ -12,7 +12,7 @@ public static class SavedVersions
     public static async Task<List<SavedVersion>> ListAsync(AppSettings settings, CancellationToken ct = default)
     {
         var list = new List<SavedVersion>();
-        foreach (var channel in new[] { OptiChannel.Stable, OptiChannel.Nightly })
+        foreach (var channel in new[] { OptiChannel.Stable, OptiChannel.Nightly, OptiChannel.Fork })
         {
             var dir = Path.Combine(AppInfo.DownloadsDir, channel.ToString().ToLowerInvariant());
             if (!Directory.Exists(dir)) continue;
@@ -43,7 +43,8 @@ public static class SavedVersions
     /// <summary>The games (names) whose current OptiScaler install came from this version.</summary>
     public static List<string> UsedBy(SavedVersion v, AppSettings settings, Func<string, string?> gameName) =>
         settings.Games.Where(g => g.Value.Install is { } m && m.Channel == v.Channel
-                                  && (v.Channel == OptiChannel.Custom ? m.AssetName.Equals(v.Name, StringComparison.OrdinalIgnoreCase) : SafeTag(m.Tag) == v.Name))
+                                  && (v.Channel == OptiChannel.Custom ? m.AssetName.Equals(v.Name, StringComparison.OrdinalIgnoreCase)
+                                      : v.Channel == OptiChannel.Fork ? SafeTag($"{m.Source?.Replace('/', '_')}_{m.Tag}").Equals(v.Name, StringComparison.OrdinalIgnoreCase) : SafeTag(m.Tag) == v.Name))
             .Select(g => gameName(g.Key) ?? g.Key).ToList();
 
     // Download folders are named after the tag with path-unsafe characters replaced (see OptiReleases).

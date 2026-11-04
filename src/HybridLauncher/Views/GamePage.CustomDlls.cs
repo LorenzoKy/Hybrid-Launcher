@@ -47,7 +47,7 @@ public sealed partial class GamePage
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         controls.Children.Add(toggle);
-        controls.Children.Add(IconButton("", L.T("Add dlls to this entry"), () => _ = AddCustomDllFilesAsync(name)));
+        controls.Children.Add(IconButton("", L.T("Add DLLs to this entry"), () => _ = AddCustomDllFilesAsync(name)));
         controls.Children.Add(IconButton("", L.T("Rename the entry (the name OptiScaler's menu shows)"), () => _ = RenameCustomDllEntryAsync(name)));
         controls.Children.Add(IconButton("", L.T("Delete the entry (from the shared folder and from every game that uses it)"), () => _ = DeleteCustomDllAsync(name)));
 
@@ -98,9 +98,9 @@ public sealed partial class GamePage
         text.Children.Add(new TextBlock { Text = DiskUsage.Format(file.Bytes), Style = Res("RowDescription"), VerticalAlignment = VerticalAlignment.Center });
         bool isDll = file.FileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
         var loaded = CustomDlls.LoadedName(file.Kind, owner.Files.Where(f => f.Kind == file.Kind).Select(f => f.FileName));
-        ToolTipService.SetToolTip(text, file.Loaded ? L.T("OptiScaler loads this dll")
+        ToolTipService.SetToolTip(text, file.Loaded ? L.T("OptiScaler loads this DLL")
             : isDll ? L.F("OptiScaler loads {0} from this folder; this one is there for it to load", loaded)
-            : L.T("Not a dll: copied along with the others"));
+            : L.T("Not a DLL: copied along with the others"));
 
         var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
         var rename = new MenuFlyoutItem { Text = L.T("Rename the file…"), Icon = new FontIcon { Glyph = "" } };
@@ -206,7 +206,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not change the custom dlls"), ex.Message, ex);
+            App.Window?.ShowError(L.T("Could not change the custom DLLs"), ex.Message, ex);
         }
         LoadCustomDllList();
     }
@@ -215,7 +215,7 @@ public sealed partial class GamePage
     async Task DeleteCustomDllAsync(string name)
     {
         if (!await ConfirmAsync(L.F("Delete {0}?", name),
-                L.T("Deletes the entry from Hybrid Launcher's shared custom dlls folder. Every game that has it on loses it from its OptiScaler install."),
+                L.T("Deletes the entry from Hybrid Launcher's shared custom DLLs folder. Every game that has it on loses it from its OptiScaler install."),
                 L.T("Delete")))
             return;
         try
@@ -244,7 +244,7 @@ public sealed partial class GamePage
         if (await AskCustomDllNameAsync(L.T("Rename the entry"), name, isFile: false) is not { } to || to == name) return;
         if (!to.Equals(name, StringComparison.OrdinalIgnoreCase) && CustomDlls.Exists(to))
         {
-            App.Window?.ShowError(L.T("That name is taken"), L.F("There is already an entry called {0}. Move the dlls into it instead, from each dll's menu.", to));
+            App.Window?.ShowError(L.T("That name is taken"), L.F("There is already an entry called {0}. Move the DLLs into it instead, from each DLL's menu.", to));
             return;
         }
         try
@@ -324,7 +324,7 @@ public sealed partial class GamePage
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message, ex);
+            App.Window?.ShowError(L.T("Could not add the custom DLLs"), ex.Message, ex);
         }
     }
 
@@ -341,7 +341,7 @@ public sealed partial class GamePage
             {
                 if (await AskCustomDllNameAsync(L.T("Name the entry"), Path.GetFileName(folder), isFile: false) is not { } name) return;
                 if (CustomDlls.Exists(name)
-                    && !await ConfirmAsync(L.F("Add to {0}?", name), L.T("An entry with this name is already in the shared folder. Its dlls are added to it, replacing files with the same name."), L.T("Add")))
+                    && !await ConfirmAsync(L.F("Add to {0}?", name), L.T("An entry with this name is already in the shared folder. Its DLLs are added to it, replacing files with the same name."), L.T("Add")))
                     return;
                 await ChangeCustomDllsAsync(() => CustomDlls.AddFolder(name, folder), L.F("Added {0}.", name) + " " + L.T("Turn it on for each game that should load it."), name);
                 return;
@@ -349,14 +349,14 @@ public sealed partial class GamePage
             var dlls = Directory.GetFiles(folder, "*.dll");
             if (dlls.Length == 0)
             {
-                App.Window?.ShowError(L.T("No dlls in this folder"), L.T("Pick a folder with dlls in it, or one with ffx, ffx_vk, dlss or dlssg folders inside as OptiScaler's custom folder has."));
+                App.Window?.ShowError(L.T("No DLLs in this folder"), L.T("Pick a folder with DLLs in it, or one with ffx, ffx_vk, dlss or dlssg folders inside as OptiScaler's custom folder has."));
                 return;
             }
             await AddCustomDllsAsync(dlls, Path.GetFileName(folder));
         }
         catch (Exception ex)
         {
-            App.Window?.ShowError(L.T("Could not add the custom dlls"), ex.Message, ex);
+            App.Window?.ShowError(L.T("Could not add the custom DLLs"), ex.Message, ex);
         }
     }
 
@@ -397,14 +397,14 @@ public sealed partial class GamePage
         panel.Children.Add(list);
         panel.Children.Add(new TextBlock
         {
-            Text = L.T("One entry can hold an FFX upscaler for DX12 and Vulkan, a DLSS runtime and a DLSSG replacement: OptiScaler lists each under the entry's name. A dll can have any name; when a folder holds more than one, OptiScaler loads the standard name (amd_fidelityfx_upscaler_dx12.dll, amd_fidelityfx_upscaler_vk.dll, nvngx.dll, nvngx_dlssg.dll) and the others are there for it to load."),
+            Text = L.T("One entry can hold an FFX upscaler for DX12 and Vulkan, a DLSS runtime and a DLSSG replacement: OptiScaler lists each under the entry's name. A DLL can have any name; when a folder holds more than one, OptiScaler loads the standard name (amd_fidelityfx_upscaler_dx12.dll, amd_fidelityfx_upscaler_vk.dll, nvngx.dll, nvngx_dlssg.dll) and the others are there for it to load."),
             Style = Res("RowDescription"), TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(error);
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = L.T("Add custom dlls"),
+            Title = L.T("Add custom DLLs"),
             Content = new ScrollViewer { Content = panel, MaxHeight = 560 },
             PrimaryButtonText = L.T("Add"),
             CloseButtonText = L.T("Cancel"),
@@ -417,7 +417,7 @@ public sealed partial class GamePage
         {
             string? problem = !CustomDlls.IsValidName(EntryText()) ? L.T("Give the entry a name Windows accepts for a folder.")
                 : rows.Where(r => !CustomDlls.IsValidDllName(r.Name.Text.Trim())).Select(r => r.Name.Text).FirstOrDefault() is { } bad ? L.F("\"{0}\" is not a dll file name.", bad)
-                : rows.GroupBy(r => (r.Kind.SelectedIndex, r.Name.Text.Trim().ToLowerInvariant())).Any(g => g.Count() > 1) ? L.T("Two dlls of the same kind have the same name.")
+                : rows.GroupBy(r => (r.Kind.SelectedIndex, r.Name.Text.Trim().ToLowerInvariant())).Any(g => g.Count() > 1) ? L.T("Two DLLs of the same kind have the same name.")
                 : null;
             if (problem is null) return;
             args.Cancel = true;
@@ -444,7 +444,7 @@ public sealed partial class GamePage
             var picked = await NameDialog.AskAsync(XamlRoot, ActualTheme, title, current, suggested);
             if (picked is null || picked.Length == 0) return null;
             if (isFile ? CustomDlls.IsValidDllName(picked) : CustomDlls.IsValidName(picked)) return picked;
-            App.Window?.ShowError(L.T("Not a valid name"), isFile ? L.T("A dll's name must end in .dll and be one Windows accepts for a file.") : L.T("Use a name Windows accepts for a folder."));
+            App.Window?.ShowError(L.T("Not a valid name"), isFile ? L.T("A DLL's name must end in .dll and be one Windows accepts for a file.") : L.T("Use a name Windows accepts for a folder."));
             suggested = picked;
         }
     }

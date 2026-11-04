@@ -23,7 +23,7 @@ public sealed record DetectedReShade(string Path, string Version)
 /// <summary>
 /// ReShade: Hybrid Launcher only downloads the official installers from reshade.me (kept as saved versions) and starts them; the
 /// installer itself puts ReShade in the game. With OptiScaler in the same folder both want to be dxgi.dll, so "Load ReShade
-/// through OptiScaler" renames ReShade's dll to ReShade64.dll and turns on [Plugins] LoadReshade in OptiScaler.ini:
+/// through OptiScaler" renames ReShade's DLL to ReShade64.dll and turns on [Plugins] LoadReshade in OptiScaler.ini:
 /// OptiScaler then loads ReShade itself.
 /// </summary>
 public static class ReShade

@@ -33,7 +33,7 @@ public sealed partial class MainWindow
 
     static readonly Color CardFill = Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF), CardHover = Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF);
 
-    static Color Tint(uint argb) => Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+    static Color Tint(uint argb) => Palettes.Adapt(Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb));
 
     static Color WithAlpha(Color c, byte a) => Color.FromArgb(a, c.R, c.G, c.B);
 
@@ -144,7 +144,10 @@ public sealed partial class MainWindow
         if (apply && ContentFrame.Content is GamePage page && page.GameId is { } id) ContentFrame.Navigate(typeof(GamePage), id);
         Motion.Close(overlay, () =>
         {
+            // The picker held the focus: gone from the tree, WinUI hands it to the search box without a GettingFocus event.
+            bool searchHadFocus = SearchHasFocus();
             RootGrid.Children.Remove(overlay);
+            KeepFocusOffSearch(searchHadFocus);
             var done = _pickDone;
             _pickDone = null;
             done?.Invoke();

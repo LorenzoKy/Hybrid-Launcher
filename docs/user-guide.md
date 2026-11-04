@@ -40,10 +40,14 @@ The top of the page is the game's art at full brightness with the **launch bar**
 - **Cloud**: the game's cloud saves: *Synced*, *Goes up after play*, *Newer in the cloud*, or *Choose a copy* when both sides
   changed. Its menu syncs now, brings the cloud's saves here, restores an older copy, changes the saves folder or leaves the
   game out.
-- **Open game folder**, and the saves and configuration folders when PCGamingWiki knows them, with their size.
-- **The gear** opens the game's properties: *General* (Smart HDR, launch options, store page), *Installed files* (size,
-  folders, the exe to start, uninstall), *Library* (pin, desktop shortcut, hide) and *Customization* (which parts of the
-  banner and launch bar show).
+- **Game folder**, and **Saves folder** and **Configuration folder** when PCGamingWiki knows them, each with its size: a click opens it.
+- **The gear** opens the game's properties: *General* (Smart HDR, desktop shortcut, launch options, store page), *Installed
+  files* (size, folders, the exe to start, uninstall), *Library* (pin, hide) and *Customization* (which parts of the banner and
+  launch bar show).
+
+In the banner's top-left corner, small lines say what is installed in the game folder and which version: OptiScaler (and
+where the build came from: nightly, a fork, a custom build), ReShade, Ultra+, RenoDX and Luma. A click opens the mod's tab.
+Turn them off for every game in Settings → Appearance → *Game page*, or for one game in its gear → *Customization*.
 
 A game is known to be running however it was started: from its store, a shortcut, its own exe, even before the app was
 opened. Play becomes Stop and play time counts.
@@ -55,6 +59,7 @@ Under the banner are the **tabs** (drag to reorder, right-click to hide, the gea
 | Game | Trailer and screenshots, store description, requirements, reviews, controller support, languages, HowLongToBeat |
 | OptiScaler | Install, update or remove OptiScaler; ASI plugins; saved versions; the Quick Panel; every OptiScaler.ini setting; the OptiScaler wiki entry; release notes |
 | ReShade & Mods | ReShade, RenoDX HDR mods and Luma mods for this game |
+| Ultra+ | Ultra+ for Unreal Engine games it supports: install, update, add-ons and Ultra+'s settings (shown only for those games) |
 | PCGamingWiki | The game's wiki page with its contents, sections and infobox; every link opens |
 | Achievements | Every achievement, unlocked and locked, with rarity |
 | Quick access | Your own shortcuts for this game: folders, tools, config files |
@@ -68,7 +73,8 @@ Long tabs have sub-tabs under the tab row; they follow you as you scroll.
 OptiScaler swaps a game's upscaler (DLSS, FSR, XeSS) and adds frame generation. The app installs it the official way: it runs
 OptiScaler's own `setup_windows.bat` and answers its questions with your choices.
 
-1. **Choose a version**: Stable, Nightly, or a custom build you imported (a folder or a .zip / .7z / .rar).
+1. **Choose a version**: Stable, Nightly, Forks/Unofficial Builds (community forks, or any other one by its GitHub address;
+   the link under the list opens the fork's page), or a custom build you imported (a folder or a .zip / .7z / .rar).
 2. **Setup options**: the dll name (dxgi, winmm, version…), your GPU, NVIDIA spoofing, OptiPatcher. The defaults suit most games.
 3. **Install**, or *Standard .bat install* to answer the setup window yourself.
 
@@ -78,7 +84,9 @@ game runs.
 - **Quick Panel**: the settings you change most, written straight to OptiScaler.ini. Its profile is either *This game only* or
   *Global* (shared by every game set to Global).
 - **OptiScaler settings**: every OptiScaler.ini key as switches, sliders and lists with plain names. Your choices are applied
-  again after every reinstall or update; profiles carry a set of settings to other games.
+  again after every reinstall or update; profiles carry a set of settings to other games. With a fork or a custom build, the
+  settings it adds to OptiScaler's own are read the same way and listed after *Essentials*, one card per section marked
+  *this build only*.
 - **ASI plugins**: one shared folder; switch a plugin on for a game and it is copied into its install.
 - **Custom DLLs** (OptiScaler nightly): extra FSR, DLSS or DLSSG dlls, kept in one shared folder as **entries**. Each entry
   is a folder whose name is the one OptiScaler's menu shows, and can hold an FFX upscaler for DX12 and Vulkan, a DLSS runtime
@@ -95,6 +103,20 @@ game runs.
 - **RenoDX** (HDR): the mods that fit the game. Snapshot builds install in one click; Nexus Mods files are picked up from your
   Downloads folder after you download them yourself.
 - **Luma** (HDR and DLSS for DirectX 11 games): the game's own mod, installed with backups.
+
+## Ultra+ (experimental)
+
+> **Experimental.** Ultra+ support is new and has been tried on few games so far. If something looks wrong, the tab's
+> *Uninstall* puts the game folder back as it was; a [bug report](troubleshooting.md) helps.
+
+[Ultra+](https://theultraplace.com) improves lighting, shadows, reflections and ray tracing in many Unreal Engine games. Games it
+supports get an **Ultra+** tab:
+
+- **Install** a version (betas if you ask for them), update it or go back to an older one; your settings stay.
+- **Add-ons**: optional extras for the game's mod (more ray tracing, fixes, frame generation).
+- **Ultra+ settings**: UltraPlusConfig.ini as switches and sliders, saved as you change them (press F12 in game to apply).
+- **Update automatically** and **Notify me of new versions** apply to every game: the app looks for new versions when it starts
+  and every three hours.
 
 ## Downloads and accounts
 
@@ -140,9 +162,11 @@ which game. The app only reads the list; it never changes your online status.
 
 ## Settings
 
-- **Appearance**: colour themes (the *Hybrid* theme uses the logo's crimson; *Dark* and *Venom* are always dark), your own colours, Material colours, where icons
+- **Appearance**: colour themes (the *Hybrid* theme uses the logo's crimson; *Dark*, *Venom* and the warm *Cozy* are always dark), your own colours, Material colours, where icons
   show, what the game page shows.
-- **Features**: **Choose features** (the first-start picker again: keep everything, or only OptiScaler, OptiScaler +
+- **Features**: **Graphics** (hardware acceleration, *Pause it while a game runs*, and the **Background saver**: with another
+  window in front, clips and muted trailers pause, nothing is polled and Windows runs Hybrid Launcher in efficiency mode;
+  downloads keep full speed), **Choose features** (the first-start picker again: keep everything, or only OptiScaler, OptiScaler +
   ReShade, no achievements, just a launcher, or your own mix), close to the notification area, start with Windows, the
   welcome tour, the tabs, and the **achievement
   pop-up** (position, screen, size, colour, background, opacity, time on screen, sound, rarity; *Try it* shows a sample).

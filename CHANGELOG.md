@@ -1,5 +1,106 @@
 # Changelog
 
+## 1.3.0 — 2026-11-04 · Forks, Ultra+ (experimental) and update notifications
+
+**Hybrid Launcher 1.3.0** installs OptiScaler forks and unofficial builds, manages Ultra+ for Unreal Engine games (experimental), shows at a
+glance what each game has installed, tells you when a new version is out, gets out of the way while you play and switches
+between games faster. If you already have 1.2, the app offers this update by itself a few seconds after it starts.
+
+### ✨ New
+
+- **Forks/Unofficial Builds.** The OptiScaler tab has a fourth source beside Stable, Nightly and Custom build: community
+  forks (OptiScaler Venom, F5 DLSS NR Multipass, DLSS NR Multipass MFG, NR PreSR MFG, FSR Ray Regeneration).
+  *Add a fork* takes the GitHub address of any other one. Forks install through their own `setup_windows.bat`, like the
+  official builds, and their release notes are in the *Release notes* sub-tab. The fork's GitHub address under the version
+  list opens its page.
+- **Settings of forks.** OptiScaler.ini is read more broadly: the settings a fork or a custom build adds get switches, sliders
+  and lists like the official ones (choices written as *Game or OptiScaler*, ranges as *1..3*, values listed as *0 bilinear,
+  1 Catmull-Rom…*, notes shared by a group of keys). *Essentials* lists them after its own cards, one card per section marked
+  *this build only*.
+- **Ultra+ (experimental).** Unreal Engine games that [Ultra+](https://theultraplace.com) supports get an Ultra+ tab: install a
+  version (betas on request), update it or go back, add-ons, and Ultra+'s own settings as switches and sliders. *Update
+  automatically* and *Notify me of new versions* cover every game; the app looks for new versions at start and every three
+  hours. It is new and tried on few games so far: if something looks wrong, the tab's *Uninstall* puts the folder back as it
+  was, and a report helps.
+- **What's installed, at a glance.** The banner's top-left corner lists the mods in the game folder with their version
+  (OptiScaler and where the build came from, ReShade, Ultra+, RenoDX, Luma); a click opens the mod's tab. Turn it off in
+  Settings → Appearance → *Game page*, or for one game in its gear → *Customization*.
+- **Update available.** A blue button at the top of the OptiScaler tab when the channel or fork your game uses has a newer
+  build: one click installs it, with your settings applied again.
+- **Get notified on updates.** A switch under the version list, for each source apart (Stable, Nightly, every fork), off until
+  you turn it on: a Windows notification when that one gets a new version. A click on it opens the game on its OptiScaler tab.
+- **Out of the way while you play.** When a game you started from Hybrid Launcher is running, the window goes to the
+  notification area and comes back by itself when the game closes (Settings → Features → *Step aside while a game runs*).
+- **Start with Windows in the notification area.** Started with Windows, only the icon appears; *Open the window when it starts
+  with Windows* opens the full window too.
+- **DLSS NR model file.** Forks and custom builds that need NVIDIA's `nvngx_dlssnr.dll` (DLSS 5 neural rendering) get it from
+  one copy Hybrid Launcher keeps: pick yours once under the version list. *On globally* gives it to every game whose build
+  needs it, *On for this game* follows that unless you change it for one game.
+- **Notifications.** A button top right, beside Minimize: every update notification is kept in its list (OptiScaler builds you follow,
+  Ultra+ versions and the ones it installed by itself, new Hybrid Launcher versions), so one you missed can still be read. A
+  dot counts the new ones; a click on one opens where it points.
+- **Notification settings.** Settings → *Notifications*: for each source (OptiScaler, Ultra+, Hybrid Launcher itself), whether
+  it is kept in the app's list, shows a Windows pop-up, both or neither; how long the list keeps them; no pop-ups while a game
+  runs (on by default); hide the button. A new Hybrid Launcher version now gets one Windows pop-up too.
+- **Hide the DLSS NR row.** If you don't use DLSS NR, the eye icon on its row hides it in every game (Settings → Appearance →
+  *Game page* shows it again). Files already set up keep working.
+- **Cozy theme.** Settings → Appearance: warm charcoal, terracotta and cream, with every other colour of the app softened to
+  match.
+- **Background saver.** When another window is in front, Hybrid Launcher rests: moving clips and muted trailers pause,
+  nothing is polled and Windows runs it in efficiency mode. It wakes up the moment you click it; downloads keep full speed
+  (Settings → Features → Graphics).
+
+### 🎨 Changes
+
+- **New Play button** and launch bar: softer, more modern shading, and every button with its icon on a tinted tile. HDR, Cloud,
+  the folders and achievements sit straight on the bar's glass (no second see-through box); their face shows on hover.
+  The folder buttons are shorter: *Game folder*, *Saves folder*, *Configuration folder*.
+- **Desktop shortcut** moved to the first page of a game's gear (*General*).
+- **Play button** keeps nearly the same width in every state (*Downloading*, *Closing…* are drawn a little smaller instead
+  of stretching the launch bar), with its icon and word centred; the launch bar's items sit centred in it.
+- **Upscaler tags** merge a maker's upscaler and frame generation in one tag (*DLSS 4 · MFG*), in the same lettering as the
+  other tags.
+- **Tabs in their old order**, centred; tab and sub-tab names a little brighter. Descriptions everywhere a point larger.
+- **Quick access suggests modding tools** found on your PC (Vortex, Mod Organizer 2, r2modman, Cheat Engine, Special K…)
+  and the mod folders and logs the game already has (Mods, BepInEx, UE4SS, RED4ext…); the game, saves and settings
+  folders stay on the launch bar.
+- **My PC, Library and Downloads** have larger two-tone icons; the app icon sits beside the HYBRID wordmark.
+- **Faster game switching**: the banner, launch bar and tabs show at once; the rest of the tab follows on the next frame.
+- **One colour family.** Section icons, tags, status colours and release-note headings share the same lightness and a calmer
+  saturation in every theme, so nothing bright jumps out; release-note headings are a quiet bar instead of a coloured band.
+- **OptiScaler header**: the version, then the release it came from as a small badge and the build date (no commit hash).
+- **Even faster game switching**: a game's banner is kept in memory once seen, and resting the pointer on a game in the list
+  gets its banner ready before you click.
+- **Hardware acceleration** also pauses while a game runs (*Pause it while a game runs*): the looping clips give their video
+  decoders back and the page stops refreshing until the game closes.
+
+### 🐛 Fixes
+
+- Animated GIFs in a game's description no longer stop when you pause the trailer.
+- Picking another fork while the first one's versions were still loading could list (and install) the first fork's builds
+  under the second one's name.
+- Several new versions found in one check now raise one notification; before, the second replaced the first and its click
+  opened the wrong game.
+- One failed update check (offline, GitHub busy) no longer stops the background checks until the next start.
+- Leaving a game while OptiScaler was installing, then coming back, showed the build that was there before (a Stable install
+  read as Nightly) and offered a second install into the same folder. Installs and removals of OptiScaler, ReShade, RenoDX,
+  Luma and Ultra+ now keep running when you look at something else, show their progress when you come back, and only one
+  runs per game at a time.
+- ReShade, RenoDX, Luma and Ultra+ downloads were silently cancelled when you opened another page.
+- A settings file written by a newer version no longer resets an older one to a first start: what it can't read is left
+  out, and a file it can't read at all is kept aside (`settings.unreadable-…`) instead of being written over.
+- Zip releases (most forks) are unpacked directly; before, every zip went through Windows' `tar` after a failed first try.
+- The game-running check no longer runs into "access denied" on Windows' protected processes every three seconds.
+- Closing the feature picker no longer leaves the typing cursor in the game list's search box.
+- Changing which features you use no longer leaves the typing cursor in the search box (WinUI put it there when the selected
+  item left the list, and it then stayed for good).
+- The *Release notes* section showed the notes of a fork other than the one named on its tab (the tab kept the first fork
+  picked, the list followed a later pick). It now follows the fork installed in the game, and changes with an install.
+- The first heading of OptiScaler's nightly notes showed as raw `###` text.
+- Update checks for forks no longer download each fork's list twice (once per spelling of its name), which used up GitHub's
+  hourly limit sooner; the first check runs half a minute after start instead of a minute.
+- The Ultra+, fork and notification texts are translated into Italian.
+
 ## 1.2.3 — 2026-11-02 · New logo
 
 **Hybrid Launcher 1.2.3** has a new logo: a white game controller shaped like an H, on a red tile. If you already have 1.2, the

@@ -66,10 +66,14 @@ public sealed partial class SettingsPage : Page
         TabIconsCombo.SelectedIndex = Math.Max(0, Array.FindIndex(TabIconChoices, c => c.Key == S.TabIcons));
         FillIconsAndParts();
         HardwareToggle.IsOn = S.HardwareAcceleration;
+        HardwarePauseToggle.IsOn = S.PauseEffectsInGame;
+        BackgroundSaverToggle.IsOn = S.BackgroundSaver;
         TrayToggle.IsOn = S.CloseToTray;
+        HideWhilePlayingToggle.IsOn = S.HideWhilePlaying;
         // Turned off in Windows' Startup apps (or removed) since: the toggle says what Windows will do.
         try { if (S.StartWithWindows && !Startup.IsOn) S.StartWithWindows = false; } catch { }
         StartupToggle.IsOn = S.StartWithWindows;
+        StartOpenToggle.IsOn = S.StartOpensWindow;
         PopupToggle.IsOn = S.AchievementPopups;
         var o = S.Popup;
         Select(CornerCombo, o.Corner);
@@ -187,12 +191,15 @@ public sealed partial class SettingsPage : Page
     void ShowSettingsTab(string tab)
     {
         _openTab = tab;
-        RestoreDefaultsButton.Visibility = tab is "about" or "cloud" ? Visibility.Collapsed : Visibility.Visible;
+        RestoreDefaultsButton.Visibility = tab is "about" or "cloud" or "notifications" ? Visibility.Collapsed : Visibility.Visible;
         AppearancePanel.Visibility = tab == "appearance" ? Visibility.Visible : Visibility.Collapsed;
         FeaturesPanel.Visibility = tab == "features" ? Visibility.Visible : Visibility.Collapsed;
         StoragePanel.Visibility = tab == "storage" ? Visibility.Visible : Visibility.Collapsed;
         CloudPanel.Visibility = tab == "cloud" ? Visibility.Visible : Visibility.Collapsed;
         if (tab == "cloud") CloudSettingsView.Fill(CloudPanel);
+        NotificationsPanel.Visibility = tab == "notifications" ? Visibility.Visible : Visibility.Collapsed;
+        if (tab == "notifications") NotificationSettingsView.Fill(NotificationsPanel);
+        if (tab == "features") GitHubSignInView.Fill(GitHubPanel);
         AboutPanel.Visibility = tab == "about" ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -273,7 +280,7 @@ public sealed partial class SettingsPage : Page
 
         CacheText.Text = L.F("Downloaded releases (the newest 3 per channel are kept, in {0}) and the custom builds you imported.", AppInfo.DownloadsDir);
 
-        CustomBuildsText.Text = CustomBuilds.Dir(S) + "\n" + L.T("Each sub-folder (or .zip / .7z) holding an OptiScaler dll is a build you can install from a game's Custom box.");
+        CustomBuildsText.Text = CustomBuilds.Dir(S) + "\n" + L.T("Each sub-folder (or .zip / .7z) holding an OptiScaler DLL is a build you can install from a game's Custom box.");
         ResetBuildsButton.Visibility = S.CustomBuildsDir is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -613,6 +620,8 @@ public sealed partial class SettingsPage : Page
     {
         if (_loading) return;
         S.HardwareAcceleration = HardwareToggle.IsOn;
+        S.PauseEffectsInGame = HardwarePauseToggle.IsOn;
+        S.BackgroundSaver = BackgroundSaverToggle.IsOn;
         SettingsStore.Save();
         Helpers.MediaPolicy.NotifyEffectsChanged();
     }
@@ -621,6 +630,8 @@ public sealed partial class SettingsPage : Page
     {
         if (_loading) return;
         S.CloseToTray = TrayToggle.IsOn;
+        S.HideWhilePlaying = HideWhilePlayingToggle.IsOn;
+        S.StartOpensWindow = StartOpenToggle.IsOn;
         if (S.StartWithWindows != StartupToggle.IsOn)
         {
             try

@@ -30,9 +30,14 @@
 //   dotnet run -- art [appid] [name]  banner, logo and cover a game page uses (store asset list, screenshot fallback)
 //   dotnet run -- signin-page [hold] MEGA's browser sign-in page served on 127.0.0.1: form, token guard, empty-form check, cancel
 //   dotnet run -- friends           signs in with HL_DATA's Steam token and lists the account's friends (read-only)
+//   dotnet run -- extract           the built-in extractor on a zip it makes (and HL_EXTRACT_SAMPLES' archives), no tar.exe
+//   dotnet run -- settings          settings from a newer version: unknown values left out, the rest kept
 //   dotnet run -- updates           the app's own update: release JSON parsing, the check against a local feed, download + unpack
 //   dotnet run -- customdlls        custom dlls on a fake install: copied in, replaced, a foreign file kept, turned off, uninstalled
+//   dotnet run -- forks           OptiScaler forks: addresses, Update available, notifications once per release, the archive picked
 //   dotnet run -- techversions      My PC's technology versions read from AMD's, Intel's and NVIDIA's SDK releases on GitHub
+//   dotnet run -- ultra             Ultra+ on a fake Unreal folder: lists, install, update keeping settings, add-on variants,
+//                                   custom variables back after a reinstall, taking over an install made elsewhere, uninstall
 // Set HL_DATA to keep test data out of %LOCALAPPDATA%\HybridLauncher.
 using System.Security.Cryptography;
 using HybridLauncher.Core;
@@ -164,6 +169,46 @@ switch (cmd)
         Directory.Delete(picked, recursive: true);
         break;
     }
+    case "forks":
+    {
+        // Addresses typed by hand become owner/name; anything else is refused.
+        Check(OptiForks.ParseRepo("https://github.com/LorenzoKy/Optiscaler-Venom") == "LorenzoKy/Optiscaler-Venom", "full address");
+        Check(OptiForks.ParseRepo("github.com/janblade/OptiScaler-F5-DLSSNR-Multipass/releases") == "janblade/OptiScaler-F5-DLSSNR-Multipass", "address with a path");
+        Check(OptiForks.ParseRepo("Dagherbou/OptiScaler_DLSSNR.git") == "Dagherbou/OptiScaler_DLSSNR", "owner/name.git");
+        Check(OptiForks.ParseRepo("not a repo") is null && OptiForks.ParseRepo("https://github.com/") is null, "not an address");
+        // Update available: an older tag, the newest one, a tag no longer listed.
+        var now = DateTime.UtcNow;
+        List<OptiRelease> list =
+        [
+            new(OptiChannel.Fork, "v3", "v3", now, "a.7z", "u", 1, null) { Repo = "o/n" },
+            new(OptiChannel.Fork, "v2", "v2", now.AddDays(-3), "a.7z", "u", 1, null) { Repo = "o/n" },
+        ];
+        var m = new InstallManifest { Channel = OptiChannel.Fork, Source = "o/n", Tag = "v2", InstalledAt = now.AddDays(-2) };
+        Check(OptiUpdates.NewerThan(m, list)?.Tag == "v3", "older install: v3 offered");
+        m.Tag = "v3";
+        Check(OptiUpdates.NewerThan(m, list) is null, "newest install: nothing offered");
+        m.Tag = "v9-private";
+        m.InstalledAt = now.AddDays(1);
+        Check(OptiUpdates.NewerThan(m, list) is null, "unlisted build installed after the newest: left alone");
+        m.InstalledAt = now.AddDays(-10);
+        Check(OptiUpdates.NewerThan(m, list)?.Tag == "v3", "unlisted build older than the newest: v3 offered");
+        Check(OptiUpdates.Key(OptiChannel.Fork, "LorenzoKy/Optiscaler-Venom") == "fork:lorenzoky/optiscaler-venom" && OptiUpdates.Key(OptiChannel.Custom, null) == "", "source keys");
+        // Notifications: a source turned on remembers its newest release, only a later one notifies.
+        var s = new AppSettings();
+        s.OptiFollow.Add("fork:lorenzoky/optiscaler-venom");
+        s.OptiSeen["fork:lorenzoky/optiscaler-venom"] = "an-old-tag";
+        var found = await OptiUpdates.CheckAsync(s, CancellationToken.None);
+        Check(found.Count == 1 && s.OptiSeen["fork:lorenzoky/optiscaler-venom"] == found[0].Release.Tag, "a new release notifies once: " + string.Join(", ", found.Select(f => f.Release.Tag)));
+        Check((await OptiUpdates.CheckAsync(s, CancellationToken.None)).Count == 0, "then stays quiet");
+        // Each known fork lists releases, and the archive picked is the build (not an optional extra beside it).
+        foreach (var f in OptiForks.Known.Take(3))
+        {
+            var releases = await OptiReleases.GetForkAsync(f.Repo);
+            Check(releases.Count > 0 && releases.All(r => !r.AssetName.Contains("Optional", StringComparison.OrdinalIgnoreCase)),
+                $"{f.Repo}: {releases.Count} releases, newest {releases.FirstOrDefault()?.AssetName}");
+        }
+        break;
+    }
     case "techversions":
     {
         var sample = "<h3>AMD FSR\u2122 Upscaling 4.1.2</h3> <h3>AMD FidelityFX\u2122 Super Resolution 3.1.6</h3> <h3>AMD FSR\u2122 Frame Generation (Swapchain) 4.0.0</h3> <h3>AMD FSR\u2122 Frame Generation 4.0.2</h3>";
@@ -176,6 +221,80 @@ switch (cmd)
         await HybridLauncher.Core.Hardware.TechVersions.RefreshAsync(force: true);
         foreach (var id in new[] { "fsr-upscaling-ml", "fsr-framegen-ml", "fsr-ray-regeneration", "fsr-upscaling", "fsr-framegen", "xess", "xell", "dlss-sdk", "dlss" })
             Console.WriteLine($"  now {id} = {HybridLauncher.Core.Hardware.TechVersions.Get(id)}");
+        break;
+    }
+    case "extract":
+    {
+        // The built-in extractor reads zips (entry by entry) and 7z (front to back) without falling back to tar.exe. Real archives
+        // from HL_EXTRACT_SAMPLES (a folder, searched below) are checked too, file for file against .NET's own zip reader.
+        var dir = Path.Combine(Path.GetTempPath(), "hl-extract-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var src = Path.Combine(dir, "src");
+            Directory.CreateDirectory(Path.Combine(src, "sub"));
+            File.WriteAllText(Path.Combine(src, "OptiScaler.ini"), "[x]");
+            File.WriteAllBytes(Path.Combine(src, "sub", "a.dll"), new byte[70000]);
+            var zip = Path.Combine(dir, "t.zip");
+            System.IO.Compression.ZipFile.CreateFromDirectory(src, zip);
+            var outDir = Path.Combine(dir, "out");
+            Directory.CreateDirectory(outDir);
+            HybridLauncher.Core.Opti.ArchiveExtractor.ExtractManaged(zip, outDir, CancellationToken.None);
+            Check(File.Exists(Path.Combine(outDir, "OptiScaler.ini")) && new FileInfo(Path.Combine(outDir, "sub", "a.dll")).Length == 70000, "a zip is read by the built-in extractor");
+            if (Environment.GetEnvironmentVariable("HL_EXTRACT_SAMPLES") is { Length: > 0 } samples && Directory.Exists(samples))
+                foreach (var archive in Directory.EnumerateFiles(samples, "*.*", SearchOption.AllDirectories).Where(f => f.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)).Take(8))
+                {
+                    var o = Path.Combine(dir, Guid.NewGuid().ToString("N")[..6]);
+                    Directory.CreateDirectory(o);
+                    HybridLauncher.Core.Opti.ArchiveExtractor.ExtractManaged(archive, o, CancellationToken.None);
+                    int got = Directory.GetFiles(o, "*", SearchOption.AllDirectories).Length;
+                    int want = archive.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                        ? System.IO.Compression.ZipFile.OpenRead(archive).Entries.Count(e => !e.FullName.EndsWith('/'))
+                        : got;
+                    Check(got > 0 && got == want, $"{Path.GetFileName(archive)}: {got} files");
+                }
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+        break;
+    }
+    case "settings":
+    {
+        // Settings written by a newer version: a value this one does not know is left out, the rest is kept.
+        var json = """
+            { "Theme": "Dark", "Games": {
+                "steam:1": { "LaunchArgs": "-dx12", "Install": { "Channel": "SomethingNewer" } },
+                "x.y['z']": { "LaunchArgs": "-safe", "Install": { "Channel": "AlsoNewer" } } },
+              "TourSeen": "not a bool" }
+            """;
+        System.Text.Json.JsonException? first = null;
+        try { System.Text.Json.JsonSerializer.Deserialize(json, HybridLauncher.Core.HybridJson.Default.AppSettings); }
+        catch (System.Text.Json.JsonException ex) { first = ex; }
+        Check(first is not null, "the strict read fails, as in an older version: " + first?.Path);
+        var s = SettingsStore.TryReadLenient(json, first!, "test.json");
+        Check(s is not null, "the lenient read succeeds");
+        Check(s?.Theme == "Dark", "a setting it knows is kept (Theme)");
+        Check(s?.Games.TryGetValue("steam:1", out var g1) == true && g1.LaunchArgs == "-dx12" && g1.Install is not null, "the game is kept, only its unknown channel dropped");
+        Check(s?.Games.TryGetValue("x.y['z']", out var g2) == true && g2.LaunchArgs == "-safe", "a key with dots and quotes is found and kept");
+        Check(SettingsStore.TryReadLenient("{ not json", first!, "test.json") is null, "a broken file is not guessed at");
+        // Neither file readable: defaults, but both are kept aside first (the next save would replace them).
+        var dataDir = Path.GetDirectoryName(AppInfo.SettingsFile)!;
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        File.WriteAllText(AppInfo.SettingsFile, "{ broken");
+        File.WriteAllText(AppInfo.SettingsFile + ".bak", "{ broken too");
+        var fresh = SettingsStore.Load();
+        Check(fresh.Games.Count == 0, "unreadable settings start from defaults");
+        Check(Directory.GetFiles(dataDir, "settings.unreadable-*.json").Length == 2, "both unreadable files are kept aside");
+        // A real settings file, if one is given (HL_SETTINGS_SAMPLE), with every OptiScaler channel made unknown.
+        if (Environment.GetEnvironmentVariable("HL_SETTINGS_SAMPLE") is { Length: > 0 } sample && File.Exists(sample))
+        {
+            var real = File.ReadAllText(sample);
+            var games = System.Text.Json.Nodes.JsonNode.Parse(real)!["Games"]!.AsObject().Count;
+            var changed = System.Text.RegularExpressions.Regex.Replace(real, "\"Channel\": \"\\w+\"","\"Channel\": \"FromTheFuture\"");
+            File.WriteAllText(AppInfo.SettingsFile, changed);
+            File.Delete(AppInfo.SettingsFile + ".bak");
+            var read = SettingsStore.Load();
+            Check(read.Games.Count == games, $"a real settings file with unknown channels keeps all {games} games");
+        }
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
         break;
     }
     case "updates":
@@ -360,6 +479,123 @@ switch (cmd)
         Directory.Delete(root, true);
         break;
     }
+    case "ultra":
+    {
+        // Ultra+ on a fake Unreal game folder (Lies of P's layout): the lists, a real install, an update that keeps the user's
+        // settings, an add-on, the settings file, an OptiScaler proxy clash, and an uninstall that leaves the folder as it was.
+        var root = Path.Combine(Path.GetTempPath(), "hl-ultra-test");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var games = await UltraPlus.GetGamesAsync();
+        var files = await UltraPlus.GetModFilesAsync();
+        var addonFiles = await UltraPlus.GetAddonFilesAsync();
+        await UltraPlus.LoadSettingTextsAsync();
+        Console.WriteLine($"Ultra+: {games.Count} games, {files.Count} mod builds, {addonFiles.Count} add-on builds");
+        Check(games.Count > 50 && files.Count > 100, "the lists load");
+        var install = Directory.CreateDirectory(Path.Combine(root, "Lies of P")).FullName;
+        var exe = Path.Combine(install, @"LiesofP\Binaries\Win64\LOP-Win64-Shipping.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(exe)!);
+        File.WriteAllText(exe, "fake");
+        File.WriteAllText(Path.Combine(install, "LiesofP.exe"), "fake bootstrap");
+        Directory.CreateDirectory(Path.Combine(install, @"LiesofP\Content\Paks"));
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(exe)!, "dwmapi.dll"), "someone else's dwmapi");
+        var before = Directory.GetFiles(install, "*", SearchOption.AllDirectories).ToDictionary(f => f, File.ReadAllText);
+
+        var hits = UltraPlus.Match(games, "Lies of P", install, exe);
+        Check(hits.Count > 0 && hits[0].Game.Key == "LiesOfP" && hits[0].Score == 100, $"matched by exe: {hits.FirstOrDefault()?.Game.Key} ({hits.FirstOrDefault()?.Reason})");
+        Check(UltraPlus.Match(games, "Lies of P", install, Path.Combine(install, "LiesofP.exe")).FirstOrDefault()?.Game.Key == "LiesOfP", "matched by name from the bootstrap exe");
+        var game = hits[0].Game;
+        var layout = UltraPlus.Layout(game, install, exe);
+        Check(layout.Root == install && layout.ProjectDir == Path.Combine(install, "LiesofP") && layout.ExeDir == Path.GetDirectoryName(exe), "layout: install, project and exe folders");
+        var versions = UltraPlus.Versions(game, files, gamePass: false, betas: false);
+        Console.WriteLine("  versions: " + string.Join(", ", versions.Select(v => v.Version)));
+        Check(versions.Count >= 2 && versions.All(v => !v.IsGamePass), "Steam builds only, at least two");
+        Check(UltraPlus.Versions(game, files, gamePass: true, betas: false).All(v => v.IsGamePass), "Game Pass builds for Game Pass");
+        Check(UltraPlus.Compare("6.5.1", "6.4.13") > 0 && UltraPlus.Compare("13.3.0_beta4", "13.3.0") < 0 && UltraPlus.Compare("1.0.1", "1.0.1") == 0, "version order");
+        Check(UltraPlus.AddonFamily("EnhancedRayTracing_LessVRAM") == "EnhancedRayTracing" && UltraPlus.AddonFamily("RT_PoolSize") == "RT_PoolSize" && UltraPlus.AddonFamily("FSR3-FG") == "FSR3-FG",
+            "add-on variants: EnhancedRayTracing_* share a family, RT_PoolSize stands alone");
+
+        // An older build first, then the newest as an update.
+        var older = versions[1];
+        var zipOld = await UltraPlus.DownloadAsync(older, null, CancellationToken.None);
+        Check(File.Exists(zipOld), $"downloaded and SHA-256 checked: {older.FileName}");
+        double lastStep = 0;
+        var state = await UltraPlus.InstallAsync(game, older, zipOld, layout, false, null, true, CancellationToken.None, new Progress<double>(p => lastStep = p));
+        Check(state.Files.All(f => File.Exists(Path.Combine(install, f))), $"{state.Files.Count} files on disk");
+        Check(File.Exists(Path.Combine(layout.Ue4ssDir!, "UE4SS.dll")) && Directory.Exists(Path.Combine(layout.Ue4ssDir!, @"Mods\UltraPlusExtensions")), "UE4SS and UltraPlusExtensions beside the exe");
+        Check(Directory.GetFiles(layout.PakModsDir!, "*.pak").Length > 0, "pak in Content\\Paks\\~mods");
+        Check(state.Backups.ContainsKey(@"LiesofP\Binaries\Win64\dwmapi.dll"), "the dwmapi.dll that was there is backed up");
+        Check(UltraPlus.Owns(state, Path.Combine(layout.ExeDir!, "dwmapi.dll")) && !UltraPlus.Owns(state, Path.Combine(layout.ExeDir!, "dxgi.dll")), "Ultra+ owns dwmapi.dll, not dxgi.dll (OptiScaler's install checks this)");
+        var folder = UltraPlus.Inspect(layout, state);
+        Check(folder.Installed && folder.Ue4ss && folder.Version is { Length: > 0 }, $"seen in the folder: version {folder.Version}");
+
+        var settings = UltraPlus.ReadSettings(layout.ConfigDir!);
+        var values = UltraPlus.ReadConfig(layout.ConfigDir!);
+        Console.WriteLine($"  settings: {settings.Count}, groups: {string.Join(", ", settings.Select(s => s.Category).Distinct())}");
+        Check(settings.Count > 10 && settings.Any(s => s.Numeric) && settings.Any(s => s.Values.Count > 1), "settings read with their kinds");
+        Check(settings.All(s => values.ContainsKey(s.Key) || s.Default.Length > 0), "every setting has a value or a default");
+        var pick = settings.First(s => !s.Numeric && s.Values.Count > 2);
+        var newValue = pick.Values.First(v => !v.Equals(values.GetValueOrDefault(pick.Key), StringComparison.OrdinalIgnoreCase));
+        UltraPlus.WriteConfig(layout.ConfigDir!, new Dictionary<string, string> { [pick.Key] = newValue });
+        Check(UltraPlus.ReadConfig(layout.ConfigDir!)[pick.Key] == newValue, $"{pick.Key} set to {newValue}");
+        UltraPlus.WriteCustom(layout.ConfigDir!, "r.Shadow.MaxResolution=4096");
+        Check(UltraPlus.ReadCustom(layout.ConfigDir!) == "r.Shadow.MaxResolution=4096", "CustomSettings.ini written");
+        var presets = UltraPlus.ShippedPresets(layout.ConfigDir!);
+        Check(presets.Count >= 3, "presets: " + string.Join(", ", presets.Select(p => p.Name)));
+
+        var newest = versions[0];
+        Check(UltraPlus.UpdateFor(state, versions, false)?.FileName == newest.FileName, $"update found: {newest.Version}");
+        var zipNew = await UltraPlus.DownloadAsync(newest, null, CancellationToken.None);
+        state = await UltraPlus.InstallAsync(game, newest, zipNew, layout, false, state, true, CancellationToken.None);
+        Check(UltraPlus.ReadConfig(layout.ConfigDir!).GetValueOrDefault(pick.Key) == newValue, "the user's value survives the update");
+        Check(UltraPlus.ReadCustom(layout.ConfigDir!) == "r.Shadow.MaxResolution=4096", "CustomSettings.ini survives the update");
+        Check(File.Exists(Path.Combine(layout.ConfigDir!, "UltraPlusConfig.default")), "shipped config kept as UltraPlusConfig.default");
+        Check(UltraPlus.UpdateFor(state, versions, false) is null, "no update after updating");
+
+        var addons = UltraPlus.Addons(game, addonFiles, false);
+        Console.WriteLine("  add-ons: " + string.Join(", ", addons.Select(a => $"{a.Addon.Name} ({a.Files.Count})")));
+        if (addons.Count > 0)
+        {
+            var (addon, builds) = addons[0];
+            var zipAddon = await UltraPlus.DownloadAsync(builds[0], null, CancellationToken.None);
+            var a = await UltraPlus.InstallAddonAsync(game, builds[0], zipAddon, layout, state, CancellationToken.None);
+            state.Addons[UltraPlus.AddonName(game.Key, builds[0].FileName)] = a;
+            Check(a.Files.All(f => File.Exists(Path.Combine(install, f))), $"add-on {addon.Name}: {string.Join(", ", a.Files)}");
+        }
+
+        var proxies = UltraPlus.ProxyNames(zipNew);
+        Check(proxies.Count > 0, "UE4SS loads through " + string.Join(", ", proxies));
+        Check(UltraPlus.ProxyConflict(zipNew, layout, false) is null, "no OptiScaler here: no proxy clash");
+
+        var problems = UltraPlus.Uninstall(state, layout, keepUe4ss: false);
+        Check(problems.Count == 0, "uninstalled without problems " + string.Join("; ", problems));
+        var after = Directory.GetFiles(install, "*", SearchOption.AllDirectories).ToDictionary(f => f, File.ReadAllText);
+        Check(after.Count == before.Count && before.All(kv => after.TryGetValue(kv.Key, out var t) && t == kv.Value),
+            "folder back as it was: " + string.Join(", ", after.Keys.Except(before.Keys).Select(f => Path.GetRelativePath(install, f))));
+        Check(!Directory.Exists(layout.Ue4ssDir!), "no ue4ss folder left");
+
+        // Installing again brings the user's settings back, their own console variables included.
+        state = await UltraPlus.InstallAsync(game, newest, zipNew, layout, false, null, true, CancellationToken.None);
+        Check(UltraPlus.ReadConfig(layout.ConfigDir!).GetValueOrDefault(pick.Key) == newValue, "a new install gets the saved settings back");
+        Check(UltraPlus.ReadCustom(layout.ConfigDir!) == "r.Shadow.MaxResolution=4096", "a new install gets CustomSettings.ini back");
+        UltraPlus.Uninstall(state, layout, keepUe4ss: false);
+
+        // Ultra+ put in by someone else (the Ultra+ Manager): taken over, its files not mistaken for the game's, removed whole.
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(zipOld))
+            foreach (var entry in archive.Entries.Where(e => e.Name.Length > 0))
+                if (UltraPlus.Destination(entry.FullName, layout, false) is { } dest)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    System.IO.Compression.ZipFileExtensions.ExtractToFile(entry, dest, overwrite: true);
+                }
+        Check(UltraPlus.Inspect(layout, null).Installed, "an install made elsewhere is seen");
+        state = await UltraPlus.InstallAsync(game, newest, zipNew, layout, false, null, true, CancellationToken.None);
+        Check(!state.Backups.Keys.Any(k => k.Contains(@"\ue4ss\", StringComparison.OrdinalIgnoreCase) || k.EndsWith(".pak", StringComparison.OrdinalIgnoreCase)),
+            "taking over: Ultra+'s own files are not backed up as the game's (" + string.Join(", ", state.Backups.Keys.Take(4)) + ")");
+        UltraPlus.Uninstall(state, layout, keepUe4ss: false);
+        Check(!Directory.Exists(layout.Ue4ssDir!) && Directory.GetFiles(layout.ProjectDir!, "*.pak", SearchOption.AllDirectories).Length == 0, "taken over, then uninstalled: no UE4SS or pak left");
+        Directory.Delete(root, true);
+        break;
+    }
     case "renodxf":
     {
         var mods = await RenoDx.GetModsAsync();
@@ -458,6 +694,9 @@ switch (cmd)
             Console.WriteLine($"  {grp.Key}: {grp.Count()}");
         foreach (var e in doc.Entries.Where(e => e.Kind == IniValueKind.Choice))
             Console.WriteLine($"  {e.Path} = {e.Value} [{string.Join(", ", e.Options)}] default={e.DefaultText}");
+        if (Environment.GetEnvironmentVariable("HL_INI_DUMP") is { Length: > 0 } dump)
+            File.WriteAllLines(dump, doc.Entries.Select(e => $"{e.Path}	{e.Kind}	{string.Join("|", e.Options)}"));
+        Console.WriteLine($"  not in the official file: {doc.Entries.Count(e => !e.Official)}, with a shared note only: {doc.Entries.Count(e => e.Comment.Length == 0 && e.SharedComment.Length > 0)}");
         var copy = Path.Combine(Path.GetTempPath(), "hl-ini-test.ini");
         File.Copy(args[1], copy, true);
         var d2 = IniDocument.Load(copy);
@@ -1128,12 +1367,17 @@ switch (cmd)
         var dir = Path.GetFullPath(args[1]);
         var channel = args.Length > 2 ? args[2] switch { "nightly" => OptiChannel.Nightly, "custom" => OptiChannel.Custom, _ => OptiChannel.Stable } : OptiChannel.Stable;
         bool nvidia = args.Contains("nvidia");
+        // dlssnr: a DLSS NR build (its name says so) gets the stored model file; one already in the folder is backed up.
+        bool dlssnr = args.Contains("dlssnr");
 
         ArchiveExtractor.ResetDir(dir);
         File.Copy(Path.Combine(Environment.SystemDirectory, "notepad.exe"), Path.Combine(dir, "FakeGame.exe"));
         File.WriteAllText(Path.Combine(dir, "dxgi.dll"), "not optiscaler - pretend this is ReShade");
         File.WriteAllText(Path.Combine(dir, "nvngx.dll"), "pre-0.9 leftover");
+        if (dlssnr) File.WriteAllText(Path.Combine(dir, DlssNr.FileName), "the user's own older model file");
         var before = Snapshot(dir);
+        var nrFile = Path.Combine(Path.GetTempPath(), "hl-fake-" + DlssNr.FileName);
+        if (dlssnr) File.WriteAllText(nrFile, "stand-in for NVIDIA's DLSS NR runtime");
 
         OptiRelease release;
         if (channel == OptiChannel.Custom)
@@ -1146,7 +1390,7 @@ switch (cmd)
             ArchiveExtractor.ResetDir(pack);
             Directory.CreateDirectory(Path.Combine(pack, "inner"));
             File.Copy(Path.Combine(CustomBuilds.FindPayloadRoot(src)!, "OptiScaler.dll"), Path.Combine(pack, "inner", "dxgi.dll"));
-            var zip = Path.Combine(Path.GetTempPath(), "Discord test build.zip");
+            var zip = Path.Combine(Path.GetTempPath(), dlssnr ? "Discord DLSSNR test build.zip" : "Discord test build.zip");
             File.Delete(zip);
             System.IO.Compression.ZipFile.CreateFromDirectory(pack, zip);
             var build = await CustomBuilds.ImportAsync(new AppSettings(), zip);
@@ -1174,6 +1418,7 @@ switch (cmd)
             Options = options,
             IniOverrides = new Dictionary<string, string> { ["Upscalers/Dx12Upscaler"] = "fsr31" },
             AsiPlugins = ["TestPlugin.asi"],
+            DlssNrDll = dlssnr ? nrFile : null,
         }, progress, CancellationToken.None);
 
         await Task.Delay(300); // let Progress callbacks drain
@@ -1189,6 +1434,29 @@ switch (cmd)
         Check(ini.Get("Plugins", "LoadAsiPlugins") == "true", "ASI loading enabled");
         Check(File.Exists(Path.Combine(dir, m.PluginsDir, "TestPlugin.asi")), "universal ASI plugin copied");
         Check(m.Backups.ContainsKey("dxgi.dll") && m.Backups.ContainsKey("nvngx.dll"), "originals backed up");
+        if (dlssnr)
+        {
+            Check(File.ReadAllText(Path.Combine(dir, DlssNr.FileName)).StartsWith("stand-in"), "stored DLSS NR model file put in");
+            Check(m.Files.ContainsKey(DlssNr.FileName) && m.Backups.ContainsKey(DlssNr.FileName), "model file recorded, the old one backed up");
+            // The game's own switch: off takes it out and puts the game's file back, on puts it in again.
+            Check(DlssNr.Sync(m, null) && File.ReadAllText(Path.Combine(dir, DlssNr.FileName)).StartsWith("the user's own"), "switched off: game's own file back");
+            Check(DlssNr.NeededBy(m) && DlssNr.Sync(m, nrFile) && File.ReadAllText(Path.Combine(dir, DlssNr.FileName)).StartsWith("stand-in"), "switched on again: stored file back in");
+            // On globally / On for this game: the game follows the global switch until it has its own choice.
+            var app = new AppSettings { UseDlssNr = true };
+            var g = new GameSettings();
+            Check(DlssNr.OnFor(g, app), "a game follows On globally");
+            app.UseDlssNr = false;
+            Check(!DlssNr.OnFor(g, app), "and is off with it");
+            g.DlssNrChoice = true;
+            Check(DlssNr.OnFor(g, app), "this game on while global is off");
+            var old = System.Text.Json.JsonSerializer.Deserialize("{\"DlssNr\":false}", HybridJson.Default.GameSettings)!;
+            app.UseDlssNr = true;
+            Check(old.DlssNrChoice == false && !DlssNr.OnFor(old, app), "an rc.4 game switched off stays off");
+            var oldOn = System.Text.Json.JsonSerializer.Deserialize("{\"DlssNr\":true}", HybridJson.Default.GameSettings)!;
+            Check(oldOn.DlssNrChoice is null, "an rc.4 game left on follows the global switch");
+            Check(!System.Text.Json.JsonSerializer.Serialize(oldOn, HybridJson.Default.GameSettings).Contains("\"DlssNr\""), "the old key is not written back");
+        }
+        else Check(!m.Files.ContainsKey(DlssNr.FileName), "no DLSS NR model file for a build that doesn't need it");
 
         // Persist and reload the manifest like the app does.
         var json = System.Text.Json.JsonSerializer.Serialize(m, HybridJson.Default.InstallManifest);

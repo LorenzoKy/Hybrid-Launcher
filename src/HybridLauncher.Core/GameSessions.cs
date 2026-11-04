@@ -64,6 +64,12 @@ public static class GameSessions
 
     public static bool IsActive(string gameId) => State(gameId) is GameRunState.Starting or GameRunState.Running or GameRunState.Stopping;
 
+    /// <summary>The game's current session was started from Hybrid Launcher (not found running on its own).</summary>
+    public static bool WasLaunched(string gameId)
+    {
+        lock (Sessions) return Sessions.TryGetValue(gameId, out var s) && s.State != GameRunState.Stopped && s.Launched;
+    }
+
     /// <summary>Ids of the games running or starting now.</summary>
     public static List<string> Active()
     {
@@ -242,15 +248,29 @@ public static class GameSessions
     }
 
     /// <summary>A process's exe path, asked of Windows once per process (a reused id with another start time is asked again).</summary>
+    /// <summary>
+    /// The process's exe path, cached by pid and start time (a reused pid is read again). Both come from one handle opened with
+    /// limited rights: Process.StartTime needed more and threw "access denied" for every protected process, every 3 seconds.
+    /// </summary>
     static string? PathOf(Process p)
     {
-        DateTime start;
-        try { start = p.StartTime; } catch { start = default; }
-        lock (Seen) if (Seen.TryGetValue(p.Id, out var seen) && seen.Start == start) return seen.Path;
-        var path = ImagePath(p.Id);
-        lock (Seen) Seen[p.Id] = (start, path);
-        return path;
+        var h = OpenProcess(0x1000, false, p.Id);
+        if (h == 0) return null;
+        try
+        {
+            var start = GetProcessTimes(h, out var created, out _, out _, out _) ? DateTime.FromFileTimeUtc(created) : default;
+            lock (Seen) if (Seen.TryGetValue(p.Id, out var seen) && seen.Start == start) return seen.Path;
+            var sb = new System.Text.StringBuilder(1024);
+            int size = sb.Capacity;
+            var path = QueryFullProcessImageName(h, 0, sb, ref size) ? sb.ToString(0, size) : null;
+            lock (Seen) Seen[p.Id] = (start, path);
+            return path;
+        }
+        finally { CloseHandle(h); }
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetProcessTimes(nint process, out long creation, out long exit, out long kernel, out long user);
 
     /// <summary>The processes whose exe sits in this folder or any folder below it, matched by their real path.</summary>
     static List<Process> Under(string dir, bool helpers)

@@ -25,7 +25,11 @@ public static class Later
         {
             t.Stop();
             Pending.Remove(t);
-            action();
+            // Once the window has closed XAML is being torn down: a control made now throws, and an exception left here ends
+            // the process with 0xC000027B (the tour's retry built a TeachingTip after the self-test closed the window).
+            if (App.ShuttingDown) return;
+            try { action(); }
+            catch (Exception ex) { Log.Warn($"Delayed UI action: {ex.Message}"); }
         };
         timer.Start();
     }
@@ -242,6 +246,41 @@ public static class TechTags
             Child = Text(text, fontSize),
         };
     }
+
+    /// <summary>
+    /// A maker's upscaler and frame generation as one chip ("DLSS 4.5 · MFG", "FSR 4.1 · FG"): the maker's colour running into
+    /// its frame generation shade when both are there. The exact library numbers are in the tooltip.
+    /// </summary>
+    public static FrameworkElement CreateGroup(HybridLauncher.Core.Media.UpscalerFiles.TechGroup g, double fontSize = 12)
+    {
+        var (main, blend) = VendorColors(g.Family);
+        string text = g.Upscaler is not null && g.FrameGen is not null ? $"{g.Upscaler} · {g.FrameGen}"
+            : g.Upscaler ?? $"{g.Family} {g.FrameGen}";
+        Brush background = g.FrameGen is not null
+            ? new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Color.FromArgb(0xEA, main.R, main.G, main.B), Offset = 0.2 },
+                    new GradientStop { Color = Color.FromArgb(0xEA, blend.R, blend.G, blend.B), Offset = 1 },
+                },
+            }
+            : new SolidColorBrush(Color.FromArgb(0xE0, main.R, main.G, main.B));
+        // The same text, corners and padding as every other tag (Create), so the row reads as one set.
+        double v = Math.Round(fontSize * 0.36) + 1;
+        var chip = new Border
+        {
+            Background = background,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(7, v, 7, v),
+            UseLayoutRounding = true,
+            Child = Text(text, fontSize),
+        };
+        ToolTipService.SetToolTip(chip, g.Tooltip);
+        return chip;
+    }
 }
 
 /// <summary>
@@ -273,8 +312,11 @@ public static class Contrast
 /// <summary>
 /// A colour palette layered on the light / dark theme: accent colours plus a faint tint behind the window.
 /// A palette with a <see cref="Backdrop"/> is a full scene: always dark, an opaque gradient instead of Mica.
+/// A palette with <see cref="Text"/> tints the text too (dark theme), and <see cref="Harmonize"/> folds the app's fixed colours
+/// (card badges, status tones, coloured tags) into its own softer family, so nothing bright breaks the mood.
 /// </summary>
-public sealed record Palette(string Key, string Name, string Description, Color? Accent, Color? Tint, (Color Top, Color Bottom)? Backdrop = null)
+public sealed record Palette(string Key, string Name, string Description, Color? Accent, Color? Tint, (Color Top, Color Bottom)? Backdrop = null,
+    Color? Text = null, bool Harmonize = false)
 {
     public bool ForcesDark => Backdrop is not null;
 }
@@ -292,6 +334,9 @@ public static class Palettes
         new("Cyberpunk", "Cyberpunk 2077", "Night city black, signal yellow and red (always dark)", C(0xFC, 0xEE, 0x0A), C(0xFF, 0x00, 0x3C), (C(0x16, 0x10, 0x14), C(0x07, 0x07, 0x09))),
         new("Mgs1", "Metal Gear Solid", "Shadow Moses: arctic night blue with codec green (always dark)", C(0x5C, 0xE0, 0x8C), C(0x2C, 0x6E, 0x9E), (C(0x10, 0x1A, 0x24), C(0x04, 0x08, 0x0C))),
         new("Mgs2", "Metal Gear Solid 2", "Sons of Liberty: Big Shell steel with cyan readouts (always dark)", C(0x4F, 0xC8, 0xF0), C(0x8E, 0xA4, 0xB8), (C(0x18, 0x1E, 0x26), C(0x08, 0x0A, 0x0E))),
+        // Cozy: warm charcoal like a dim lamp-lit room, terracotta accent, cream text; the app's other colours soften to match.
+        new("Cozy", "Cozy", "Warm charcoal, terracotta and cream, every colour softened to match (always dark)", C(0xBF, 0x4E, 0x38), C(0xC9, 0x85, 0x3F),
+            (C(0x24, 0x1E, 0x1B), C(0x11, 0x0D, 0x0B)), Text: C(0xF1, 0xE8, 0xDF), Harmonize: true),
         new("Custom", "My colours", "Your own accent, glow and background (Settings)", C(0x9A, 0x5C, 0xFF), C(0x8A, 0x4D, 0xFF)),
     ];
 
@@ -345,14 +390,71 @@ public static class Palettes
 
     static ResourceDictionary? _applied;
 
+    /// <summary>The palette applied last (null before the first one).</summary>
+    public static Palette? Current { get; private set; }
+
+    /// <summary>
+    /// A fixed colour of the app (a card badge, a status tone, a coloured tag) as the current palette wants it: unchanged,
+    /// or for a palette that harmonises, toned down (less saturated, lightness pulled to the middle) and warmed toward its text
+    /// colour, so a teal heading or a blue tag sits in the same family as everything else.
+    /// </summary>
+    public static Color Adapt(Color c)
+    {
+        // Every palette: the tints are pulled toward one band of lightness and their loudest saturation is tamed, so a gold, a
+        // blue and a green icon side by side read as one family (greys stay grey: saturation only ever comes down). A palette
+        // that harmonises (Cozy) pulls harder and warms them toward its text colour.
+        bool cozy = Current is { Harmonize: true };
+        RgbToHsl(c, out var h, out var sat, out var l);
+        double maxSat = cozy ? 0.40 : 0.70, band = cozy ? 0.64 : 0.62, pull = cozy ? 0.7 : 0.45;
+        if (sat > maxSat) sat -= (sat - maxSat) * (cozy ? 0.85 : 0.6);
+        l += (band - l) * pull;
+        var soft = HslToRgb(h, sat, l, c.A);
+        if (!cozy) return soft;
+        var warm = Current!.Text ?? Current.Accent ?? soft;
+        var mixed = Mix(soft, warm, 0.15);
+        return Color.FromArgb(c.A, mixed.R, mixed.G, mixed.B);
+    }
+
+    /// <summary>The fixed tints XAML reads by name (Styles.xaml: Tint&lt;Name&gt;Brush and its faint Wash), refreshed per palette.</summary>
+    static readonly (string Name, Color Color)[] XamlTints =
+    [
+        ("Gold", C(0xF2, 0xB8, 0x2E)), ("Amber", C(0xFF, 0xC8, 0x57)), ("Orange", C(0xF0, 0x7F, 0x2A)), ("Violet", C(0xB9, 0xA3, 0xFF)),
+        ("Slate", C(0x8B, 0x94, 0xA8)), ("Blue", C(0x5F, 0xA8, 0xFF)), ("Cyan", C(0x4F, 0xC3, 0xF7)), ("Pink", C(0xE0, 0x5C, 0xB8)), ("Green", C(0x3F, 0xC2, 0x6A)),
+    ];
+
+    static void RgbToHsl(Color c, out double h, out double s, out double l)
+    {
+        double r = c.R / 255.0, g = c.G / 255.0, b = c.B / 255.0;
+        double max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+        l = (max + min) / 2;
+        if (max == min) { h = s = 0; return; }
+        double d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        h = max == r ? (g - b) / d + (g < b ? 6 : 0) : max == g ? (b - r) / d + 2 : (r - g) / d + 4;
+        h /= 6;
+    }
+
+    static Color HslToRgb(double h, double s, double l, byte a)
+    {
+        if (s == 0) { byte v = (byte)Math.Round(l * 255); return Color.FromArgb(a, v, v, v); }
+        double q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+        static double Hue(double p, double q, double t)
+        {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            return t < 1 / 6.0 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2 / 3.0 ? p + (q - p) * (2 / 3.0 - t) * 6 : p;
+        }
+        return Color.FromArgb(a, (byte)Math.Round(Hue(p, q, h + 1 / 3.0) * 255), (byte)Math.Round(Hue(p, q, h) * 255), (byte)Math.Round(Hue(p, q, h - 1 / 3.0) * 255));
+    }
+
     /// <summary>Puts the palette's accent brushes in front of the WinUI ones (a merged dictionary added last wins).</summary>
     public static void ApplyResources(Palette palette)
     {
+        Current = palette;
         var merged = Application.Current.Resources.MergedDictionaries;
         if (_applied is not null) merged.Remove(_applied);
         _applied = null;
         var tone = palette.Accent ?? palette.Tint;
-        if (tone is not { } cardTone) return;
         // Material colours off: cards and outlines keep WinUI's neutral grey; only the accent brushes change.
         bool material = AppState.Settings.Material;
 
@@ -360,9 +462,15 @@ public static class Palettes
         foreach (var (theme, dark) in new[] { ("Dark", true), ("Light", false), ("Default", true) })
         {
             var t = new ResourceDictionary();
+            foreach (var (name, color) in XamlTints)
+            {
+                var a = Adapt(color);
+                t[$"Tint{name}Brush"] = new SolidColorBrush(a);
+                t[$"Tint{name}WashBrush"] = new SolidColorBrush(Color.FromArgb(0x26, a.R, a.G, a.B));
+            }
             // Cards and their outlines take a trace of the theme's colour, so every surface belongs to the theme
             // (WinUI's are neutral grey). Barely there: text contrast stays the same.
-            if (material)
+            if (material && tone is { } cardTone)
             {
             t["CardBackgroundFillColorDefaultBrush"] = new SolidColorBrush(dark
                 ? Color.FromArgb(0x14, Mix(Colors.White, cardTone, 0.55).R, Mix(Colors.White, cardTone, 0.55).G, Mix(Colors.White, cardTone, 0.55).B)
@@ -404,6 +512,14 @@ public static class Palettes
             t["NavigationViewSelectionIndicatorForeground"] = new SolidColorBrush(c1);
             t["HyperlinkButtonForeground"] = new SolidColorBrush(c3);
             t["HyperlinkButtonForegroundPointerOver"] = new SolidColorBrush(c2);
+            // A palette with its own text colour (always dark): every level of text takes it, at WinUI's own opacities.
+            if (dark && palette.Text is { } text)
+            {
+                t["TextFillColorPrimaryBrush"] = new SolidColorBrush(text);
+                t["DefaultTextForegroundThemeBrush"] = new SolidColorBrush(text);
+                t["TextFillColorSecondaryBrush"] = new SolidColorBrush(Color.FromArgb(0xC5, text.R, text.G, text.B));
+                t["TextFillColorTertiaryBrush"] = new SolidColorBrush(Color.FromArgb(0x87, text.R, text.G, text.B));
+            }
             AddAliases(t);
             dict.ThemeDictionaries[theme] = t;
         }

@@ -56,11 +56,17 @@ static class Ui
     public static Border Card(UIElement child, double padding = 16) =>
         new() { Style = Style("CardStyle"), Padding = new Thickness(padding, padding - 2, padding, padding), Child = child };
 
-    // Colours of the card badges: one per kind of content, so each card is recognisable at a glance.
-    public static readonly Color Gold = Color.FromArgb(0xFF, 0xF2, 0xB8, 0x2E), Blue = Color.FromArgb(0xFF, 0x3D, 0x9B, 0xFF),
-        Green = Color.FromArgb(0xFF, 0x3F, 0xC2, 0x6A), Teal = Color.FromArgb(0xFF, 0x22, 0xB8, 0xB0), Orange = Color.FromArgb(0xFF, 0xF0, 0x7F, 0x2A),
-        Red = Color.FromArgb(0xFF, 0xE5, 0x48, 0x4D), Pink = Color.FromArgb(0xFF, 0xE0, 0x5C, 0xB8), Slate = Color.FromArgb(0xFF, 0x8B, 0x94, 0xA8),
-        Yellow = Color.FromArgb(0xFF, 0xF5, 0xC5, 0x18);
+    // Colours of the card badges: one per kind of content, so each card is recognisable at a glance. Read through the
+    // palette: one that harmonises (Cozy) softens them into its own family.
+    public static Color Gold => Palettes.Adapt(Color.FromArgb(0xFF, 0xF2, 0xB8, 0x2E));
+    public static Color Blue => Palettes.Adapt(Color.FromArgb(0xFF, 0x3D, 0x9B, 0xFF));
+    public static Color Green => Palettes.Adapt(Color.FromArgb(0xFF, 0x3F, 0xC2, 0x6A));
+    public static Color Teal => Palettes.Adapt(Color.FromArgb(0xFF, 0x22, 0xB8, 0xB0));
+    public static Color Orange => Palettes.Adapt(Color.FromArgb(0xFF, 0xF0, 0x7F, 0x2A));
+    public static Color Red => Palettes.Adapt(Color.FromArgb(0xFF, 0xE5, 0x48, 0x4D));
+    public static Color Pink => Palettes.Adapt(Color.FromArgb(0xFF, 0xE0, 0x5C, 0xB8));
+    public static Color Slate => Palettes.Adapt(Color.FromArgb(0xFF, 0x8B, 0x94, 0xA8));
+    public static Color Yellow => Palettes.Adapt(Color.FromArgb(0xFF, 0xF5, 0xC5, 0x18));
 
     /// <summary>A rounded tinted square with a glyph in it: the icon of a card heading.</summary>
     public static Border Badge(string glyph, Color? tint = null, double size = 34)
@@ -221,6 +227,8 @@ static class Ui
             if (!open) clip.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true, VerticalAlignmentRatio = 0.1 });
         };
         content.SizeChanged += (_, _) => Update();
+        // Self-test only: HL_SELFTEST_EXPAND=1 opens every long text, to look at what is below the cut.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_EXPAND") == "1") { open = true; clip.MaxHeight = double.PositiveInfinity; label.Text = L.T("Show less"); }
         var panel = new StackPanel();
         panel.Children.Add(clip);
         panel.Children.Add(rule);
@@ -256,11 +264,11 @@ static class Ui
 
     public static Color ToneColor(Tone tone) => tone switch
     {
-        Tone.Good => Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43),
-        Tone.Partial => Color.FromArgb(0xFF, 0xD2, 0x99, 0x22),
-        Tone.Bad => Color.FromArgb(0xFF, 0xD1, 0x3B, 0x3B),
+        Tone.Good => Palettes.Adapt(Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43)),
+        Tone.Partial => Palettes.Adapt(Color.FromArgb(0xFF, 0xD2, 0x99, 0x22)),
+        Tone.Bad => Palettes.Adapt(Color.FromArgb(0xFF, 0xD1, 0x3B, 0x3B)),
         Tone.Accent => (HybridLauncher.Helpers.ThemeRes.Current["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(0xFF, 0x9A, 0x5C, 0xFF),
-        _ => Color.FromArgb(0xFF, 0x8B, 0x94, 0x9E),
+        _ => Palettes.Adapt(Color.FromArgb(0xFF, 0x8B, 0x94, 0x9E)),
     };
 
     /// <summary>A small tinted pill ("Yes", "Limited"...), readable on light and dark.</summary>
@@ -326,19 +334,21 @@ static class Ui
             var tb = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Style = Style(line.Heading ? "BodyStrongTextBlockStyle" : "BodyTextBlockStyle") };
             if (line.Heading && headingTint is { } tint)
             {
-                // Contrasted headings (release notes): the section's name in the tint, on a faint band with a bar on its left.
+                // Headings of release notes: the section's name in the normal text colour, a short bar of the tint on its
+                // left and the faintest wash behind it. Stacked headings (one under the other) read as a list, not as loud bands.
                 tb.FontSize = large ? 17 : 15;
-                tb.FontWeight = FontWeights.Bold;
-                tb.Foreground = new SolidColorBrush(tint);
+                tb.FontWeight = FontWeights.SemiBold;
                 foreach (var run in line.Runs) tb.Inlines.Add(ToInline(run));
+                bool follows = panel.Children.Count > 0 && panel.Children[^1] is Border { Tag: "heading" };
                 panel.Children.Add(new Border
                 {
+                    Tag = "heading",
                     Child = tb,
-                    Margin = new Thickness(0, panel.Children.Count > 0 ? 12 : 2, 0, 2),
-                    Padding = new Thickness(10, 4, 10, 5),
+                    Margin = new Thickness(0, panel.Children.Count == 0 ? 2 : follows ? 0 : 12, 0, 2),
+                    Padding = new Thickness(10, 3, 10, 4),
                     BorderThickness = new Thickness(3, 0, 0, 0),
                     BorderBrush = new SolidColorBrush(tint),
-                    Background = new SolidColorBrush(Color.FromArgb(0x1E, tint.R, tint.G, tint.B)),
+                    Background = new SolidColorBrush(Color.FromArgb(0x0E, tint.R, tint.G, tint.B)),
                     CornerRadius = new CornerRadius(0, 6, 6, 0),
                 });
                 continue;
@@ -622,7 +632,7 @@ static class WikiPreviews
     static Border Card(GameData data, string glyph, string title, string tab, Color tint, bool flat, out StackPanel body)
     {
         var panel = new StackPanel { Spacing = flat ? 12 : 8 };
-        var open = Ui.LinkButton(L.T("Open tab"), "", () => data.ShowTab(tab));
+        var open = Ui.LinkButton(L.T("Open"), "", () => data.ShowTab(tab));
         panel.Children.Add(flat ? Ui.FlatHeading(glyph, title, open, tint: tint) : Ui.Heading(glyph, title, open, tint: tint));
         body = new StackPanel { Spacing = 8 };
         body.Children.Add(Ui.Loading());
@@ -632,7 +642,7 @@ static class WikiPreviews
 
     public static Border OptiCard(GameData data, bool flat = false)
     {
-        var card = Card(data, "", L.T("OptiScaler wiki"), "optiwiki", Ui.Teal, flat, out var body);
+        var card = Card(data, "", L.T("OptiScaler wiki"), "optiwiki", Ui.Teal, flat, out var body);
         _ = FillOptiAsync(data, body);
         return card;
     }
@@ -1599,7 +1609,7 @@ public sealed partial class OptiWikiView : UserControl
 
         // Header: the page and the facts of the test (version, file name, hardware, who reported it).
         var head = new StackPanel { Spacing = 10 };
-        head.Children.Add(Ui.Heading("", entry.Title, Ui.LinkButton(L.T("Open on GitHub"), "", () => Ui.Open(entry.Url)), L.T("What the OptiScaler wiki says about this game")));
+        head.Children.Add(Ui.Heading("", entry.Title, Ui.LinkButton(L.T("Open on GitHub"), "", () => Ui.Open(entry.Url)), L.T("What the OptiScaler wiki says about this game"), Ui.Teal));
         var facts = new List<FrameworkElement>();
         foreach (var name in new[] { "Last Tested Version", "Filename", "GPU", "OS", "Reported By" })
             if (entry.Get(name) is { IsEmpty: false } f) facts.Add(Fact(L.T(name), f.Text));
@@ -1631,7 +1641,7 @@ public sealed partial class OptiWikiView : UserControl
             cards.Add(card);
         }
         _root.Children.Add(Columns(cards));
-        _root.Children.Add(Ui.Muted(L.T("From the OptiScaler wiki on GitHub, written by the community. Settings named here are keys of OptiScaler.ini (the OptiScaler settings tab).")));
+        _root.Children.Add(Ui.Muted(L.T("From the OptiScaler wiki on GitHub, written by the community. Settings named here are keys of OptiScaler.ini (Settings, in the OptiScaler tab).")));
     }
 
     static FrameworkElement Fact(string name, string value)
@@ -2602,43 +2612,89 @@ public sealed partial class LinksView : UserControl
 // ======================================================================================================================
 
 /// <summary>
-/// The OptiScaler tab's Release notes: what each stable or nightly release changed, from GitHub, newest first. The channel of
-/// the version installed in this game opens first and its release is marked; the newest notes are open, the older folded.
+/// The OptiScaler tab's Release notes: what each stable, nightly or fork release changed, from GitHub, newest first. The source of
+/// the version installed in this game opens first and its release is marked; the newest notes are open, the older folded. The
+/// fork shown is the one installed in this game (and the one picked in the fork list, when that is another): it follows an
+/// install, an uninstall or a fork change while the page is open (<see cref="Sync"/>).
 /// </summary>
 public sealed partial class OptiNotesView : UserControl
 {
     readonly Func<InstallManifest?> _installed;
     readonly StackPanel _list = new() { Spacing = 10 };
     readonly SelectorBar _bar = new();
-    OptiChannel _channel;
+    /// <summary>The source shown: Stable, Nightly, or Fork with its repository.</summary>
+    (OptiChannel Channel, string? Repo) _source = (OptiChannel.Stable, null);
+    string? _sig;
     int _filling;
+    bool _building;
 
     public OptiNotesView(Func<InstallManifest?> installed)
     {
         _installed = installed;
-        _channel = installed()?.Channel ?? OptiChannel.Stable;
-        foreach (var c in new[] { OptiChannel.Stable, OptiChannel.Nightly })
-            _bar.Items.Add(new SelectorBarItem { Text = L.T(c.ToString()), Tag = c, IsSelected = c == _channel });
         _bar.SelectionChanged += (_, _) =>
         {
-            if (_bar.SelectedItem?.Tag is OptiChannel c && c != _channel) { _channel = c; _ = FillAsync(); }
+            if (_building || _bar.SelectedItem?.Tag is not ValueTuple<OptiChannel, string> src || src == _source) return;
+            _source = src;
+            _ = FillAsync();
         };
         var head = new StackPanel { Spacing = 10 };
-        head.Children.Add(Ui.Heading("", L.T("Release notes"), Ui.LinkButton(L.T("All releases"), "", () => Ui.Open(OptiReleases.ReleasesPage(_channel))),
+        head.Children.Add(Ui.Heading("", L.T("Release notes"), Ui.LinkButton(L.T("All releases"), "", () => Ui.Open(
+                _source is (OptiChannel.Fork, { } repo) ? OptiReleases.ForkPage(repo) : OptiReleases.ReleasesPage(_source.Channel))),
             L.T("What each OptiScaler version changed, from GitHub"), Ui.Teal));
         head.Children.Add(_bar);
         head.Children.Add(_list);
         Content = Ui.Card(head);
+        Sync();
+    }
+
+    /// <summary>
+    /// Brings the source tabs in line with what is installed now and the fork picked in the list. Nothing happens while both
+    /// are unchanged, so it is cheap to call whenever the OptiScaler card refreshes.
+    /// </summary>
+    public void Sync()
+    {
+        var m = _installed();
+        string? installedFork = m?.Channel == OptiChannel.Fork && !string.IsNullOrEmpty(m.Source) ? m.Source : null;
+        string? picked = AppState.Settings.SelectedFork;
+        var sig = $"{m?.Channel}|{m?.Source}|{m?.Tag}|{picked}";
+        if (sig == _sig) return;
+        _sig = sig;
+
+        var sources = new List<(OptiChannel, string?)> { (OptiChannel.Stable, null), (OptiChannel.Nightly, null) };
+        if (installedFork is not null) sources.Add((OptiChannel.Fork, installedFork));
+        if (picked is not null && !string.Equals(picked, installedFork, StringComparison.OrdinalIgnoreCase)) sources.Add((OptiChannel.Fork, picked));
+        // Opens on the installed build's source; a custom build has none, so the official stable notes come first.
+        _source = m?.Channel switch
+        {
+            OptiChannel.Nightly => (OptiChannel.Nightly, null),
+            OptiChannel.Fork when installedFork is not null => (OptiChannel.Fork, installedFork),
+            _ => (OptiChannel.Stable, null),
+        };
+        _building = true;
+        try
+        {
+            _bar.Items.Clear();
+            foreach (var src in sources)
+            {
+                var text = src.Item1 == OptiChannel.Fork ? OptiUpdates.Name(OptiUpdates.Key(OptiChannel.Fork, src.Item2), AppState.Settings) : L.T(src.Item1.ToString());
+                _bar.Items.Add(new SelectorBarItem { Text = text, Tag = src, IsSelected = Same(src, _source) });
+            }
+        }
+        finally { _building = false; }
         _ = FillAsync();
     }
+
+    static bool Same((OptiChannel Channel, string? Repo) a, (OptiChannel Channel, string? Repo) b) =>
+        a.Channel == b.Channel && string.Equals(a.Repo, b.Repo, StringComparison.OrdinalIgnoreCase);
 
     async Task FillAsync()
     {
         int run = ++_filling;
+        var source = _source;
         _list.Children.Clear();
         _list.Children.Add(Ui.Loading());
         List<OptiRelease> releases;
-        try { releases = await OptiReleases.GetAsync(_channel); }
+        try { releases = source is (OptiChannel.Fork, { } repo) ? await OptiReleases.GetForkAsync(repo) : await OptiReleases.GetAsync(source.Channel); }
         catch (Exception ex)
         {
             if (run != _filling) return;
@@ -2652,7 +2708,8 @@ public sealed partial class OptiNotesView : UserControl
         int shown = 0;
         foreach (var r in releases.Take(12))
         {
-            bool mine = installed is not null && installed.Channel == r.Channel && installed.Tag == r.Tag;
+            bool mine = installed is not null && installed.Channel == r.Channel && installed.Tag == r.Tag
+                        && (r.Channel != OptiChannel.Fork || string.Equals(installed.Source, r.Repo, StringComparison.OrdinalIgnoreCase));
             _list.Children.Add(Release(r, mine, open: shown++ < 2 || mine));
         }
         if (releases.Count == 0) _list.Children.Add(Ui.Muted(L.T("GitHub lists no releases for this channel.")));

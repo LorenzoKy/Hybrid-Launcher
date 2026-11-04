@@ -26,19 +26,22 @@
             <!-- One tab per area: what Hybrid Launcher looks like, what it does, what it keeps on disk, and about. -->
             <SelectorBar x:Name="SettingsTabs" Margin="0,0,0,12" SelectionChanged="SettingsTabs_SelectionChanged">
                 <SelectorBarItem Text="Appearance" Tag="appearance">
-                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE790;" Foreground="#FFE05CB8" /></SelectorBarItem.Icon>
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE790;" Foreground="{ThemeResource TintPinkBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem Text="Features" Tag="features">
-                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE9E9;" Foreground="#FF5FA8FF" /></SelectorBarItem.Icon>
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE9E9;" Foreground="{ThemeResource TintBlueBrush}" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="Notifications" Tag="notifications">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xEA8F;" Foreground="{ThemeResource TintGoldBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem Text="Cloud saves" Tag="cloud">
-                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE753;" Foreground="#FF4FC3F7" /></SelectorBarItem.Icon>
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE753;" Foreground="{ThemeResource TintCyanBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem Text="Storage" Tag="storage">
-                    <SelectorBarItem.Icon><FontIcon Glyph="&#xEDA2;" Foreground="#FFF07F2A" /></SelectorBarItem.Icon>
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xEDA2;" Foreground="{ThemeResource TintOrangeBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem Text="About" Tag="about">
-                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE946;" Foreground="#FF3FC26A" /></SelectorBarItem.Icon>
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE946;" Foreground="{ThemeResource TintGreenBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
             </SelectorBar>
 
@@ -146,7 +149,7 @@
 
             <!-- Parts of the game page: one switch each, for every game (a game can hide more from its ⋯ menu). -->
             <TextBlock Text="GAME PAGE" Style="{StaticResource GroupHeader}" Margin="0,16,0,4" />
-            <TextBlock Text="What the banner and the launch bar show in every game. To hide something for one game only, use ⋯ → Show on this page on its page." Style="{StaticResource RowDescription}" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="What the banner and the launch bar show in every game. To hide something for one game only, use the gear beside Play → Customization on its page." Style="{StaticResource RowDescription}" TextWrapping="Wrap" Margin="0,0,0,4" />
             <StackPanel x:Name="PagePartsPanel" Spacing="4" />
 
             </StackPanel>
@@ -161,6 +164,26 @@
                         <TextBlock Text="Smooth effects, the blurred reflection under the banner and videos that play by themselves. Turn it off on a slow or busy graphics card. Videos never play while a game is running." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="HardwareToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Hardware_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}" Margin="0,4,0,0">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Pause it while a game runs" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="The blur, reflections and clips stop while a game started from Hybrid Launcher is running, so they take no graphics power from it, and come back by themselves when it closes." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="HardwarePauseToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Hardware_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}" Margin="0,4,0,0">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Background saver" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="When another window is in front, Hybrid Launcher rests: moving clips and muted trailers pause, nothing is polled and Windows runs it in efficiency mode. It wakes up the moment you click it. Downloads keep full speed." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="BackgroundSaverToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Hardware_Toggled" />
                 </Grid>
             </Border>
 
@@ -197,6 +220,16 @@
                     <ToggleSwitch x:Name="TrayToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
                 </Grid>
             </Border>
+            <Border Style="{StaticResource RowStyle}" Margin="0,4,0,0">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Step aside while a game runs" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="When a game you started from Hybrid Launcher is up and running, the window goes to the notification area; it opens again by itself when the game closes." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="HideWhilePlayingToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
+                </Grid>
+            </Border>
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -205,6 +238,17 @@
                         <TextBlock Text="Hybrid Launcher starts in the notification area when you sign in to Windows, without opening its window. Its icon may be among the hidden icons (the arrow by the clock)." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
+                </Grid>
+            </Border>
+            <!-- What a start with Windows shows: the notification-area icon only (the default), or the window as well. -->
+            <Border Style="{StaticResource RowStyle}" Margin="0,4,0,0">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Open the window when it starts with Windows" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Off (the default): only the icon appears in the notification area, click it to open the window. On: the full window opens at sign-in too." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="StartOpenToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Window_Toggled" />
                 </Grid>
             </Border>
 
@@ -234,6 +278,9 @@
                     <ToggleSwitch x:Name="CoverTagsToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="CoverTags_Toggled" />
                 </Grid>
             </Border>
+
+            <!-- GitHub sign-in (built in code): lifts GitHub's limit on listing versions. -->
+            <StackPanel x:Name="GitHubPanel" Spacing="4" />
 
             <TextBlock Text="MODS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
@@ -460,6 +507,9 @@
 
             </StackPanel>
 
+            <!-- Notifications: built in code (NotificationSettingsView), made again when something changes. -->
+            <StackPanel x:Name="NotificationsPanel" Spacing="4" Visibility="Collapsed" />
+
             <!-- Cloud saves: built in code (CloudSettingsView), made again when the provider changes. -->
             <StackPanel x:Name="CloudPanel" Spacing="4" Visibility="Collapsed" />
 
@@ -549,7 +599,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center" Spacing="2">
                         <TextBlock Text="Made by LorenzoKy" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                        <TextBlock Text="If Hybrid Launcher helps you, a coffee on Ko-fi keeps it going. Code, releases and other projects are on GitHub." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="If Hybrid Launcher helps you, a slice of pizza on Ko-fi keeps it going. Code, releases and other projects are on GitHub." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <StackPanel x:Name="AuthorLinks" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button Style="{StaticResource AccentButtonStyle}" Padding="14,7" Click="Kofi_Click" ToolTipService.ToolTip="ko-fi.com/lorenzoky">

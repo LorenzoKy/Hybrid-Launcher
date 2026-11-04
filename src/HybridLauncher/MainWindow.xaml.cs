@@ -1,6 +1,7 @@
 using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Detection;
+using HybridLauncher.Core.Net;
 using HybridLauncher.Helpers;
 using HybridLauncher.Views;
 using Microsoft.UI;
@@ -50,6 +51,7 @@ public sealed partial class MainWindow : Window
 
         ApplyTheme(AppState.Settings.Theme);
         RootGrid.ActualThemeChanged += (_, _) => { UpdateCaptionButtons(); UpdateTint(); };
+        Http.GitHubLimitReached += OfferGitHubSignIn;
 
         // The built-in item follows the Windows language; keep the UI in one language.
         Nav.Loaded += (_, _) => { if (Nav.SettingsItem is NavigationViewItem s) s.Content = L.T("Settings"); };
@@ -64,8 +66,20 @@ public sealed partial class MainWindow : Window
             UpdateGrip();
             UpdateTitleBrand();
         };
-        Nav.PaneOpening += (_, _) => { UpdatePaneButton(true); UpdatePageTitle(); UpdateGrip(true); };
-        Nav.PaneClosing += (_, _) => { UpdatePaneButton(false); UpdatePageTitle(); UpdateGrip(false); };
+        // Applied right after the event, not inside it: these fire inside NavigationView's own IsPaneOpen setter, and collapsing
+        // the search box there while it had the focus made the setter fail now and then (COMException E_FAIL, self-test
+        // "pane folded" after "search by Ctrl+F").
+        Nav.PaneOpening += (_, _) => DispatcherQueue.TryEnqueue(() => { UpdatePaneButton(true); UpdatePageTitle(); UpdateGrip(true); });
+        Nav.PaneClosing += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (SearchHasFocus()) ContentFrame.Focus(FocusState.Programmatic);
+                UpdatePaneButton(false);
+                UpdatePageTitle();
+                UpdateGrip(false);
+            });
+        };
         // Page changes: no slide (WinUI's 300 ms entrance started while the new page was still being built, and stuttered);
         // the new page fades in over 90 ms on the compositor instead, which keeps the display's full refresh rate. The main pages
         // stay in memory (NavigationCacheMode), so going back to them is instant.
@@ -127,6 +141,7 @@ public sealed partial class MainWindow : Window
         };
         Closed += (_, _) =>
         {
+            App.WatchShutdown();
             _closed = true;
             SaveWindowState();
             AchievementWatcher.Stop();
@@ -139,6 +154,7 @@ public sealed partial class MainWindow : Window
         GameSessions.HdrProblem += message => ShowError(L.T("Smart HDR"), message);
         GameSessions.Changed += _ => UpdateTrayTip();
         GameSessions.Changed += MarkRunning;
+        GameSessions.Changed += HideWhilePlaying;
         if (AppState.Settings.CloseToTray) EnsureTray();
         ShowLoading();
         _ = StartAsync();
@@ -150,6 +166,34 @@ public sealed partial class MainWindow : Window
     Tray? _tray;
     bool _quitting;
     bool _hidden;
+    // The window went to the notification area by itself for a game (Settings → General): it comes back when the last game closes,
+    // unless the user opened it meanwhile.
+    bool _hiddenForGame;
+
+    /// <summary>
+    /// A game started from Hybrid Launcher is up (its process found, not just asked to start): the window steps aside to the
+    /// notification area, so it takes nothing from the game. When every game has closed it opens again on the page it was on.
+    /// </summary>
+    void HideWhilePlaying(string id)
+    {
+        try
+        {
+            if (_closed || _quitting) return;
+            if (GameSessions.State(id) == GameRunState.Running && GameSessions.WasLaunched(id))
+            {
+                if (!AppState.Settings.HideWhilePlaying || _hidden || _hiddenForGame) return;
+                Log.Info($"Window to the notification area while {id} runs");
+                HideToTray();
+                _hiddenForGame = true;
+            }
+            else if (_hiddenForGame && GameSessions.Active().Count == 0)
+            {
+                Log.Info("Every game closed: window back from the notification area");
+                ShowFromTray();
+            }
+        }
+        catch (Exception ex) { Log.Warn($"Hide while playing: {ex.Message}"); }
+    }
 
     async Task StartAsync()
     {
@@ -176,9 +220,14 @@ public sealed partial class MainWindow : Window
         MaybeStartTour();
         // The app's own updates: a quiet look at GitHub a few seconds after start; a newer version asks once, and the blue button
         // beside Minimize stays until it is installed.
+        InitInbox();
         Helpers.AppUpdater.Changed += () => DispatcherQueue.TryEnqueue(UpdateUpdateButton);
         UpdateUpdateButton();
         if (Content?.XamlRoot is { } root) _ = Helpers.AppUpdater.CheckAtStartAsync(root);
+        // New versions of the OptiScaler builds the user follows (each turned on in a game's OptiScaler tab).
+        OptiFollowChanged();
+        // Ultra+: the installed mods with a newer build (a notification when the user asked for one).
+        UltraChecksChanged();
         if (SteamAccount.SignedIn) _ = Task.Delay(TimeSpan.FromSeconds(8)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => _ = (_friends ??= new FriendsView()).LoadAsync(quiet: true)), TaskScheduler.Default);
         // The cache stays within its budget (game pages load from it); in the background, once things have settled.
         _ = Task.Delay(TimeSpan.FromSeconds(20)).ContinueWith(_ => CacheJanitor.RunAsync(), TaskScheduler.Default);
@@ -275,11 +324,13 @@ public sealed partial class MainWindow : Window
         (ContentFrame.Content as GamePage)?.StopMedia();
         AppWindow.Hide();
         _hidden = true;
+        MediaPolicy.SetWindowHidden(true);
     }
 
     /// <summary>Brings the window back (tray icon, a second start of Hybrid Launcher).</summary>
     public void ShowFromTray()
     {
+        _hiddenForGame = false;
         try
         {
             if (_hidden)
@@ -290,6 +341,8 @@ public sealed partial class MainWindow : Window
             if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } p) p.Restore();
             Activate();
             Native.SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            // Out of the notification area the clips and the reflection start again (a window that never opened sends no event).
+            MediaPolicy.SetWindowHidden(AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized });
         }
         catch (Exception ex) { Log.Warn($"Show window: {ex.Message}"); }
     }
@@ -441,7 +494,22 @@ public sealed partial class MainWindow : Window
 
     // ---------- the pane button ----------
 
-    void PaneButton_Click(object sender, RoutedEventArgs e) => Nav.IsPaneOpen = !Nav.IsPaneOpen;
+    void PaneButton_Click(object sender, RoutedEventArgs e) => SetPaneOpen(!Nav.IsPaneOpen);
+
+    /// <summary>
+    /// Opens or folds the game list. The focus leaves the search box first (it is hidden in a folded pane); a refusal by
+    /// NavigationView (E_FAIL while it is busy) is retried once on the next tick instead of ending the app.
+    /// </summary>
+    void SetPaneOpen(bool open, bool retry = true)
+    {
+        if (!open && SearchHasFocus()) ContentFrame.Focus(FocusState.Programmatic);
+        try { Nav.IsPaneOpen = open; }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            Log.Warn($"Game list {(open ? "open" : "fold")}: {ex.Message.Trim()}{(retry ? ", trying again" : "")}");
+            if (retry) DispatcherQueue.TryEnqueue(() => SetPaneOpen(open, retry: false));
+        }
+    }
 
     /// <summary>Open pane: the button sits right of the search box. Folded pane (a 48 px strip): alone, centred in it.</summary>
     void UpdatePaneButton(bool? opening = null)
@@ -576,11 +644,23 @@ public sealed partial class MainWindow : Window
         bool searchHadFocus = false;
         ContentFrame.Navigating += (_, _) => searchHadFocus = SearchHasFocus();
         ContentFrame.Navigated += (_, _) => KeepFocusOffSearch(searchHadFocus);
+        // Out of the box (to anything else): the next time it gets the focus has to come from the user again.
+        SearchBox.LostFocus += (_, _) => DispatcherQueue.TryEnqueue(() => { if (!SearchHasFocus()) _searchByUser = false; });
+        // GettingFocus names the last input device even for a move WinUI makes by itself (the focused item removed from a
+        // rebuilt list falls back to the next control: "Keyboard, Next" with no key pressed). So a move counts as the user's
+        // only right after a real press: on the box itself for a pointer, of a key or controller button for Tab and the pad.
+        RootGrid.AddHandler(UIElement.PreviewKeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, _) => _lastKeyTick = Environment.TickCount64), true);
+        SearchBox.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _lastSearchPressTick = Environment.TickCount64), true);
         SearchBox.GettingFocus += (_, e) =>
         {
+            long now = Environment.TickCount64;
             bool byUser = e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Mouse or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Touch or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Pen
-                || (e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Keyboard or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.GameController && e.Direction != Microsoft.UI.Xaml.Input.FocusNavigationDirection.None);
-            if (byUser || _searchWanted || SearchHasFocus()) return;
+                    && now - _lastSearchPressTick < 800
+                || (e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Keyboard or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.GameController
+                    && e.Direction != Microsoft.UI.Xaml.Input.FocusNavigationDirection.None && now - _lastKeyTick < 800);
+            if (!SearchHasFocus()) Log.Info($"Search box focus: {e.InputDevice}, {e.Direction}, {(byUser || _searchWanted ? "kept (user)" : "moved away")}");
+            if (byUser || _searchWanted) { _searchByUser = true; return; }
+            if (SearchHasFocus()) return;
             // Moved right after, not redirected here: changing the focus inside this event broke a closing pop-up (the welcome
             // tour's tip on the search box never finished closing, and the tour skipped steps).
             DispatcherQueue.TryEnqueue(() =>
@@ -598,9 +678,23 @@ public sealed partial class MainWindow : Window
     /// <summary>For a page that rebuilds itself under the focused control (Settings → Cloud saves after one of its buttons).</summary>
     public void KeepFocusOffSearch() => KeepFocusOffSearch(SearchHasFocus());
 
+    /// <summary>
+    /// The user put the focus in the search box (click, touch, Tab, gamepad, Ctrl+F). Only then is a search box with the focus
+    /// left alone: WinUI also drops the focus there with no event (an overlay or the selected pane item removed), and reading
+    /// "it has the focus" as "the user wants it" then kept it there for good (the self-test's "took the focus by itself" from
+    /// feature picker 6 on).
+    /// </summary>
+    bool _searchByUser;
+
+    /// <summary>When a key or controller button, or a pointer on the search box, was last pressed (Environment.TickCount64).</summary>
+    long _lastKeyTick = -10_000, _lastSearchPressTick = -10_000;
+
+    /// <summary>A controller button counts as a key press for the search box's focus guard.</summary>
+    internal void NotePadPress() => _lastKeyTick = Environment.TickCount64;
+
     void KeepFocusOffSearch(bool searchHadFocus)
     {
-        if (searchHadFocus) return;
+        if (searchHadFocus && _searchByUser) return;
         void Check()
         {
             if (!SearchHasFocus()) return;
@@ -625,15 +719,18 @@ public sealed partial class MainWindow : Window
             Nav.MenuItems.Clear();
 
             // The PC overview sits on top, above the game list.
-            var hardware = new NavigationViewItem { Content = L.T("My PC"), Tag = HardwareTag, Icon = new FontIcon { Glyph = "" } };
+            var hardware = new NavigationViewItem { Content = L.T("My PC"), Tag = HardwareTag, Icon = PaneIcon("", 0xFF5AB8FF, 0xFF7C6CFF) };
+            BigIcon(hardware);
             ToolTipService.SetToolTip(hardware, L.T("Your PC: hardware, display settings and the upscalers your card supports"));
             Nav.MenuItems.Add(hardware);
 
             // The library (every game as covers, with filters) and the downloads are always there, under My PC.
-            var library = new NavigationViewItem { Content = L.T("Library"), Tag = LibraryTag, Icon = new FontIcon { Glyph = "\uE8F1" } };
+            var library = new NavigationViewItem { Content = L.T("Library"), Tag = LibraryTag, Icon = PaneIcon("\uE8F1", 0xFFFF6B8A, 0xFFE0142B) };
+            BigIcon(library);
             ToolTipService.SetToolTip(library, L.T("All your games as a grid of covers"));
             Nav.MenuItems.Add(library);
-            var downloads = new NavigationViewItem { Content = L.T("Downloads"), Tag = DownloadsTag, Icon = new FontIcon { Glyph = "\uE896" } };
+            var downloads = new NavigationViewItem { Content = L.T("Downloads"), Tag = DownloadsTag, Icon = PaneIcon("\uE896", 0xFF5EE0A0, 0xFF1FA3A3) };
+            BigIcon(downloads);
             ToolTipService.SetToolTip(downloads, L.T("Games you own on your launchers: install them and follow the downloads"));
             _downloadsItem = downloads;
             UpdateDownloadsBadge();
@@ -962,6 +1059,19 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(item, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
 
         item.ContextFlyout = GameMenu(game);
+        // Resting on a game warms its art (after a short pause, so a pointer sweeping over the list asks for nothing).
+        Microsoft.UI.Dispatching.DispatcherQueueTimer? warm = null;
+        item.PointerEntered += (_, _) =>
+        {
+            warm ??= DispatcherQueue.CreateTimer();
+            warm.Interval = TimeSpan.FromMilliseconds(120);
+            warm.IsRepeating = false;
+            warm.Tick -= OnWarm;
+            warm.Tick += OnWarm;
+            warm.Start();
+        };
+        item.PointerExited += (_, _) => warm?.Stop();
+        void OnWarm(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object _) => Core.Media.GameInfo.Warm(game);
         if (GameSessions.IsActive(game.Id)) DispatcherQueue.TryEnqueue(() => MarkRunning(game.Id));
 
         _ = LoadIconAsync(item, game);
@@ -1057,6 +1167,30 @@ public sealed partial class MainWindow : Window
             Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(state == GameRunState.Running ? Windows.UI.Color.FromArgb(0xFF, 0x5B, 0xD1, 0x6E) : Windows.UI.Color.FromArgb(0xFF, 0xF5, 0xC5, 0x18)),
         };
         ToolTipService.SetToolTip(item.InfoBadge, state == GameRunState.Running ? L.T("Running") : state == GameRunState.Starting ? L.T("Starting…") : L.T("Closing…"));
+    }
+
+    /// <summary>
+    /// The pane's own places (My PC, Library, Downloads): a glyph as large as the games' icons, filled with a two-tone gradient from
+    /// top left to bottom right, so the three read as one set and stand apart from the plain list below.
+    /// </summary>
+    static FontIcon PaneIcon(string glyph, uint from, uint to)
+    {
+        static Windows.UI.Color C(uint c) => Windows.UI.Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
+        return new FontIcon
+        {
+            Glyph = glyph,
+            FontSize = 19,
+            Foreground = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 1),
+                GradientStops =
+                {
+                    new Microsoft.UI.Xaml.Media.GradientStop { Color = C(from), Offset = 0 },
+                    new Microsoft.UI.Xaml.Media.GradientStop { Color = C(to), Offset = 1 },
+                },
+            },
+        };
     }
 
     /// <summary>A game's row with a larger icon than the pane's own items (26 px, the row a little taller), so games are told apart at a glance.</summary>
@@ -1254,7 +1388,7 @@ public sealed partial class MainWindow : Window
                 action();
                 await Task.Delay(waitMs);
                 // No step clicks the search box: holding the focus after one means it grabbed it by itself (an old bug).
-                if (SearchHasFocus()) throw new InvalidOperationException("the game list's search box took the focus by itself");
+                if (SearchHasFocus()) throw new InvalidOperationException($"the game list's search box took the focus by itself (page shown: {ContentFrame.Content?.GetType().Name})");
                 Log.Info($"Self-test: {what}");
                 if (!string.IsNullOrWhiteSpace(shots)) await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-{string.Concat(what.Split(Path.GetInvalidFileNameChars()))}.png"));
             }
@@ -1274,8 +1408,14 @@ public sealed partial class MainWindow : Window
             await Step($"library sort {sort}", () => { AppState.Settings.Library = new LibraryFilter { Sort = sort, GroupByLauncher = sort != "tech" }; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
         await Step("library filters", () => { AppState.Settings.Library = new LibraryFilter { OptiOnly = true, Tech = { "DLSS" } }; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
         await Step("library filters off", () => { AppState.Settings.Library = savedFilter; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
+        // Resizing a maximized window leaves it "maximized" at the new, small size (Restore shown, Maximize doing nothing):
+        // restore it first, and maximize it again afterwards if it was.
+        var wasMaximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+        if (wasMaximized && AppWindow.Presenter is OverlappedPresenter rp) rp.Restore();
         await Step("window narrow", () => AppWindow.Resize(new SizeInt32((int)(700 * GetDpiScale()), (int)(800 * GetDpiScale()))), 800);
         await Step("window wide", () => AppWindow.Resize(new SizeInt32((int)(1600 * GetDpiScale()), (int)(950 * GetDpiScale()))), 800);
+        if (wasMaximized && AppWindow.Presenter is OverlappedPresenter mp) mp.Maximize();
+        await Step("window state back", () => { if (wasMaximized && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Maximized }) throw new InvalidOperationException("the window did not go back to maximized"); }, 500);
         if (Environment.GetEnvironmentVariable("HL_SAMPLE_DOWNLOADS") == "1") Downloads.AddSamples();
         await Step("downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
         // The focused list item thrown away by a redraw: WinUI used to hand the focus to the search box.
@@ -1299,21 +1439,67 @@ public sealed partial class MainWindow : Window
         await Step("update button hidden", () => { if (UpdateButton.Visibility != Visibility.Collapsed) throw new InvalidOperationException("the Update button stayed without a newer version"); }, 300);
         Environment.SetEnvironmentVariable("HL_UPDATE_FEED", savedFeed);
         File.Delete(feed);
-        await Step("pane folded", () => Nav.IsPaneOpen = false, 500);
-        await Step("pane open", () => Nav.IsPaneOpen = true, 500);
+        // The bell: the newer version above was kept; more notifications raise the count, opening the list reads them, Clear empties it.
+        await Step("bell: notifications kept", () =>
+        {
+            if (!Inbox.Entries.Any(x => x.Key == "app:99.0.0")) throw new InvalidOperationException("the newer version was not kept in the bell's list");
+            var id = AppState.VisibleGames.FirstOrDefault()?.Id;
+            Inbox.Add(Inbox.Opti, "OptiScaler Nightly: nightly-selftest is out", "Self-test", id, "opti");
+            Inbox.Add(Inbox.Ultra, "Ultra+ updated to 9.9 for a self-test", "Self-test", id, "ultra");
+        }, 500);
+        await Step("bell: badge counts them", () => { if (BellBadge.Visibility != Visibility.Visible || Inbox.Unread < 3) throw new InvalidOperationException($"badge {BellBadge.Visibility}, {Inbox.Unread} unread"); }, 300);
+        await Step("bell: list open", () => BellFlyout.ShowAt(BellButton), 900);
+        await Step("bell: list closed reads them", () => BellFlyout.Hide(), 600);
+        await Step("bell: badge gone", () => { if (BellBadge.Visibility != Visibility.Collapsed || Inbox.Unread != 0) throw new InvalidOperationException($"{Inbox.Unread} still unread"); }, 300);
+        await Step("bell: clear", () => { Inbox.Clear(); BellFlyout.ShowAt(BellButton); }, 900);
+        await Step("bell: empty list closed", () => { BellFlyout.Hide(); if (Inbox.Entries.Count != 0) throw new InvalidOperationException("Clear left entries"); }, 400);
+        await Step("pane folded", () => { Nav.IsPaneOpen = false; }, 500);
+        await Step("pane open", () => { Nav.IsPaneOpen = true; }, 500);
         foreach (var game in AppState.VisibleGames.ToList())
         {
             await Step($"open {game.Name}", () => OpenGame(game.Id), 2500);
             await Step($"{game.Name}: pin", () => AppState.SetPinned(game.Id, true));
-            foreach (var (tab, view) in new[] { ("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/reshade", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview", null) })
-                await Step($"{game.Name}: {tab} {view}", () => (ContentFrame.Content as GamePage)?.SelfTestShow(tab, view), tab is "overview" or "opti/wiki" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" ? 2500 : 600);
+            foreach (var (tab, view) in new[] { ("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/notes", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/reshade", null), ("ultra", null), ("ultra/addons", null), ("ultra/settings", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview", null) })
+                await Step($"{game.Name}: {tab} {view}", () => (ContentFrame.Content as GamePage)?.SelfTestShow(tab, view), tab is "overview" or "opti/wiki" or "opti/notes" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" or "ultra" ? 2500 : 600);
             await Step($"{game.Name}: scroll (tabs pinned on top)", () => (ContentFrame.Content as GamePage)?.SelfTestScroll(true), 600);
+            // A second picture of the same place a little later: what moves on its own (the clips of a description) differs between the two.
+            await Step($"{game.Name}: scroll (still there)", () => { }, 1500);
             await Step($"{game.Name}: scroll back", () => (ContentFrame.Content as GamePage)?.SelfTestScroll(false), 600);
             await Step($"{game.Name}: unpin", () => AppState.SetPinned(game.Id, false));
+        }
+        // An install keeps showing when its game is left and opened again (the page is made again): busy, its progress and
+        // log, no second install in the same folder, and free again when it ends. A stand-in job: nothing is installed.
+        if (AppState.VisibleGames.FirstOrDefault() is { } jobGame)
+        {
+            Helpers.GameJobs.Job? fake = null;
+            GamePage Page() => ContentFrame.Content as GamePage ?? throw new InvalidOperationException("the game page is not open");
+            await Step("play button widths", () => Log.Info("Play button: " + Page().SelfTestPlayWidths()), 300);
+            await Step("install kept: started", () =>
+            {
+                OpenGame(jobGame.Id);
+                fake = Helpers.GameJobs.TryStart(jobGame.Id, jobGame.Title, "opti", "OptiScaler", quiet: true) ?? throw new InvalidOperationException("a job is already running");
+                Helpers.GameJobs.Report(fake, 0.4, "Self-test install", "self-test line");
+            }, 1500);
+            await Step("install kept: page busy", () => { var j = Page().SelfTestJob(); if (!j.Busy || !j.Progress) throw new InvalidOperationException($"busy {j.Busy}, progress {j.Progress}"); }, 300);
+            await Step("install kept: another page", () => ContentFrame.Navigate(typeof(HardwarePage)), 1200);
+            await Step("install kept: back mid-install", () => OpenGame(jobGame.Id), 2000);
+            await Step("install kept: still shown", () =>
+            {
+                var j = Page().SelfTestJob();
+                if (!j.Busy || !j.Progress || j.InstallEnabled || j.Stage != "Self-test install" || !j.Log.Contains("self-test line"))
+                    throw new InvalidOperationException($"busy {j.Busy}, progress {j.Progress}, install enabled {j.InstallEnabled}, stage \"{j.Stage}\"");
+            }, 300);
+            await Step("install kept: second change refused", () => { if (Helpers.GameJobs.TryStart(jobGame.Id, jobGame.Title, "luma", "Luma", quiet: true) is not null) throw new InvalidOperationException("a second job started in the same game"); }, 300);
+            await Step("install kept: ended", () => Helpers.GameJobs.End(fake!), 800);
+            await Step("install kept: page free again", () => { var j = Page().SelfTestJob(); if (j.Busy || j.Progress) throw new InvalidOperationException($"busy {j.Busy}, progress {j.Progress}"); }, 300);
         }
         await Step("my PC", () => ContentFrame.Navigate(typeof(HardwarePage)), 2000);
         await Step("settings", () => ContentFrame.Navigate(typeof(SettingsPage)), 1500);
         await Step("settings tabs", () => (ContentFrame.Content as SettingsPage)?.SelfTestTabs(), 800);
+        await Step("settings notifications", () => OpenSettings("notifications"), 1000);
+        // The welcome tip (wide, with the Ko-fi card), then closed without marking the tour seen.
+        await Step("welcome tip", StartTour, 1500);
+        await Step("welcome tip closed", () => { EndTour(markSeen: false); if (_touring) throw new InvalidOperationException("the tour is still running"); }, 600);
         await Step("pop-up", AchievementPopup.ShowTest, 1500);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } popup and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up window.png"), popup);
@@ -1323,12 +1509,48 @@ public sealed partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.PlacingHandle is { } placing and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up placing window.png"), placing);
         await Step("pop-up placing closed", AchievementPopup.CloseAll, 300);
+        // HL_SELFTEST_ULTRA=1 (fake game folders only): real Ultra+ installs, an older version first so the update shows, then
+        // Update all, then each one removed again, so the folders end as they began.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_ULTRA") == "1" && (only.Length == 0 || only.Any(o => "ultra".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+            failures += await SelfTestUltraAsync(Step);
+        // HL_SELFTEST_TRAILER=<video file>: a trailer opened and stopped again and again at random moments, as when games are
+        // switched while a trailer loads. Up to rc.2 this froze the window for good (see docs: a MediaPlayer made on the UI
+        // thread and disposed off it); a freeze shows as the self-test never finishing.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_TRAILER") is { Length: > 0 } clip && File.Exists(clip)
+            && (only.Length == 0 || only.Any(o => "trailer".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+        {
+            for (int w = 0; w < 50 && ContentFrame.XamlRoot is null; w++) await Task.Delay(100);
+            var player = new Controls.TrailerPlayer { Width = 480, Height = 270 };
+            var layer = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = ContentFrame.XamlRoot ?? throw new InvalidOperationException("no XamlRoot for the trailer test") };
+            layer.Child = player;
+            layer.IsOpen = true;
+            var rng = new Random(7);
+            var uri = new Uri(clip);
+            // The trailer must really play, as on a page the user is looking at.
+            bool wasHidden = MediaPolicy.WindowHidden;
+            MediaPolicy.SetWindowHidden(false);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int rounds = int.TryParse(Environment.GetEnvironmentVariable("HL_SELFTEST_TRAILER_ROUNDS"), out var r) ? r : 300;
+            for (int i = 0; i < rounds; i++)
+            {
+                var play = player.PlayAsync(uri, hls: false, user: true);
+                await Task.Delay(rng.Next(0, 250));
+                player.Stop();
+                try { await play; } catch (Exception ex) { Log.Warn($"Self-test trailer round {i}: {ex.Message}"); }
+            }
+            player.Stop();
+            MediaPolicy.SetWindowHidden(wasHidden);
+            layer.IsOpen = false;
+            layer.Child = null;
+            await Step($"trailer churn ({rounds} rounds, {watch.Elapsed.TotalSeconds:0.0} s)", () => { }, 300);
+        }
         for (int f = 0; f <= 7; f++)
         {
             int step = f;
             await Step($"feature picker {step}", () => SelfTestFeaturePicker(step), step == 0 ? 1200 : 700);
         }
-        for (int t = 0; t <= 7; t++)
+        // Every step of the tour, then one more that ends it: a tip left open covered the pictures of the steps after it.
+        for (int t = 0; t == 0 || t <= _steps.Length; t++)
         {
             int step = t;
             await Step($"tour {step}", () => SelfTestTourStep(step), 1600);
@@ -1475,7 +1697,7 @@ public sealed partial class MainWindow : Window
         BackButton.Visibility = CanGoBack ? Visibility.Visible : Visibility.Collapsed;
         // Pane open beside the content: line up with the banner (pane width + page padding). Otherwise after the brand.
         bool besidePane = Nav.IsPaneOpen && Nav.DisplayMode == NavigationViewDisplayMode.Expanded;
-        double brand = TitleBrand.ActualWidth;
+        double brand = TitleBrand.ActualWidth + TitleLogo.ActualWidth + TitleLogo.Margin.Left;
         PageTitle.Margin = new Thickness(besidePane ? Math.Max(24, Nav.OpenPaneLength + 20 - 18 - 8 - brand) : 24, 0, 0, 0);
         DispatcherQueue.TryEnqueue(UpdateTitleBarRegions);
     }
@@ -1487,7 +1709,25 @@ public sealed partial class MainWindow : Window
         UpdateButton.Visibility = release is null ? Visibility.Collapsed : Visibility.Visible;
         UpdateButtonText.Text = L.T("Update");
         if (release is not null)
+        {
             ToolTipService.SetToolTip(UpdateButton, L.F("{0} {1} is available. Click to update.", AppInfo.Name, release.Version.ToString(3)));
+            // Kept once per version in the notification list, beside the blue button; and, like the other sources, one Windows
+            // pop-up per version unless turned off in Settings -> Notifications (or held back while a game runs).
+            var version = release.Version.ToString(3);
+            var title = L.F("{0} {1} is available", AppInfo.Name, version);
+            Inbox.Add(Inbox.App, title, L.T("Click to see what is new and update."), null, null, key: "app:" + version);
+            if (AppState.Settings.AppUpdatePopupShown != version && Popup(Inbox.App))
+            {
+                AppState.Settings.AppUpdatePopupShown = version;
+                SettingsStore.Save();
+                EnsureTray();
+                _tray?.Notify(title, L.T("Click to see what is new and update."), () =>
+                {
+                    ShowFromTray();
+                    if (Helpers.AppUpdater.Available is { } r && Content?.XamlRoot is { } root) _ = Helpers.AppUpdater.OfferAsync(root, r);
+                });
+            }
+        }
     }
 
     async void Update_Click(object sender, RoutedEventArgs e)
@@ -1514,6 +1754,8 @@ public sealed partial class MainWindow : Window
             Add(TitleBrand);
             Add(CaptionButtons);
             if (PageTitle.Visibility == Visibility.Visible) Add(BackButton);
+            // The bell's list hangs over the title bar: its header buttons (Mark all read, Clear, settings) must take clicks.
+            if (BellFlyout.IsOpen && BellFlyout.Content is FrameworkElement bell) Add(bell);
             if (rects.Count == 0) source.ClearRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough);
             else source.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough, rects.ToArray());
         }
@@ -1634,14 +1876,35 @@ public sealed partial class MainWindow : Window
     public void ShowInfo(string message) => Toast(InfoBarSeverity.Informational, "", message, TimeSpan.FromSeconds(5));
     public void ShowSuccess(string message) => Toast(InfoBarSeverity.Success, "", message, TimeSpan.FromSeconds(5));
 
-    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration, string? help = null)
+    /// <summary>GitHub's limit ran out and no GitHub account is signed in: once per run, a note with a Sign in button.</summary>
+    void OfferGitHubSignIn(DateTime until)
+    {
+        if (GitHubAuth.SignedIn || !GitHubAuth.CanSignIn || _offeredGitHub) return;
+        _offeredGitHub = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var button = new Button { Content = L.T("Sign in to GitHub"), Style = Ui.Style("AccentButtonStyle") };
+            button.Click += async (_, _) =>
+            {
+                ToastHost.Visibility = Visibility.Collapsed;
+                await GitHubSignInView.SignInAsync(RootGrid.XamlRoot);
+            };
+            Toast(InfoBarSeverity.Warning, L.T("GitHub limit reached"),
+                L.F("GitHub allows 60 requests an hour without sign-in, so version lists can't load until {0:HH:mm}. Sign in to GitHub to lift the limit.", until.ToLocalTime()),
+                TimeSpan.FromSeconds(30), action: button);
+        });
+    }
+
+    bool _offeredGitHub;
+
+    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration, string? help = null, ButtonBase? action = null)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             ToastBar.Severity = severity;
             ToastBar.Title = title;
             ToastBar.Message = message;
-            ToastBar.ActionButton = help is null ? null : new HyperlinkButton { Content = L.T("Troubleshooting"), NavigateUri = new Uri(help) };
+            ToastBar.ActionButton = action ?? (help is null ? null : new HyperlinkButton { Content = L.T("Troubleshooting"), NavigateUri = new Uri(help) });
             ToastBar.IsOpen = true;
             ToastHost.Visibility = Visibility.Visible;
             _toastTimer?.Stop();

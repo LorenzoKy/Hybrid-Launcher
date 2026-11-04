@@ -3,6 +3,7 @@ using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Detection;
 using HybridLauncher.Core.Ini;
 using HybridLauncher.Core.Media;
+using HybridLauncher.Core.Net;
 using HybridLauncher.Core.Opti;
 using HybridLauncher.Core.Steam;
 using HybridLauncher.Controls;
@@ -22,8 +23,10 @@ public sealed partial class GamePage : Page
     Game? _game;
     GameSettings _settings = new();
     CancellationTokenSource _pageCts = new();
-    CancellationTokenSource? _installCts;
-    List<OptiRelease> _stable = [], _nightly = [];
+    // The OptiScaler job this page shows (GameJobs): when it ends the page shows what is installed now.
+    GameJobs.Job? _shownJob;
+    List<OptiRelease> _stable = [], _nightly = [], _fork = [];
+    string? _forkLoaded;
     List<CustomBuild> _custom = [];
     bool _releasesFailed;
     OptiChannel _channel = OptiChannel.Stable;
@@ -64,6 +67,11 @@ public sealed partial class GamePage : Page
     internal FrameworkElement TourTabs => Tabs;
     internal FrameworkElement TourMore => MoreButton;
 
+    // When the page was asked for: the log says how long a game switch took to show (see OnNavigatedTo).
+    readonly long _created = System.Diagnostics.Stopwatch.GetTimestamp();
+    // True while the page is first shown: the open tab's views are built after the first frame, not before it.
+    bool _deferViews;
+
     public GamePage()
     {
         InitializeComponent();
@@ -79,7 +87,7 @@ public sealed partial class GamePage : Page
             if (_tab == "pcgw") DispatcherQueue.TryEnqueue(PlaceToc);
         };
         // A section changing height moves the ones below it: the scroll-spy measures them again.
-        foreach (var section in new FrameworkElement[] { OptiTab, QuickPanelCard, IniCard, OptiWikiHost, OptiNotesHost, ReShadeHost, RenoDxHost, LumaHost, OfflineHost, PcgwHost })
+        foreach (var section in new FrameworkElement[] { OptiTab, QuickPanelCard, IniCard, OptiWikiHost, OptiNotesHost, ReShadeHost, RenoDxHost, LumaHost, UltraInstallHost, UltraAddonsHost, UltraSettingsHost, OfflineHost, PcgwHost })
         {
             // A section changing height (built late, a card folded) moves the others: the marked sub-tab is checked again.
             section.SizeChanged += (_, _) =>
@@ -99,6 +107,9 @@ public sealed partial class GamePage : Page
         }
         _filesTimer.Tick += (_, _) =>
         {
+            // Nobody works with the page (in the notification area, minimized, another app in front): nothing to read; the next
+            // tick after the window is in front again catches up.
+            if (MediaPolicy.Quiet) return;
             if (_tab == "opti") _ = UpdateFootprintAsync();
             _ = ReadWindowsHdrAsync();
             // Steam writes the session's time when the game closes: pick it up within a minute.
@@ -123,10 +134,12 @@ public sealed partial class GamePage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        var built = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds;
         _game = AppState.FindAny(e.Parameter as string);
         if (_game is null) return;
         _settings = AppState.Settings.For(_game.Id);
         _channel = _settings.Install?.Channel ?? OptiChannel.Stable;
+        if (_channel == OptiChannel.Fork && _settings.Install?.Source is { } installedFork) AppState.Settings.SelectedFork = installedFork;
         ChannelCard(_channel).IsChecked = true;
         AppState.PinsChanged += UpdatePin;
         AchievementWatcher.Changed += OnAchievementsChanged;
@@ -136,6 +149,9 @@ public sealed partial class GamePage : Page
         Downloads.Changed += OnDownloadsChanged;
         AppState.GamesChanged += OnDownloadsChanged;
         MediaPolicy.Changed += UpdateFloor;
+        UltraPlusLibrary.Changed += OnUltraChanged;
+        GameJobs.Changed += OnJobsChanged;
+        GameJobs.Progress += OnJobProgress;
         var ct = _pageCts.Token;
         var game = _game;
         var art = GameInfo.GetAsync(game, ct);
@@ -150,12 +166,28 @@ public sealed partial class GamePage : Page
             ShowTab = OpenTab,
         };
         Prefetch(_data);
+        // A switch to another game shows at once: the banner, the launch bar and the tab row come first, and the open tab's
+        // content (the overview with its description, the mod views, the OptiScaler card read from the game folder...) is built
+        // right after that first frame, while the page is already on screen. Building it before made every switch wait for it.
+        _deferViews = true;
         Refresh();
         UpdateLinks();
+        _ultraFits = UltraFitsNow();
+        if (_ultraFits is null) _ = CheckUltraFitAsync(game, ct);
         RebuildTabs();
         ShowTab(AppState.Settings.GameTab, remember: false);
-        OptiWikiPreviewHost.Child = WikiPreviews.OptiCard(_data);
-        OptiNotesPreviewHost.Child = OptiNotesView.Preview(() => OpenTab("releasenotes"));
+        _deferViews = false;
+        var setup = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds;
+        var data = _data;
+        AfterFirstFrame(() =>
+        {
+            if (ct.IsCancellationRequested || _game != game) return;
+            Log.Info($"Game page {game.Name}: first frame {_firstFrameMs:F0} ms, settled {System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds:F0} ms (page built {built:F0}, filled {setup:F0})");
+            ShowTab(_tab, remember: false);
+            if (_optiPending) RefreshOpti();
+            OptiWikiPreviewHost.Child = WikiPreviews.OptiCard(data);
+            OptiNotesPreviewHost.Child = OptiNotesView.Preview(() => OpenTab("releasenotes"));
+        });
         // Always open a game at the top, with the banner visible.
         DispatcherQueue.TryEnqueue(() => Scroller.ChangeView(null, 0, null, disableAnimation: true));
         _ = LoadArtAsync(_pageCts.Token);
@@ -164,6 +196,8 @@ public sealed partial class GamePage : Page
         _ = LoadCustomBuildsAsync(null, _pageCts.Token);
         if (!_game.NotInstalled) _ = MeasureGameSizeAsync(_pageCts.Token);
         _filesTimer.Start();
+        // An install started before this page was made (the game was left and opened again while it ran) shows here.
+        SyncJob();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -180,7 +214,26 @@ public sealed partial class GamePage : Page
         Downloads.Changed -= OnDownloadsChanged;
         AppState.GamesChanged -= OnDownloadsChanged;
         MediaPolicy.Changed -= UpdateFloor;
+        UltraPlusLibrary.Changed -= OnUltraChanged;
+        GameJobs.Changed -= OnJobsChanged;
+        GameJobs.Progress -= OnJobProgress;
         SaveArgs();
+    }
+
+    /// <summary>When the page's first frame was drawn, from when it was asked for (for the log's game-switch timing).</summary>
+    double _firstFrameMs;
+
+    /// <summary>Runs <paramref name="action"/> once the next frame has been drawn (then at low priority, after input and layout).</summary>
+    void AfterFirstFrame(Action action)
+    {
+        EventHandler<object>? handler = null;
+        handler = (_, _) =>
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= handler;
+            if (_firstFrameMs == 0) _firstFrameMs = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds;
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => Ui.Safe(action));
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += handler;
     }
 
     /// <summary>Stops a playing trailer (the window went to the notification area).</summary>
@@ -228,12 +281,10 @@ public sealed partial class GamePage : Page
                 : L.F("Mods go next to {0}  ·  {1}", Path.GetFileName(exe), Path.GetDirectoryName(exe))
                   + (_settings.ExeOverride is not null ? "  " + L.T("(chosen by you)") : "");
 
-            LoadSetupOptions();
-            UpdateOptiStatus();
-            LoadAsiList();
-            LoadCustomDllList();
-            _iniStale = true;
-            if (IniOpen) LoadIni();
+            // The OptiScaler card reads the game folder (the dll, OptiScaler.ini, plugins): on a switch to another game it is
+            // filled right after the first frame, so the page shows without waiting for the disk.
+            if (_deferViews) _optiPending = true;
+            else RefreshOpti();
             UpdatePin();
             ShowGameSize();
             UpdateHdrToggle();
@@ -258,6 +309,27 @@ public sealed partial class GamePage : Page
         _ = LoadAchievementsAsync(_pageCts.Token);
     }
 
+    bool _optiPending;
+
+    /// <summary>The OptiScaler card and its side cards: setup answers, status, ASI plugins, custom dlls and the ini view.</summary>
+    void RefreshOpti()
+    {
+        _optiPending = false;
+        bool was = _loading;
+        _loading = true;
+        try
+        {
+            LoadSetupOptions();
+            UpdateOptiStatus();
+            LoadAsiList();
+            UpdateDlssNrRow();
+            LoadCustomDllList();
+            _iniStale = true;
+            if (IniOpen) LoadIni();
+        }
+        finally { _loading = was; }
+    }
+
     string? TargetDir => _game is null ? null : GameScanner.TargetDir(_game, _settings);
 
     // ---------- tabs ----------
@@ -265,6 +337,7 @@ public sealed partial class GamePage : Page
     ReShadeView? _reshadeView;
     RenoDxView? _renoDxView;
     LumaView? _lumaView;
+    UltraPlusTab? _ultra;
     QuickAccessView? _quickView;
     NotesView? _notesView;
 
@@ -297,7 +370,54 @@ public sealed partial class GamePage : Page
     /// The achievements tab needs Steam achievements; every other tab is always there unless hidden. On the page of a game not on
     /// this PC, the tabs that work on its files say what they do and offer Download (see <see cref="NeedsFiles"/>).
     /// </summary>
-    bool Available(string id) => id != "ach" || _ach is not null;
+    bool Available(string id) => id switch
+    {
+        "ach" => _ach is not null,
+        // Until Ultra+'s list is read the tab shows only when asked for (a notification, the Ultra+ page's Open).
+        "ultra" => _ultraFits ?? AppState.Settings.GameTab == "ultra",
+        _ => true,
+    };
+
+    /// <summary>Ultra+ can do something for this game: null while Ultra+'s list of games is not read yet.</summary>
+    bool? _ultraFits;
+
+    /// <summary>
+    /// The Ultra+ tab is only for games on Ultra+'s own list (read from its server, so a game Ultra+ adds later gets the tab
+    /// without a Hybrid Launcher update) and games it is already in or was picked for; other games do not get it.
+    /// </summary>
+    bool? UltraFitsNow()
+    {
+        if (_game is null) return false;
+        if (_settings.UltraPlus is not null || _settings.UltraPlusKey is not null) return true;
+        if (Core.Mods.UltraPlus.Cached is not { } games) return null;
+        return Core.Mods.UltraPlus.Match(games, _game.Name, _game.InstallDir, GameScanner.EffectiveExe(_game, _settings)).Count > 0;
+    }
+
+    /// <summary>Ultra+'s list read again or a mod picked, installed or removed: the tab comes or goes at once.</summary>
+    void OnUltraChanged()
+    {
+        if (_game is null || UltraFitsNow() is not { } fits || fits == _ultraFits) return;
+        _ultraFits = fits;
+        RebuildTabs();
+        if (!fits && _tab == "ultra") ShowTab("overview", remember: false);
+    }
+
+    async Task CheckUltraFitAsync(Game game, CancellationToken ct)
+    {
+        try
+        {
+            if (GameTabs.HiddenEverywhere("ultra")) return;
+            await Core.Mods.UltraPlus.GetGamesAsync(ct: ct);
+            if (ct.IsCancellationRequested || _game != game) return;
+            var fits = UltraFitsNow() ?? false;
+            if (fits == _ultraFits) return;
+            _ultraFits = fits;
+            RebuildTabs();
+            if (!fits && _tab == "ultra") ShowTab("overview", remember: false);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log.Warn($"Ultra+ list for {game.Name}: {ex.Message}"); }
+    }
 
     /// <summary>
     /// Tabs with sections about the game's own files: on a game not installed yet the OptiScaler tab shows <see cref="OfflineCard"/>
@@ -368,8 +488,10 @@ public sealed partial class GamePage : Page
         bool opti = tab == "opti", mods = tab == "mods";
         OfflineHost.Visibility = offline && opti ? Visibility.Visible : Visibility.Collapsed;
         if (offline && opti) OfflineHost.Child = OfflineCard(GameTabs.Find("opti")!);
-        OptiTab.Visibility = opti && !offline ? Visibility.Visible : Visibility.Collapsed;
-        IniCard.Visibility = opti && !offline ? Visibility.Visible : Visibility.Collapsed;
+        // A switch to another game: the OptiScaler card (the largest part of the page) is laid out on the frame after the first,
+        // so the banner, the launch bar and the tabs show at once.
+        OptiTab.Visibility = opti && !offline && !_deferViews ? Visibility.Visible : Visibility.Collapsed;
+        IniCard.Visibility = opti && !offline && !_deferViews ? Visibility.Visible : Visibility.Collapsed;
         QuickPanelCard.Visibility = IniCard.Visibility;
         OptiWikiHost.Visibility = opti ? Visibility.Visible : Visibility.Collapsed;
         OptiNotesHost.Visibility = OptiWikiHost.Visibility;
@@ -380,11 +502,12 @@ public sealed partial class GamePage : Page
         ReShadeHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
         RenoDxHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
         LumaHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
+        ShowUltra(tab == "ultra");
         QuickHost.Visibility = tab == "quick" ? Visibility.Visible : Visibility.Collapsed;
         NotesHost.Visibility = tab == "notes" ? Visibility.Visible : Visibility.Collapsed;
         // ReShade works on the game's files: without them (not installed) its section is the offline card, the others stay.
         if (mods && offline) ReShadeHost.Child = OfflineCard(GameTabs.Sections("mods")[0]);
-        if (_data is not null)
+        if (_data is not null && !_deferViews)
         {
             if (tab == "overview" && _overview is null)
             {
@@ -412,6 +535,15 @@ public sealed partial class GamePage : Page
                 if (_renoDxView is null) RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext());
                 if (_lumaView is null) LumaHost.Child = _lumaView = new LumaView(ModContext());
             }
+            if (tab == "ultra" && _ultra is null)
+            {
+                _ultra = new UltraPlusTab(ModContext());
+                UltraInstallHost.Child = _ultra.Install;
+                UltraAddonsHost.Child = _ultra.Addons;
+                UltraSettingsHost.Child = _ultra.Settings;
+                _ultra.SectionsChanged += () => ShowUltra(_tab == "ultra");
+                ShowUltra(true);
+            }
             if (tab == "quick" && _quickView is null) QuickHost.Child = _quickView = new QuickAccessView(ModContext());
             if (tab == "notes" && _notesView is null) NotesHost.Child = _notesView = new NotesView(ModContext());
         }
@@ -422,6 +554,7 @@ public sealed partial class GamePage : Page
             if (_renoDxView is { } x) Ui.Safe(x.Refresh);
             if (_lumaView is { } l) Ui.Safe(l.Refresh);
         }
+        if (tab == "ultra") _ultra?.Refresh();
         if (opti && _iniStale && !offline) LoadIni();
         if (tab == "ach" && _achStale) BuildAchievementTiles();
         if (opti && !offline) _ = UpdateFootprintAsync();
@@ -453,8 +586,19 @@ public sealed partial class GamePage : Page
         ("mods", "reshade") => ReShadeHost,
         ("mods", "renodx") => RenoDxHost,
         ("mods", "luma") => LumaHost,
+        ("ultra", "install") => UltraInstallHost,
+        ("ultra", "addons") => UltraAddonsHost,
+        ("ultra", "settings") => UltraSettingsHost,
         _ => null,
     };
+
+    /// <summary>The Ultra+ tab's sections: shown with their tab, the add-ons and settings only when they have something.</summary>
+    void ShowUltra(bool on)
+    {
+        UltraInstallHost.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        UltraAddonsHost.Visibility = on && _ultra?.AddonsShown == true ? Visibility.Visible : Visibility.Collapsed;
+        UltraSettingsHost.Visibility = on && _ultra?.SettingsShown == true ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     readonly Dictionary<string, FrameworkElement> _separators = new(StringComparer.OrdinalIgnoreCase);
 
@@ -663,6 +807,11 @@ public sealed partial class GamePage : Page
                 if (await data.Store is { } store) await SteamReviews.GetAsync(store.AppId, ct);
                 await Core.Mods.RenoDx.GetModsAsync(ct: ct);
                 await Core.Mods.Luma.GetModsAsync(ct: ct);
+                if (!GameTabs.HiddenEverywhere("ultra"))
+                {
+                    await Core.Mods.UltraPlus.GetGamesAsync(ct: ct);
+                    await Core.Mods.UltraPlus.GetModFilesAsync(ct: ct);
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Log.Warn($"Prefetch for {data.Game.Name}: {ex.Message}"); }
@@ -784,6 +933,8 @@ public sealed partial class GamePage : Page
             // RenoDX and Luma show how ReShade is loaded too: redrawn with the ReShade section, never left stale.
             if (_renoDxView is { } x) Ui.Safe(x.Refresh);
             if (_lumaView is { } l) Ui.Safe(l.Refresh);
+            // Ultra+ reads OptiScaler's file name (both load through a proxy dll beside the exe).
+            _ultra?.Refresh();
         },
         ShowTab = OpenTab,
         ReinstallOpti = () => _ = InstallAsync(SelectedRelease, manual: false),
@@ -857,11 +1008,13 @@ public sealed partial class GamePage : Page
         if (parts.Length > 1 && parts[0] == "pcgw") { if (_pcgwView?.SectionElement(parts[1]) is { } el) ScrollToElement(el, animated: false); }
         else if (parts.Length > 1) ScrollToSection(parts[1], animated: false);
         if (iniView is not null) SelfTestIni(iniView);
-        foreach (var card in new[] { CustomCard, NightlyCard, StableCard }) card.IsChecked = true;
+        // Every source once, then back to the installed one (as the page opens on it).
+        foreach (var card in new[] { CustomCard, ForkCard, NightlyCard, StableCard }) card.IsChecked = true;
+        ChannelCard(_settings.Install?.Channel ?? OptiChannel.Stable).IsChecked = true;
     }
 
     /// <summary>Self-test hook: scrolls past the tab row (it moves to the top bar) or back to the top.</summary>
-    public void SelfTestScroll(bool down) => Scroller.ChangeView(null, down ? TabTop() + 400 : 0, null, disableAnimation: true);
+    public void SelfTestScroll(bool down) => Scroller.ChangeView(null, down ? TabTop() + (double.TryParse(Environment.GetEnvironmentVariable("HL_SELFTEST_SCROLL"), out var by) ? by : 400) : 0, null, disableAnimation: true);
 
     async void Store_Click(object sender, RoutedEventArgs e)
     {
@@ -918,15 +1071,16 @@ public sealed partial class GamePage : Page
         // the ini / uninstall buttons drop to a second row.
         double card = (stackTop ? width : width - side - 16) - 40;
         bool narrowCard = card < 640;
-        for (int i = 0; i < 3; i++) ChannelCards.ColumnDefinitions[i].Width = narrowCard && i > 0 ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        for (int i = 0; i < 4; i++) ChannelCards.ColumnDefinitions[i].Width = new GridLength(1, GridUnitType.Star);
         ChannelCards.ColumnSpacing = narrowCard ? 0 : 8;
-        if (ChannelCards.RowDefinitions.Count < 3)
-            for (int i = ChannelCards.RowDefinitions.Count; i < 3; i++) ChannelCards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        RadioButton[] cards = [StableCard, NightlyCard, CustomCard];
-        for (int i = 0; i < 3; i++)
+        if (ChannelCards.RowDefinitions.Count < 2)
+            for (int i = ChannelCards.RowDefinitions.Count; i < 2; i++) ChannelCards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        // Two by two when the card is narrow, one row of four otherwise.
+        RadioButton[] cards = [StableCard, NightlyCard, ForkCard, CustomCard];
+        for (int i = 0; i < 4; i++)
         {
-            Grid.SetRow(cards[i], narrowCard ? i : 0);
-            Grid.SetColumn(cards[i], narrowCard ? 0 : i);
+            Grid.SetRow(cards[i], narrowCard ? i / 2 : 0);
+            Grid.SetColumn(cards[i], narrowCard ? i % 2 : i);
         }
         Grid.SetRow(ChannelTools, narrowCard ? 1 : 0);
         Grid.SetColumn(ChannelTools, narrowCard ? 0 : 1);
@@ -1072,7 +1226,7 @@ public sealed partial class GamePage : Page
 
     /// <summary>
     /// From PCGamingWiki: the upscaler and frame generation tags on the banner, and the settings / save folders next to
-    /// "Open game folder" (only the ones that exist on this PC).
+    /// "Game folder" (only the ones that exist on this PC).
     /// </summary>
     async Task LoadWikiExtrasAsync(CancellationToken ct)
     {
@@ -1089,7 +1243,8 @@ public sealed partial class GamePage : Page
             if (ct.IsCancellationRequested || game != _game) return;
             TechBadges.Children.Clear();
             var tags = UpscalerFiles.Merge(Pcgw.UpscalerTags(string.Join(", ", wiki.UpscalingTech), wiki.Apis).Concat(Pcgw.FrameGenTags(wiki.FrameGenTech)), files);
-            foreach (var t in tags) TechBadges.Children.Add(TechTags.Create(t, frameGen: TechTags.IsFrameGen(t), fontSize: 12));
+            // A maker's upscaler and frame generation share one chip, with the exact versions of the game's libraries.
+            foreach (var g in UpscalerFiles.Group(tags, files)) TechBadges.Children.Add(TechTags.CreateGroup(g, fontSize: 12));
             TechBadges.Visibility = TechBadges.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             ToolTipService.SetToolTip(TechBadges, (files.Count > 0 ? L.T("From the game's files") + "\n" + UpscalerFiles.Describe(files) + "\n\n" : "") + L.T("From PCGamingWiki") +
                 (wiki.UpscalingTech.Count > 0 ? "\n" + L.F("Upscaling: {0}", string.Join(", ", wiki.UpscalingTech)) : "") +
@@ -1769,12 +1924,89 @@ public sealed partial class GamePage : Page
         ExeLine.Visibility = Shown(Part(PageParts.ModsPath) || _exeLineAlert);
         UpdateDownloadPanel(Downloads.Active(_game.Id));
         UpdateLinks();
+        _ = UpdateModBadgesAsync();
+        UpdateDlssNrRow();
 
         // Settings → Appearance → Icons: the launch bar and the banner without their icons.
         bool bar = Icons.Show(IconSpots.LaunchBar), banner = Icons.Show(IconSpots.Banner);
-        foreach (var icon in new FrameworkElement[] { HdrIcon, FolderIcon, SaveIcon, ConfigIcon, AchIcon }) icon.Visibility = Shown(bar);
+        foreach (var icon in new FrameworkElement[] { HdrIcon, CloudIcon, FolderIcon, SaveIcon, ConfigIcon, AchTile }) icon.Visibility = Shown(bar);
         foreach (var icon in new FrameworkElement[] { NexusIcon, PcgwIcon, SteamDbIcon, ApiIcon }) icon.Visibility = Shown(banner);
         if (StoreBadgePanel.Children.Count > 0 && StoreBadgePanel.Children[0] is FrameworkElement logo and not TextBlock) logo.Visibility = Shown(banner);
+    }
+
+    // ---------- the banner's top-left corner: what is installed, at a glance ----------
+
+    int _modBadgesRun;
+
+    /// <summary>
+    /// OptiScaler, ReShade, Ultra+, RenoDX and Luma in the game folder, each with its version, as small quiet lines under the title
+    /// (Settings → Game page, or this game's gear, can hide them). The folder is read off the UI thread; a click opens the mod's tab.
+    /// </summary>
+    async Task UpdateModBadgesAsync()
+    {
+        int run = ++_modBadgesRun;
+        if (_game is null || _game.NotInstalled || !Part(PageParts.InstalledMods) || TargetDir is not { } dir)
+        {
+            ModBadges.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var settings = _settings;
+        var exeDir = GameScanner.EffectiveExe(_game, settings) is { } exe ? Path.GetDirectoryName(exe) : null;
+        // Where the OptiScaler build came from (the fork's name is in the app's settings: read here, on the UI thread).
+        var m = settings.Install;
+        string source = m?.Channel switch
+        {
+            OptiChannel.Nightly => L.T("nightly"),
+            OptiChannel.Fork => OptiUpdates.Name(OptiUpdates.Key(OptiChannel.Fork, m.Source), AppState.Settings),
+            OptiChannel.Custom => L.T("custom build"),
+            _ => "",
+        };
+        List<(string Name, string Detail, string Tab, Windows.UI.Color Tint)> found = [];
+        try
+        {
+            found = await Task.Run(() =>
+            {
+                var list = new List<(string, string, string, Windows.UI.Color)>();
+                if (OptiDetector.Detect(dir) is { } opti)
+                {
+                                        // Just the version number ("10.0.0-dev"), not the commit and build date PrettyVersion adds: the line stays short.
+                    list.Add(("OptiScaler", CustomBuilds.PrettyVersion(opti.Version).Split(" · ")[0].Trim() + (source.Length > 0 ? "  ·  " + source : ""), "opti", Windows.UI.Color.FromArgb(0xFF, 0xB3, 0x8B, 0xFF)));
+                }
+                if (Core.Mods.ReShade.Detect(dir) is { } reshade)
+                    list.Add(("ReShade", reshade.Version, "mods/reshade", Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xA0, 0x4D)));
+                if (settings.UltraPlus is { } ultra && Directory.Exists(ultra.Root))
+                    list.Add(("Ultra+", "v" + ultra.Version + (ultra.Beta ? "  ·  " + L.T("beta") : ""), "ultra", Windows.UI.Color.FromArgb(0xFF, 0x4F, 0xD6, 0xB0)));
+                if (settings.RenoDxFiles.Count > 0 && exeDir is not null && settings.RenoDxFiles.Keys.Any(f => File.Exists(Path.Combine(exeDir, f))))
+                    list.Add(("RenoDX", string.Join(", ", settings.RenoDxFiles.Keys.Select(Path.GetFileNameWithoutExtension)), "mods/renodx", Windows.UI.Color.FromArgb(0xFF, 0x6C, 0xB8, 0xFF)));
+                if (settings.Luma is { } luma)
+                    list.Add(("Luma", luma.Mod + (luma.Release.Length > 0 ? "  ·  " + luma.Release : ""), "mods/luma", Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x6B, 0x8A)));
+                return list;
+            });
+        }
+        catch (Exception ex) { Log.Warn($"Installed mods on the banner: {ex.Message}"); }
+        // A newer look started meanwhile (another game, a mod installed): this one is stale.
+        if (run != _modBadgesRun) return;
+        ModBadges.Children.Clear();
+        foreach (var (name, detail, tab, tint) in found)
+        {
+            var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            line.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(tint), VerticalAlignment = VerticalAlignment.Center });
+            line.Children.Add(new TextBlock { Text = name, FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), VerticalAlignment = VerticalAlignment.Center });
+            line.Children.Add(new TextBlock { Text = detail, FontSize = 11, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF)), VerticalAlignment = VerticalAlignment.Center, MaxWidth = 320, TextTrimming = TextTrimming.CharacterEllipsis });
+            var badge = new Border
+            {
+                Child = line,
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0x00, 0x00, 0x00)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 3, 9, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            ToolTipService.SetToolTip(badge, L.F("{0} {1}: open its tab", name, detail));
+            string open = tab;
+            badge.Tapped += (_, _) => Ui.Safe(() => OpenTab(open));
+            ModBadges.Children.Add(badge);
+        }
+        ModBadges.Visibility = Shown(found.Count > 0);
     }
 
     void Hide_Click(object sender, RoutedEventArgs e)
@@ -1789,35 +2021,40 @@ public sealed partial class GamePage : Page
 
     void UpdateOptiStatus()
     {
+        SyncNotes();
         var target = TargetDir;
         var m = _settings.Install;
         var detected = target is null ? null : OptiDetector.Detect(target);
 
         string pill, headline, detail, glyph;
+        string? build = null;
         Windows.UI.Color tint;
-        if (m is not null && detected is not null)
+        bool installed = m is not null && detected is not null;
+        if (installed)
         {
+            // Version (with the release tag as a badge), build, then the facts as chips; the commit is left to the tooltip.
             pill = L.T("Installed");
-            headline = L.F("OptiScaler {0} is installed", CustomBuilds.PrettyVersion(detected.Version));
-            detail = L.F("{0} as {1}  ·  installed {2:yyyy-MM-dd HH:mm}", m.DisplayVersion, m.DllName, m.InstalledAt);
+            headline = "OptiScaler " + ShortVersion(detected!.Version);
+            build = BuildName(m!);
+            detail = "";
             glyph = "";
-            tint = Windows.UI.Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43);
+            tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43));
         }
         else if (m is not null)
         {
             pill = L.T("Missing");
-            headline = L.T("OptiScaler's dll is missing");
-            detail = L.F("Hybrid Launcher installed {0}, but its dll is gone from the folder. Uninstall to clean up, or install again.", m.DisplayVersion);
+            headline = L.T("OptiScaler's DLL is missing");
+            detail = L.F("Hybrid Launcher installed {0}, but its DLL is gone from the folder. Uninstall to clean up, or install again.", m.DisplayVersion);
             glyph = "";
-            tint = Windows.UI.Color.FromArgb(0xFF, 0xD2, 0x99, 0x22);
+            tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0xD2, 0x99, 0x22));
         }
         else if (detected is not null)
         {
             pill = L.T("Found");
-            headline = L.F("OptiScaler {0} found (not installed by Hybrid Launcher)", CustomBuilds.PrettyVersion(detected.Version));
+            headline = L.F("OptiScaler {0} found (not installed by Hybrid Launcher)", ShortVersion(detected.Version));
             detail = L.F("{0}. Installing here replaces it; the old files are backed up.", detected.FileName);
-            glyph = "";
-            tint = Windows.UI.Color.FromArgb(0xFF, 0x38, 0x8B, 0xFD);
+            glyph = "";
+            tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0x38, 0x8B, 0xFD));
         }
         else
         {
@@ -1825,32 +2062,86 @@ public sealed partial class GamePage : Page
             headline = L.T("OptiScaler is not installed");
             detail = target is null ? L.T("Pick the game exe first (the gear beside Play → Change game exe).") : L.F("Pick a version and press Install. It goes in {0}", target);
             glyph = "";
-            tint = Windows.UI.Color.FromArgb(0xFF, 0x8B, 0x94, 0x9E);
+            tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0x8B, 0x94, 0x9E));
         }
         StatusPillText.Text = pill;
         StatusPill.Background = Pill(tint.R, tint.G, tint.B);
         OptiHeadline.Text = headline;
+        ToolTipService.SetToolTip(OptiHeadline, detected is not null ? $"{detected.FileName}  ·  {CustomBuilds.PrettyVersion(detected.Version)}" : null);
+        OptiBuildName.Text = build ?? "";
+        OptiBuildName.Visibility = Shown(build is not null);
         OptiStatusDetail.Text = detail;
+        OptiStatusDetail.Visibility = Shown(detail.Length > 0);
+        OptiDllChip.Visibility = OptiDateChip.Visibility = Shown(installed);
+        OptiNrChip.Visibility = Shown(installed && m!.Files.ContainsKey(DlssNr.FileName));
+        var tag = installed ? ReleaseTag(m!, detected!.Version) : null;
+        OptiVersionBadge.Visibility = Shown(tag is not null);
+        OptiVersionText.Text = tag ?? "";
+        var built = detected is not null ? BuiltOn(detected.Version) : null;
+        OptiBuiltChip.Visibility = Shown(installed && built is not null);
+        OptiBuiltText.Text = built is { } b ? L.F("Built {0}", b.ToString("d MMM yyyy")) : "";
+        if (installed)
+        {
+            OptiDllText.Text = m!.DllName;
+            OptiDateText.Text = m.InstalledAt.ToString("d MMM yyyy, HH:mm");
+        }
         StatusIcon.Glyph = glyph;
         StatusIconCircle.Background = new SolidColorBrush(tint);
         StatusIcon.Foreground = Contrast.BrushOn(tint);
-        // A soft wash of the state's colour behind the header, fading out to the right.
+        // A faint wash of the state's colour behind the header, fading out early so the text sits on the plain card.
         OptiHeader.Background = new LinearGradientBrush
         {
             StartPoint = new Windows.Foundation.Point(0, 0),
             EndPoint = new Windows.Foundation.Point(1, 0),
             GradientStops =
             {
-                new GradientStop { Color = Windows.UI.Color.FromArgb(0x30, tint.R, tint.G, tint.B), Offset = 0 },
-                new GradientStop { Color = Windows.UI.Color.FromArgb(0x00, tint.R, tint.G, tint.B), Offset = 0.7 },
+                new GradientStop { Color = Windows.UI.Color.FromArgb(0x1C, tint.R, tint.G, tint.B), Offset = 0 },
+                new GradientStop { Color = Windows.UI.Color.FromArgb(0x00, tint.R, tint.G, tint.B), Offset = 0.55 },
             },
         };
 
         UninstallButton.Visibility = m is not null ? Visibility.Visible : Visibility.Collapsed;
         OpenIniButton.Visibility = target is not null && File.Exists(Path.Combine(target, "OptiScaler.ini")) ? Visibility.Visible : Visibility.Collapsed;
         Step3Title.Text = m is null ? L.T("Install") : L.T("Update, reinstall or remove");
+        _ = RefreshUpdateAvailableAsync();
         FillShortcutKeys();
         SetBusy(_busy);
+    }
+
+    /// <summary>"10.0.0 dev" from OptiScaler's version ("10.0.0-dev (4420de92) (20261102_145100)"): the number only.</summary>
+    static string ShortVersion(string v)
+    {
+        var number = CustomBuilds.PrettyVersion(v).Split(" · ")[0].Trim();
+        int dash = number.IndexOf('-');
+        return dash > 0 ? number[..dash] + " " + number[(dash + 1)..] : number;
+    }
+
+    /// <summary>The installed build's own name: the custom build's folder, the fork's name, or the channel (its tag is the badge).</summary>
+    static string BuildName(InstallManifest m) => m.Channel switch
+    {
+        OptiChannel.Custom => m.AssetName,
+        OptiChannel.Fork => OptiUpdates.Name(OptiUpdates.Key(OptiChannel.Fork, m.Source), AppState.Settings),
+        OptiChannel.Nightly => L.T("Official nightly build"),
+        _ => L.T("Official stable release"),
+    };
+
+    /// <summary>
+    /// The release tag of the installed build ("v0.1.36"), for the badge beside the version: none for custom builds (their tag
+    /// is the raw version string, commit included) or when it only repeats the version number already in the title.
+    /// </summary>
+    static string? ReleaseTag(InstallManifest m, string dllVersion)
+    {
+        if (m.Channel == OptiChannel.Custom || string.IsNullOrWhiteSpace(m.Tag) || m.Tag.Contains(' ') || m.Tag.Length > 32) return null;
+        static string Plain(string v) => v.Trim().TrimStart('v', 'V').Replace('-', ' ').ToLowerInvariant();
+        return Plain(m.Tag) == Plain(ShortVersion(dllVersion)) ? null : m.Tag;
+    }
+
+    /// <summary>The build date OptiScaler writes in its version ("... (20261102_145100)"), or null.</summary>
+    static DateTime? BuiltOn(string v)
+    {
+        foreach (var part in v.Replace("(", " ").Replace(")", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            if (DateTime.TryParseExact(part, "yyyyMMdd_HHmmss", null, System.Globalization.DateTimeStyles.None, out var d)) return d;
+        return null;
     }
 
     /// <summary>Re-measures OptiScaler's files (payload, plugins, ini, logs) off the UI thread and shows the total.</summary>
@@ -1872,7 +2163,7 @@ public sealed partial class GamePage : Page
             if (game != _game) return;
             OptiFilesPanel.Visibility = fp.FileCount == 0 ? Visibility.Collapsed : Visibility.Visible;
             if (fp.FileCount == 0) return;
-            var text = L.F("OptiScaler files: {0}", DiskUsage.Format(fp.TotalBytes)) + " " + L.N(fp.FileCount, "in {0} file", "in {0} files")
+            var text = DiskUsage.Format(fp.TotalBytes) + " " + L.N(fp.FileCount, "in {0} file", "in {0} files")
                        + (fp.LogBytes > 0 ? "  ·  " + L.F("logs {0}", DiskUsage.Format(fp.LogBytes)) : "");
             if (OptiFilesText.Text != text)
             {
@@ -1903,10 +2194,11 @@ public sealed partial class GamePage : Page
     async Task LoadReleasesAsync(bool force, CancellationToken ct)
     {
         _releasesFailed = false;
-        await Task.WhenAll(Fetch(OptiChannel.Stable), Fetch(OptiChannel.Nightly));
+        await Task.WhenAll(Fetch(OptiChannel.Stable), Fetch(OptiChannel.Nightly), LoadForkAsync(force, ct));
         if (ct.IsCancellationRequested) return;
         _releasesLoaded = true;
         if (_channel != OptiChannel.Custom) FillVersions();
+        _ = RefreshUpdateAvailableAsync();
 
         async Task Fetch(OptiChannel channel)
         {
@@ -1929,7 +2221,134 @@ public sealed partial class GamePage : Page
     bool _fillingVersions;
     string? _selectCustom;
 
-    List<OptiRelease> Releases => _channel == OptiChannel.Nightly ? _nightly : _stable;
+    List<OptiRelease> Releases => _channel switch { OptiChannel.Nightly => _nightly, OptiChannel.Fork => _fork, _ => _stable };
+
+    /// <summary>One entry of the fork list: a known fork or one the user added.</summary>
+    sealed record ForkItem(string Name, string Repo, bool User)
+    {
+        public override string ToString() => Name;
+    }
+
+    /// <summary>Loads the releases of the chosen fork (nothing when none is chosen or it is the one already loaded).</summary>
+    async Task LoadForkAsync(bool force, CancellationToken ct)
+    {
+        var repo = AppState.Settings.SelectedFork;
+        if (repo is null) { _fork = []; _forkLoaded = null; _forkFailed = false; return; }
+        // A fork that failed is asked again: the failure was likely GitHub's limit or a dropped connection.
+        if (!force && _forkLoaded == repo && !_forkFailed) return;
+        try
+        {
+            var list = await OptiReleases.GetForkAsync(repo, force, ct);
+            // Another fork picked while this one loaded: its list must not end up under the other's name.
+            if (ct.IsCancellationRequested || AppState.Settings.SelectedFork != repo) return;
+            _fork = list;
+            _forkLoaded = repo;
+            _forkFailed = false;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (AppState.Settings.SelectedFork != repo) return;
+            _fork = [];
+            _forkLoaded = repo;
+            _forkFailed = true;
+            Log.Warn($"Releases of fork {repo}: {ex.Message}");
+        }
+    }
+
+    bool _forkFailed;
+
+    void FillForkList()
+    {
+        _fillingFork = true;
+        try
+        {
+            ForkCombo.Items.Clear();
+            var user = AppState.Settings.OptiForks.Select(f => f.Repo).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in OptiForks.All(AppState.Settings))
+                ForkCombo.Items.Add(new ForkItem(f.Name.Length > 0 ? f.Name : f.Repo, f.Repo, user.Contains(f.Repo) && !OptiForks.Known.Any(k => k.Repo.Equals(f.Repo, StringComparison.OrdinalIgnoreCase))));
+            var current = AppState.Settings.SelectedFork;
+            ForkCombo.SelectedItem = ForkCombo.Items.OfType<ForkItem>().FirstOrDefault(i => i.Repo.Equals(current, StringComparison.OrdinalIgnoreCase))
+                ?? ForkCombo.Items.OfType<ForkItem>().FirstOrDefault();
+            if (ForkCombo.SelectedItem is ForkItem chosen) AppState.Settings.SelectedFork = chosen.Repo;
+        }
+        finally { _fillingFork = false; }
+    }
+
+    bool _fillingFork;
+
+    async void ForkCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingFork || ForkCombo.SelectedItem is not ForkItem item) return;
+        AppState.Settings.SelectedFork = item.Repo;
+        SettingsStore.Save();
+        RemoveForkButton.IsEnabled = !_busy && item.User;
+        VersionCombo.Items.Clear();
+        VersionCombo.PlaceholderText = L.T("Loading versions…");
+        await LoadForkAsync(false, _pageCts.Token);
+        if (_channel == OptiChannel.Fork) FillVersions();
+    }
+
+    /// <summary>Asks for the address of a GitHub repository that publishes OptiScaler builds, checks it has releases, and adds it.</summary>
+    async void AddFork_Click(object sender, RoutedEventArgs e)
+    {
+        var box = new TextBox { PlaceholderText = "https://github.com/owner/OptiScaler", MinWidth = 380 };
+        var note = new TextBlock { Text = L.T("Paste the GitHub address of a fork that publishes releases with OptiScaler.dll and setup_windows.bat."), TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(note);
+        panel.Children.Add(box);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = L.T("Add an OptiScaler fork"),
+            Content = panel,
+            PrimaryButtonText = L.T("Add"),
+            CloseButtonText = L.T("Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+            RequestedTheme = ActualTheme,
+        };
+        dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var repo = OptiForks.ParseRepo(box.Text);
+        if (repo is null)
+        {
+            App.Window?.ShowError(L.T("Could not add the fork"), L.T("That is not a GitHub address. Use https://github.com/owner/name or owner/name."));
+            return;
+        }
+        try
+        {
+            var releases = await OptiReleases.GetForkAsync(repo, force: true, ct: _pageCts.Token);
+            if (releases.Count == 0)
+            {
+                App.Window?.ShowError(L.T("Could not add the fork"), L.F("{0} has no releases with a downloadable archive (.zip or .7z).", repo));
+                return;
+            }
+            if (!OptiForks.All(AppState.Settings).Any(f => f.Repo.Equals(repo, StringComparison.OrdinalIgnoreCase)))
+                AppState.Settings.OptiForks.Add(new OptiFork { Name = repo, Repo = repo });
+            AppState.Settings.SelectedFork = repo;
+            SettingsStore.Save();
+            FillForkList();
+            ForkCard.IsChecked = true;
+            _fork = releases;
+            _forkLoaded = repo;
+            FillVersions();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Adding fork {repo}: {ex.Message}");
+            App.Window?.ShowError(L.T("Could not add the fork"), L.F("Could not read the releases of {0}: {1}", repo, ex.Message), ex);
+        }
+    }
+
+    void RemoveFork_Click(object sender, RoutedEventArgs e)
+    {
+        if (ForkCombo.SelectedItem is not ForkItem { User: true } item) return;
+        AppState.Settings.OptiForks.RemoveAll(f => f.Repo.Equals(item.Repo, StringComparison.OrdinalIgnoreCase));
+        AppState.Settings.SelectedFork = null;
+        SettingsStore.Save();
+        FillForkList();
+        _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) FillVersions(); }));
+    }
 
     // Stable / nightly: item 0 of the list is "Latest". Custom: one item per build.
     OptiRelease? SelectedRelease => _channel == OptiChannel.Custom
@@ -1939,12 +2358,17 @@ public sealed partial class GamePage : Page
     CustomBuild? SelectedCustom => _channel == OptiChannel.Custom && VersionCombo.SelectedIndex >= 0 && VersionCombo.SelectedIndex < _custom.Count
         ? _custom[VersionCombo.SelectedIndex] : null;
 
-    RadioButton ChannelCard(OptiChannel channel) => channel switch { OptiChannel.Nightly => NightlyCard, OptiChannel.Custom => CustomCard, _ => StableCard };
+    RadioButton ChannelCard(OptiChannel channel) => channel switch { OptiChannel.Nightly => NightlyCard, OptiChannel.Fork => ForkCard, OptiChannel.Custom => CustomCard, _ => StableCard };
 
     void Channel_Checked(object sender, RoutedEventArgs e)
     {
         if (sender is not RadioButton { Tag: string tag } || !Enum.TryParse<OptiChannel>(tag, out var channel)) return;
         _channel = channel;
+        if (channel == OptiChannel.Fork)
+        {
+            if (ForkCombo.Items.Count == 0) FillForkList();
+            if (_forkLoaded != AppState.Settings.SelectedFork || _forkFailed) _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) FillVersions(); }));
+        }
         FillVersions();
     }
 
@@ -1956,6 +2380,7 @@ public sealed partial class GamePage : Page
         {
             VersionCombo.Items.Clear();
             bool custom = _channel == OptiChannel.Custom;
+            ForkRow.Visibility = _channel == OptiChannel.Fork ? Visibility.Visible : Visibility.Collapsed;
             ImportBuildButton.Visibility = CustomMoreButton.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
             ReleasesLink.Visibility = custom ? Visibility.Collapsed : Visibility.Visible;
             ToolTipService.SetToolTip(VersionCombo, null);
@@ -1970,7 +2395,11 @@ public sealed partial class GamePage : Page
             else
             {
                 var list = Releases;
-                VersionCombo.PlaceholderText = _releasesFailed ? L.T("Offline: can't list versions") : _releasesLoaded ? L.T("No releases found") : L.T("Loading versions…");
+                bool failed = _channel == OptiChannel.Fork ? _forkFailed : _releasesFailed;
+                VersionCombo.PlaceholderText = failed && list.Count == 0 && Http.GitHubLimitedUntil is { } until
+                    ? L.F("GitHub limit reached: versions after {0:HH:mm}", until.ToLocalTime())
+                    : failed ? L.T("Offline: can't list versions") : _releasesLoaded && (_channel != OptiChannel.Fork || _forkLoaded is not null) ? L.T("No releases found") : L.T("Loading versions…");
+                if (failed && list.Count == 0) RetryWhenGitHubResets();
                 if (list.Count > 0)
                 {
                     VersionCombo.Items.Add(L.F("Latest  ({0})", list[0].Tag));
@@ -1986,6 +2415,27 @@ public sealed partial class GamePage : Page
         UpdateVersionDetail();
     }
 
+    bool _retryScheduled;
+
+    /// <summary>A list GitHub refused because its limit ran out loads again, once: as soon as a GitHub account is signed in, or a
+    /// few seconds after the limit resets.</summary>
+    async void RetryWhenGitHubResets()
+    {
+        if (_retryScheduled || Http.GitHubLimitedUntil is not { } until) return;
+        _retryScheduled = true;
+        var ct = _pageCts.Token;
+        try
+        {
+            var again = until + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < again && Http.GitHubLimitedUntil is not null) await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            _retryScheduled = false;
+            if (_channel == OptiChannel.Fork) _forkLoaded = null;
+            await LoadReleasesAsync(false, ct);
+        }
+        catch (OperationCanceledException) { }
+        finally { _retryScheduled = false; }
+    }
+
     void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_fillingVersions) UpdateVersionDetail();
@@ -1996,7 +2446,18 @@ public sealed partial class GamePage : Page
     {
         var b = SelectedCustom;
         RemoveBuildItem.IsEnabled = b is not null;
-        ChannelHint.Text = _channel switch
+        // A fork's hint is just its repository, as a link to it.
+        if (_channel == OptiChannel.Fork)
+        {
+            ChannelHint.Inlines.Clear();
+            if (AppState.Settings.SelectedFork is { } fork)
+            {
+                var link = new Microsoft.UI.Xaml.Documents.Hyperlink { NavigateUri = new Uri($"https://github.com/{fork}"), UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.None };
+                link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"github.com/{fork}" });
+                ChannelHint.Inlines.Add(link);
+            }
+        }
+        else ChannelHint.Text = _channel switch
         {
             OptiChannel.Stable => L.T("Tested releases, published less often than nightly builds."),
             OptiChannel.Nightly => L.T("The newest features and fixes, built every day. If a game misbehaves, go back to Stable."),
@@ -2005,13 +2466,228 @@ public sealed partial class GamePage : Page
             _ => L.T("Builds you imported, e.g. test builds shared on the OptiScaler Discord. Import a folder or a .zip / .7z / .rar."),
         };
         if (b is not null) ToolTipService.SetToolTip(VersionCombo, $"{b.Name}\n{b.Version}\n{b.PayloadRoot}");
+        UpdateNotifyRow();
+        UpdateDlssNrRow();
+        SyncNotes();
         SetBusy(_busy);
+    }
+
+    /// <summary>The Release notes section follows the install and the fork picked (it was built once and kept the first fork).</summary>
+    void SyncNotes() => (OptiNotesHost.Child as OptiNotesView)?.Sync();
+
+    // ---------- OptiScaler: the DLSS NR model file (forks and custom builds) ----------
+
+    bool _storingDlssNr;
+
+    /// <summary>
+    /// The DLSS NR row (forks and custom builds, or an install that holds the file): one stored nvngx_dlssnr.dll for the builds
+    /// that need DLSS 5 neural rendering. On globally is the default for every game; On for this game follows it (ticking or
+    /// clearing On globally ticks or clears it too) unless it is changed here, which makes this game an exception.
+    /// </summary>
+    void UpdateDlssNrRow()
+    {
+        // Hidden from Settings → Game page (or this row's own Hide button): the file is still kept and synced, only the row goes.
+        bool shown = (_channel is OptiChannel.Fork or OptiChannel.Custom || _settings.Install?.Files.ContainsKey(DlssNr.FileName) == true) && Part(PageParts.DlssNr);
+        DlssNrRow.Visibility = Shown(shown);
+        if (!shown) return;
+        var stored = File.Exists(DlssNr.StoredPath) ? DlssNr.StoredPath : null;
+        bool global = AppState.Settings.UseDlssNr && stored is not null;
+        bool game = stored is not null && DlssNr.OnFor(_settings, AppState.Settings);
+        DlssNrGlobalCheck.IsChecked = global;
+        DlssNrGameCheck.IsChecked = game;
+        DlssNrGlobalCheck.IsEnabled = DlssNrGameCheck.IsEnabled = !_storingDlssNr && !_busy;
+        DlssNrChangeButton.Visibility = Shown(stored is not null);
+        DlssNrChangeButton.IsEnabled = !_storingDlssNr && !_busy;
+        var m = _settings.Install;
+        string here = m is null ? ""
+            : m.Files.ContainsKey(DlssNr.FileName) ? " " + L.T("It is in this game's OptiScaler install.")
+            : game && !DlssNr.NeededBy(m) ? " " + L.T("This game's build doesn't need it.")
+            : "";
+        DlssNrHint.Text = _storingDlssNr ? L.T("Storing the file…")
+            : stored is null ? L.F("Builds with DLSS 5 neural rendering need NVIDIA's {0} beside them. Tick a box and pick yours once: the installs that need it get it.", DlssNr.FileName)
+            : L.F("{0} {1} ({2}), kept by Hybrid Launcher; uninstalling takes it out.", DlssNr.FileName, DlssNr.Version(stored), Core.Hardware.HardwareInfo.FormatBytes((ulong)new FileInfo(stored).Length)) + here;
+    }
+
+    /// <summary>On globally: the default for every game. This game follows it (its own exception, if any, is dropped).</summary>
+    async void DlssNrGlobal_Click(object sender, RoutedEventArgs e)
+    {
+        bool on = DlssNrGlobalCheck.IsChecked == true;
+        if (on && !File.Exists(DlssNr.StoredPath) && !await PickDlssNrAsync())
+        {
+            UpdateDlssNrRow();
+            return;
+        }
+        AppState.Settings.UseDlssNr = on;
+        _settings.DlssNrChoice = null;
+        SettingsStore.Save();
+        await SyncDlssNrAsync();
+    }
+
+    /// <summary>On for this game: an exception to On globally while it differs from it; back in line, it follows it again.</summary>
+    async void DlssNrGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (_game is null) return;
+        bool on = DlssNrGameCheck.IsChecked == true;
+        if (on && !File.Exists(DlssNr.StoredPath) && !await PickDlssNrAsync())
+        {
+            UpdateDlssNrRow();
+            return;
+        }
+        _settings.DlssNrChoice = on == AppState.Settings.UseDlssNr ? null : on;
+        SettingsStore.Save();
+        await SyncDlssNrAsync();
+    }
+
+    /// <summary>Hides the DLSS NR row in every game; Settings → Appearance → Game page (or this game's gear) shows it again.</summary>
+    void DlssNrHide_Click(object sender, RoutedEventArgs e)
+    {
+        AppState.Settings.HiddenPageParts.Add(PageParts.DlssNr);
+        SettingsStore.Save();
+        UpdateDlssNrRow();
+        App.Window?.ShowInfo(L.T("DLSS NR row hidden in every game. Settings → Appearance → Game page shows it again; files already set up keep working."));
+    }
+
+    async void DlssNrChange_Click(object sender, RoutedEventArgs e)
+    {
+        if (await PickDlssNrAsync()) await SyncDlssNrAsync();
+        else UpdateDlssNrRow();
+    }
+
+    /// <summary>Puts the file in or takes it out of this game's install to match its switch now, and says so.</summary>
+    async Task SyncDlssNrAsync()
+    {
+        if (_game is { } game && _settings.Install is { } m)
+        {
+            var stored = DlssNr.ActiveFor(_settings, AppState.Settings);
+            bool had = m.Files.ContainsKey(DlssNr.FileName);
+            try
+            {
+                // A new stored file replaces the copy in the install: take the old one out first.
+                bool changed = await Task.Run(() =>
+                {
+                    OptiInstaller.EnsureNotRunning(m.TargetDir);
+                    bool c = false;
+                    if (had && stored is not null && m.Files.TryGetValue(DlssNr.FileName, out var hash) && hash != OptiInstaller.Hash(stored)) c = DlssNr.Sync(m, null);
+                    return DlssNr.Sync(m, stored) || c;
+                });
+                SettingsStore.Save();
+                bool has = m.Files.ContainsKey(DlssNr.FileName);
+                if (changed && has != had) App.Window?.ShowSuccess(has ? L.F("{0} added to the OptiScaler install of {1}.", DlssNr.FileName, game.Title) : L.F("{0} removed from the OptiScaler install of {1}.", DlssNr.FileName, game.Title));
+            }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Could not update the DLSS NR model file"), ex.Message, ex); }
+            UpdateOptiStatus();
+            _ = UpdateFootprintAsync();
+        }
+        UpdateDlssNrRow();
+    }
+
+    /// <summary>Asks for an nvngx_dlssnr.dll and stores a copy. False when the user cancelled or the file is not DLSS NR.</summary>
+    async Task<bool> PickDlssNrAsync()
+    {
+        var file = await Pickers.PickFileAsync(App.Window!, ".dll");
+        if (file is null) return false;
+        _storingDlssNr = true;
+        UpdateDlssNrRow();
+        try
+        {
+            await DlssNr.StoreAsync(file, _pageCts.Token);
+            App.Window?.ShowSuccess(L.F("{0} {1} stored: forks and custom builds that need it get it when installed.", DlssNr.FileName, DlssNr.Version(DlssNr.StoredPath)));
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            App.Window?.ShowError(L.T("Could not store the DLSS NR model file"), ex.Message);
+            return false;
+        }
+        finally { _storingDlssNr = false; }
+    }
+
+    // ---------- OptiScaler: updates ----------
+
+    bool _fillingNotify;
+
+    /// <summary>The source shown now: "stable", "nightly", "fork:owner/name", or empty (custom builds, no fork chosen).</summary>
+    string ShownSource => OptiUpdates.Key(_channel, AppState.Settings.SelectedFork);
+
+    /// <summary>Get notified on updates: for the source shown (each one is turned on by itself, all are off at first).</summary>
+    void UpdateNotifyRow()
+    {
+        var key = ShownSource;
+        NotifyRow.Visibility = key.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (key.Length == 0) return;
+        _fillingNotify = true;
+        try { NotifyToggle.IsOn = OptiUpdates.IsFollowed(AppState.Settings, key); }
+        finally { _fillingNotify = false; }
+        NotifyHint.Text = L.F("A Windows notification when a new {0} version comes out. Only this one: the other channels and forks are turned on apart.", OptiUpdates.Name(key, AppState.Settings));
+    }
+
+    async void NotifyToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_fillingNotify) return;
+        var key = ShownSource;
+        if (key.Length == 0) return;
+        try
+        {
+            await OptiUpdates.SetFollowedAsync(AppState.Settings, key, NotifyToggle.IsOn, _pageCts.Token);
+            SettingsStore.Save();
+            App.Window?.OptiFollowChanged();
+        }
+        catch (Exception ex) { Log.Warn($"Notifications for {key}: {ex.Message}"); }
+    }
+
+    OptiRelease? _update;
+    int _updateCheck;
+
+    /// <summary>
+    /// Update available: the installed build's own source (its channel, or its fork) has a newer release. Shown whatever the
+    /// notifications say; it looks at the releases already read (cached), so it costs nothing.
+    /// </summary>
+    async Task RefreshUpdateAvailableAsync()
+    {
+        int run = ++_updateCheck;
+        var m = _settings.Install;
+        OptiRelease? newer = null;
+        if (m is not null && OptiUpdates.Key(m) is { Length: > 0 } key)
+        {
+            try { newer = OptiUpdates.NewerThan(m, await OptiUpdates.ReleasesAsync(key, false, _pageCts.Token)); }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { Log.Warn($"Update check for {key}: {ex.Message}"); }
+        }
+        if (run != _updateCheck || _settings.Install != m) return;
+        _update = newer;
+        UpdateAvailableButton.Visibility = newer is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (newer is not null && m is not null)
+            ToolTipService.SetToolTip(UpdateAvailableButton, L.F("{0} is out ({1:yyyy-MM-dd}). Click to install it in place of {2}: your settings are applied again.", newer.Tag, newer.Published.ToLocalTime(), m.DisplayVersion));
+    }
+
+    /// <summary>Update available: the installed source's newest release is picked and installed, as Install would.</summary>
+    async void UpdateAvailable_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _settings.Install is not { } m || _update is null) return;
+        try
+        {
+            if (m.Channel == OptiChannel.Fork && m.Source is { } repo)
+            {
+                AppState.Settings.SelectedFork = repo;
+                FillForkList();
+                await LoadForkAsync(false, _pageCts.Token);
+            }
+            ChannelCard(m.Channel).IsChecked = true;
+            _channel = m.Channel;
+            FillVersions();
+            // Item 0 is Latest: the newest release of the channel.
+            if (SelectedRelease is not { } r || !r.Tag.Equals(_update.Tag, StringComparison.OrdinalIgnoreCase)) return;
+            StartInstall(manual: false);
+        }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not update OptiScaler"), ex.Message, ex); }
     }
 
     void VersionsRefresh_Click(object sender, RoutedEventArgs e) => _ = VersionsList.ReloadAsync();
 
     void Releases_Click(object sender, RoutedEventArgs e) =>
-        Try(() => GameLauncher.OpenUri(OptiReleases.ReleasesPage(_channel == OptiChannel.Nightly ? OptiChannel.Nightly : OptiChannel.Stable)));
+        Try(() => GameLauncher.OpenUri(_channel == OptiChannel.Fork && AppState.Settings.SelectedFork is { } fork
+            ? OptiReleases.ForkPage(fork)
+            : OptiReleases.ReleasesPage(_channel == OptiChannel.Nightly ? OptiChannel.Nightly : OptiChannel.Stable)));
 
     // ---------- OptiScaler: custom builds ----------
 
@@ -2190,6 +2866,13 @@ public sealed partial class GamePage : Page
         // With the bat installer the file name is picked in the script, which warns about existing files itself.
         var options = settings.Setup.Clone();
         options.Manual = manual;
+        // Ultra+ loads UE4SS through a proxy dll beside the exe: OptiScaler under that name would stop it, and removing Ultra+
+        // later would take OptiScaler's file with it.
+        if (!manual && settings.UltraPlus is { } ultra && Core.Mods.UltraPlus.Owns(ultra, Path.Combine(target, settings.Setup.DllName)))
+        {
+            App.Window?.ShowError(L.T("Ultra+ uses that file name"), L.F("Ultra+ loads through {0} in this game. Pick another OptiScaler file name in Setup options (dxgi.dll works for most games), then install.", settings.Setup.DllName));
+            return;
+        }
         var conflict = manual ? null : OptiDetector.DescribeConflict(target, settings.Setup.DllName);
         if (conflict is not null && !await ConfirmAsync(
                 L.T("Another file has that name"),
@@ -2200,20 +2883,12 @@ public sealed partial class GamePage : Page
                 backup ? L.T("Replace (keep a backup)") : L.T("Replace")))
             return;
 
-        _installCts = new CancellationTokenSource();
-        SetBusy(true);
-        LogText.Text = "";
-        LogExpander.Visibility = Visibility.Visible;
-        ProgressPanel.Visibility = Visibility.Visible;
-        InstallProgressBar.IsIndeterminate = false;
-
+        // Kept outside the page (GameJobs): leaving the game and coming back shows this install, not the one before it, and
+        // nothing else can be installed in the folder until it ends.
+        var job = GameJobs.TryStart(game.Id, game.Title, "opti", "OptiScaler");
+        if (job is null) return;
         var progress = new Progress<InstallProgress>(p =>
-        {
-            ProgressStage.Text = p.Stage;
-            if (p.Fraction > 0) InstallProgressBar.Value = p.Fraction;
-            if (p.Line is not null) AppendLog(p.Line);
-            else AppendLog($"[{p.Fraction:P0}] {p.Stage}");
-        });
+            GameJobs.Report(job, p.Fraction > 0 ? p.Fraction : -1, p.Stage, p.Line ?? $"[{p.Fraction:P0}] {p.Stage}"));
 
         try
         {
@@ -2228,7 +2903,8 @@ public sealed partial class GamePage : Page
                 CustomDlls = AppState.EnabledCustomDlls(settings),
                 Previous = settings.Install,
                 Backup = backup,
-            }, progress, _installCts.Token));
+                DlssNrDll = DlssNr.ActiveFor(settings, AppState.Settings),
+            }, progress, job.Token));
 
             settings.Install = manifest;
             SettingsStore.Save();
@@ -2243,8 +2919,8 @@ public sealed partial class GamePage : Page
         }
         catch (InstallException ex)
         {
-            if (ex.Transcript is not null) AppendLog("\n----- " + L.T("setup_windows.bat output") + " -----\n" + ex.Transcript);
-            LogExpander.IsExpanded = true;
+            if (ex.Transcript is not null) GameJobs.Report(job, -1, null, "\n----- " + L.T("setup_windows.bat output") + " -----\n" + ex.Transcript);
+            job.Failed = true;
             if (settings.Install is not null && !File.Exists(Path.Combine(settings.Install.TargetDir, settings.Install.DllName))) settings.Install = null;
             SettingsStore.Save();
             App.Window?.ShowError(L.T("Install failed"), ex.Message, ex);
@@ -2252,24 +2928,114 @@ public sealed partial class GamePage : Page
         catch (Exception ex)
         {
             Log.Error("Install failed", ex);
-            LogExpander.IsExpanded = true;
-            AppendLog(ex.ToString());
+            job.Failed = true;
+            GameJobs.Report(job, -1, null, ex.ToString());
             if (settings.Install is not null && !File.Exists(Path.Combine(settings.Install.TargetDir, settings.Install.DllName))) settings.Install = null;
             SettingsStore.Save();
             App.Window?.ShowError(L.T("Install failed"), ex.Message, ex);
         }
         finally
         {
-            _installCts.Dispose();
-            _installCts = null;
-            ProgressPanel.Visibility = Visibility.Collapsed;
-            SetBusy(false);
-            if (game == _game)
-            {
-                Refresh();
-                _ = VersionsList.ReloadAsync();
-            }
+            // Whichever page shows this game now (this one, or one made since) redraws from here: see SyncJob.
+            GameJobs.End(job);
         }
+    }
+
+    void OnJobsChanged(string gameId)
+    {
+        if (_game is not null && gameId.Equals(_game.Id, StringComparison.OrdinalIgnoreCase)) Ui.Safe(SyncJob);
+    }
+
+    void OnJobProgress(GameJobs.Job job)
+    {
+        if (_game is null || !job.GameId.Equals(_game.Id, StringComparison.OrdinalIgnoreCase)) return;
+        Ui.Safe(() =>
+        {
+            switch (job.Kind)
+            {
+                case "opti": ShowOptiProgress(job); break;
+                case "reshade": _reshadeView?.ShowJob(job); break;
+                case "renodx": _renoDxView?.ShowJob(job); break;
+                case "luma": _lumaView?.ShowJob(job); break;
+                case "ultra": _ultra?.ShowJob(job); break;
+            }
+        });
+    }
+
+    /// <summary>
+    /// The page follows GameJobs: while something is installed or removed in this game every control that would start another
+    /// change is off, OptiScaler's own job shows its progress and log, and when it ends the page shows what is installed now
+    /// (its channel picked again, so a page opened mid-install never keeps showing the build that was there before).
+    /// </summary>
+    void SyncJob()
+    {
+        if (_game is null) return;
+        var job = GameJobs.For(_game.Id);
+        SetBusy(false);
+        if (job is { Kind: "opti" })
+        {
+            if (!ReferenceEquals(_shownJob, job))
+            {
+                _shownJob = job;
+                InstallProgressBar.IsIndeterminate = false;
+                InstallProgressBar.Value = 0;
+                LogExpander.Visibility = Visibility.Visible;
+                ProgressPanel.Visibility = Visibility.Visible;
+            }
+            ShowOptiProgress(job);
+        }
+        else if (_shownJob is { } done)
+        {
+            _shownJob = null;
+            ProgressPanel.Visibility = Visibility.Collapsed;
+            LogText.Text = done.Text.ToString();
+            if (done.Failed) LogExpander.IsExpanded = true;
+            if (_settings.Install is { } m && !ReferenceEquals(ChannelCard(m.Channel), ChannelCard(_channel)))
+            {
+                if (m.Channel == OptiChannel.Fork && m.Source is { } repo) AppState.Settings.SelectedFork = repo;
+                ChannelCard(m.Channel).IsChecked = true;
+                _channel = m.Channel;
+            }
+            Refresh();
+            _ = VersionsList.ReloadAsync();
+        }
+        // The mod views lock or unlock their buttons, and redraw what a finished job changed.
+        if (_reshadeView is { } r) Ui.Safe(r.Refresh);
+        if (_renoDxView is { } x) Ui.Safe(x.Refresh);
+        if (_lumaView is { } l) Ui.Safe(l.Refresh);
+        if (_ultra is { } u)
+        {
+            Ui.Safe(() => u.ShowJob(job));
+            if (job is null) Ui.Safe(u.Refresh);
+        }
+    }
+
+    /// <summary>Self-test: the Play button's width in every state (it must not stretch with a long word), then back to its own.</summary>
+    internal string SelfTestPlayWidths()
+    {
+        var before = PlayButton.Current;
+        var widths = new List<string>();
+        foreach (var mode in Enum.GetValues<Controls.PlayButton.Mode>())
+        {
+            PlayButton.SetMode(mode);
+            PlayButton.UpdateLayout();
+            if (PlayButton.ActualWidth > 197 || PlayButton.ActualWidth < 167) throw new InvalidOperationException($"{mode}: {PlayButton.ActualWidth:F0} px");
+            widths.Add($"{mode} {PlayButton.ActualWidth:F0}");
+        }
+        PlayButton.SetMode(before);
+        return string.Join(", ", widths);
+    }
+
+    /// <summary>Self-test: what the page shows of a running job.</summary>
+    internal (bool Busy, bool InstallEnabled, bool Progress, string Stage, string Log) SelfTestJob() =>
+        (_busy, InstallButton.IsEnabled, ProgressPanel.Visibility == Visibility.Visible, ProgressStage.Text, LogText.Text);
+
+    void ShowOptiProgress(GameJobs.Job job)
+    {
+        ProgressStage.Text = job.Stage;
+        if (job.Fraction > 0) InstallProgressBar.Value = job.Fraction;
+        LogText.Text = job.Text.ToString();
+        LogScroller.ChangeView(null, LogScroller.ScrollableHeight + 1000, null, disableAnimation: true);
     }
 
     async void Uninstall_Click(object sender, RoutedEventArgs e)
@@ -2281,11 +3047,14 @@ public sealed partial class GamePage : Page
                 L.T("Uninstall")))
             return;
 
-        SetBusy(true);
+        var game = _game!;
+        var job = GameJobs.TryStart(game.Id, game.Title, "opti", "OptiScaler");
+        if (job is null) return;
+        var settings = _settings;
         try
         {
             var warnings = await Task.Run(() => OptiInstaller.Uninstall(m));
-            _settings.Install = null;
+            settings.Install = null;
             SettingsStore.Save();
             if (warnings.Count > 0) App.Window?.ShowInfo(L.T("OptiScaler removed.") + " " + string.Join(" ", warnings));
             else App.Window?.ShowSuccess(L.T("OptiScaler removed and the original files restored."));
@@ -2296,7 +3065,7 @@ public sealed partial class GamePage : Page
         }
         finally
         {
-            SetBusy(false);
+            GameJobs.End(job);
             Refresh();
             _ = VersionsList.ReloadAsync();
         }
@@ -2304,18 +3073,23 @@ public sealed partial class GamePage : Page
 
     void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        _installCts?.Cancel();
+        GameJobs.For(_game?.Id)?.Cts.Cancel();
         CancelButton.IsEnabled = false;
     }
 
     void SetBusy(bool busy)
     {
+        // A change running in this game's folder (GameJobs) keeps the page busy, whatever else asked.
+        busy |= GameJobs.Busy(_game?.Id);
         _busy = busy;
         InstallButton.IsEnabled = BatInstallButton.IsEnabled = !busy && SelectedRelease is not null;
-        StableCard.IsEnabled = NightlyCard.IsEnabled = CustomCard.IsEnabled = VersionCombo.IsEnabled = !busy;
+        StableCard.IsEnabled = NightlyCard.IsEnabled = ForkCard.IsEnabled = CustomCard.IsEnabled = VersionCombo.IsEnabled = ForkCombo.IsEnabled = !busy;
+        AddForkButton.IsEnabled = UpdateAvailableButton.IsEnabled = !busy;
+        RemoveForkButton.IsEnabled = !busy && ForkCombo.SelectedItem is ForkItem { User: true };
         ImportBuildButton.IsEnabled = CustomMoreButton.IsEnabled = !busy;
         UninstallButton.IsEnabled = !busy;
         SetupExpander.IsEnabled = !busy;
+        DlssNrGlobalCheck.IsEnabled = DlssNrGameCheck.IsEnabled = DlssNrChangeButton.IsEnabled = !busy && !_storingDlssNr;
         CancelButton.IsEnabled = busy;
         var (label, hint) = InstallLabel();
         InstallButtonText.Text = label;
@@ -2334,16 +3108,17 @@ public sealed partial class GamePage : Page
         {
             OptiChannel.Custom => L.F("the custom build \"{0}\"", r.AssetName),
             OptiChannel.Nightly => L.F("nightly {0}", r.Tag),
+            OptiChannel.Fork => $"{r.Repo} {r.Tag}",
             _ => $"OptiScaler {r.Tag}",
         };
         if (m is null)
             return (L.T("Install OptiScaler"), L.F("Installs {0}. Install runs OptiScaler's own setup script silently with your setup options; Standard .bat install opens it so you answer it yourself. Every file it replaces is backed up, and uninstall puts the folder back as it was.", version));
         bool same = m.Channel == r.Channel && (r.Channel == OptiChannel.Custom
             ? m.AssetName.Equals(r.AssetName, StringComparison.OrdinalIgnoreCase)
-            : m.Tag.Equals(r.Tag, StringComparison.OrdinalIgnoreCase));
+            : m.Tag.Equals(r.Tag, StringComparison.OrdinalIgnoreCase) && (r.Channel != OptiChannel.Fork || string.Equals(m.Source, r.Repo, StringComparison.OrdinalIgnoreCase)));
         if (same) return (L.T("Reinstall"), L.F("{0} is installed. Reinstalling keeps your settings.", m.DisplayVersion));
-        if (m.Channel == r.Channel) return (L.T("Update"), L.F("Replaces {0} with {1}. Your settings are applied again.", m.DisplayVersion, version));
-        var name = r.Channel switch { OptiChannel.Nightly => "Nightly", OptiChannel.Custom => L.T("custom build"), _ => "Stable" };
+        if (m.Channel == r.Channel && (r.Channel != OptiChannel.Fork || string.Equals(m.Source, r.Repo, StringComparison.OrdinalIgnoreCase))) return (L.T("Update"), L.F("Replaces {0} with {1}. Your settings are applied again.", m.DisplayVersion, version));
+        var name = r.Channel switch { OptiChannel.Nightly => "Nightly", OptiChannel.Custom => L.T("custom build"), OptiChannel.Fork => L.T("a fork"), _ => "Stable" };
         return (L.F("Switch to {0}", name), L.F("Replaces {0} with {1}. Your settings are applied again.", m.DisplayVersion, version));
     }
 

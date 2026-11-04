@@ -18,6 +18,8 @@ public sealed class InstallRequest
     public InstallManifest? Previous { get; init; }
     /// <summary>False: the files OptiScaler replaces are overwritten without a backup, so uninstalling cannot put them back.</summary>
     public bool Backup { get; init; } = true;
+    /// <summary>The stored DLSS NR model file (<see cref="DlssNr"/>), put in when the build needs it; null = never.</summary>
+    public string? DlssNrDll { get; init; }
 }
 
 public sealed class InstallException(string message, string? transcript = null) : Exception(message)
@@ -145,10 +147,20 @@ public static class OptiInstaller
         if (!File.Exists(batPath) || !File.Exists(Path.Combine(payload, "OptiScaler.dll")))
             throw new InstallException(L.T("This release does not contain OptiScaler.dll and setup_windows.bat; it cannot be installed with the setup script."));
 
+        // A DLSS NR build without the model file: the stored one goes in with the payload, so it is backed up, recorded and
+        // rolled back like any file of the release (the payload is always a work copy, never the user's build).
+        if (req.DlssNrDll is { } nr && File.Exists(nr) && !File.Exists(Path.Combine(payload, DlssNr.FileName))
+            && await Task.Run(() => DlssNr.Needed(req.Release, payload), ct))
+        {
+            progress?.Report(new(0.6, L.T("Adding the DLSS NR model file"), L.F("This build uses DLSS 5 neural rendering: your {0} goes in with it.", (DlssNr.FileName + " " + DlssNr.Version(nr)).Trim())));
+            await Task.Run(() => File.Copy(nr, Path.Combine(payload, DlssNr.FileName), overwrite: false), ct);
+        }
+
         var batText = await File.ReadAllTextAsync(batPath, ct);
         var manifest = new InstallManifest
         {
             Channel = req.Release.Channel,
+            Source = req.Release.Repo,
             Tag = req.Release.Tag,
             AssetName = req.Release.AssetName,
             TargetDir = target,

@@ -188,21 +188,32 @@ public sealed partial class MainWindow
 
     void OpenTourTip(TourStep step, int retries = 0)
     {
-        if (!_touring || _tour is not null) return;
+        if (!_touring || _tour is not null || _closed) return;
         var target = step.Target();
         // A target that is not on screen (folded pane, narrow window) gets the tip in the middle instead.
         if (target is { XamlRoot: null } or { ActualWidth: <= 0 } or { Visibility: not Visibility.Visible }) target = null;
+        // A tip's size limits are read from the app's resources when its template loads (its own Resources are not looked at):
+        // the welcome is wider and taller, the other steps keep WinUI's sizes.
+        SizeTourTips(welcome: _tourStep == 0);
         var tip = NewTourTip();
         tip.Target = target;
         tip.PreferredPlacement = target is null ? TeachingTipPlacementMode.Center
             : target.IsDescendantOf(Nav) && !target.IsDescendantOf(ContentFrame) ? TeachingTipPlacementMode.Right
             : TeachingTipPlacementMode.Bottom;
-        tip.Title = step.Title;
-        tip.Subtitle = step.Text;
         bool last = _tourStep == _steps.Length - 1;
         tip.ActionButtonContent = _tourStep == 0 ? L.T("Start") : last ? L.T("Let's go") : L.T("Next");
-        tip.HeroContent = _tourStep == 0 ? TourHero() : null;
-        tip.Content = _tourStep == 0 ? null : TourFooter(last);
+        if (_tourStep == 0)
+        {
+            // Welcome: wider, larger text, and the support note with Ko-fi (seen whether the tour is then started or skipped).
+            tip.HeroContent = TourHero();
+            tip.Content = WelcomeContent(step);
+        }
+        else
+        {
+            tip.Title = step.Title;
+            tip.Subtitle = step.Text;
+            tip.Content = TourFooter(last);
+        }
         RootGrid.Children.Add(tip);
         _tour = tip;
         tip.IsOpen = true;
@@ -234,9 +245,74 @@ public sealed partial class MainWindow
         return row;
     }
 
+    static readonly string[] TipSizeKeys = ["TeachingTipMinWidth", "TeachingTipMaxWidth", "TeachingTipMaxHeight"];
+    static Dictionary<string, object>? _tipSizes;
+
+    static void SizeTourTips(bool welcome)
+    {
+        var res = Application.Current.Resources;
+        _tipSizes ??= TipSizeKeys.Where(res.ContainsKey).ToDictionary(k => k, k => res[k]);
+        if (welcome)
+        {
+            res["TeachingTipMinWidth"] = 540.0;
+            res["TeachingTipMaxWidth"] = 540.0;
+            res["TeachingTipMaxHeight"] = 900.0;
+        }
+        else foreach (var k in TipSizeKeys)
+        {
+            if (_tipSizes.TryGetValue(k, out var v)) res[k] = v; else res.Remove(k);
+        }
+    }
+
+    public const string KofiUrl = "https://ko-fi.com/lorenzoky";
+
+    /// <summary>The welcome step's body: its own big title and text, then a card asking for support, with the Ko-fi button.</summary>
+    FrameworkElement WelcomeContent(TourStep step)
+    {
+        var body = new StackPanel { Spacing = 10, Margin = new Thickness(0, 4, 0, 2) };
+        body.Children.Add(new TextBlock { Text = step.Title, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(new TextBlock { Text = step.Text, FontSize = 15, LineHeight = 22, TextWrapping = TextWrapping.Wrap, Opacity = 0.9 });
+
+        var tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x5E, 0x5B));
+        var card = new Grid { ColumnSpacing = 14, Padding = new Thickness(14, 12, 14, 12), Margin = new Thickness(0, 6, 0, 0), CornerRadius = new CornerRadius(10),
+                              Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1E, tint.R, tint.G, tint.B)) };
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        card.Children.Add(new Border
+        {
+            Width = 40, Height = 40, CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Top,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, tint.R, tint.G, tint.B)),
+            Child = new FontIcon { Glyph = "", FontSize = 18, Foreground = new SolidColorBrush(tint), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        });
+        var text = new StackPanel { Spacing = 6 };
+        text.Children.Add(new TextBlock { Text = L.T("Developed by LorenzoKy"), FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock
+        {
+            Text = L.F("If {0} has earned a place on your PC, you can buy me a slice of pizza.", AppInfo.Name),
+            FontSize = 13, LineHeight = 19, TextWrapping = TextWrapping.Wrap, Opacity = 0.75,
+        });
+        var kofi = new Button { Style = Ui.Style("AccentButtonStyle"), Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 4, 0, 0) };
+        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        label.Children.Add(new FontIcon { Glyph = "", FontSize = 14 });
+        label.Children.Add(new TextBlock { Text = L.T("Support on Ko-fi") });
+        kofi.Content = label;
+        ToolTipService.SetToolTip(kofi, "ko-fi.com/lorenzoky");
+        kofi.Click += (_, _) =>
+        {
+            Log.Info("Welcome: Ko-fi opened");
+            try { GameLauncher.OpenUri(KofiUrl); }
+            catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
+        };
+        text.Children.Add(kofi);
+        Grid.SetColumn(text, 1);
+        card.Children.Add(text);
+        body.Children.Add(card);
+        return body;
+    }
+
     static FrameworkElement TourHero() => new Border
     {
-        Height = 120,
+        Height = 150,
         Background = new LinearGradientBrush
         {
             StartPoint = new(0, 0),
@@ -251,7 +327,7 @@ public sealed partial class MainWindow
         Child = new Image
         {
             Source = new BitmapImage { UriSource = new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "Logo.png")), DecodePixelHeight = 160 },
-            Height = 84,
+            Height = 100,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -260,6 +336,7 @@ public sealed partial class MainWindow
 
     void EndTour(bool markSeen)
     {
+        if (_tipSizes is not null) SizeTourTips(welcome: false);
         if (_touring)
         {
             _touring = false;

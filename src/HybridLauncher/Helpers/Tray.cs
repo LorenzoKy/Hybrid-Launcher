@@ -11,12 +11,13 @@ namespace HybridLauncher.Helpers;
 public sealed class Tray : IDisposable
 {
     const int WM_APP_TRAY = 0x8000 + 1, WM_LBUTTONUP = 0x0202, WM_RBUTTONUP = 0x0205, WM_LBUTTONDBLCLK = 0x0203, WM_COMMAND = 0x0111;
-    const int NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2, NIF_MESSAGE = 1, NIF_ICON = 2, NIF_TIP = 4;
+    const int NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2, NIF_MESSAGE = 1, NIF_ICON = 2, NIF_TIP = 4, NIF_INFO = 0x10;
+    const int NIIF_USER = 4, NIIF_LARGE_ICON = 0x20, NIN_BALLOONUSERCLICK = 0x0400 + 5;
     const int CmdOpen = 1, CmdQuit = 2;
 
     readonly WndProc _proc; // Kept alive: Windows calls it for as long as the window exists.
     readonly nint _hwnd;
-    readonly nint _icon;
+    readonly nint _icon, _bigIcon;
     readonly Action _open, _quit;
     readonly int _taskbarCreated;
     bool _added;
@@ -40,6 +41,9 @@ public sealed class Tray : IDisposable
         var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         int size = GetSystemMetrics(49 /* SM_CXSMICON */);
         _icon = File.Exists(ico) ? LoadImage(0, ico, 1 /* IMAGE_ICON */, size, size, 0x10 /* LR_LOADFROMFILE */) : 0;
+        // The notification's picture: the large size of the same icon.
+        int big = GetSystemMetrics(11 /* SM_CXICON */);
+        _bigIcon = File.Exists(ico) ? LoadImage(0, ico, 1, big, big, 0x10) : 0;
         Tooltip = tooltip;
         Add();
     }
@@ -79,6 +83,27 @@ public sealed class Tray : IDisposable
         szTip = Tooltip.Length > 120 ? Tooltip[..120] : Tooltip,
     };
 
+    Action? _notificationClick;
+
+    /// <summary>
+    /// A Windows notification from the icon (shown as a toast on Windows 10 and 11, kept in the notification centre); a click on
+    /// it runs <paramref name="click"/>.
+    /// </summary>
+    public void Notify(string title, string text, Action? click)
+    {
+        if (!_added) { Log.Warn("Tray notification: the icon is not in the notification area"); return; }
+        _notificationClick = click;
+        var data = Data();
+        data.uFlags |= NIF_INFO;
+        data.szInfoTitle = title.Length > 63 ? title[..63] : title;
+        data.szInfo = text.Length > 255 ? text[..255] : text;
+        // The app's own icon (NIIF_USER takes hIcon); the large one only when it loaded, else Windows drops the notification.
+        data.dwInfoFlags = NIIF_USER | (_bigIcon != 0 ? NIIF_LARGE_ICON : 0);
+        data.hBalloonIcon = _bigIcon;
+        bool shown = Shell_NotifyIcon(NIM_MODIFY, ref data);
+        Log.Info($"Tray notification \"{title}\": {(shown ? "sent" : "refused")}");
+    }
+
     public void Update(string tooltip)
     {
         Tooltip = tooltip;
@@ -95,6 +120,7 @@ public sealed class Tray : IDisposable
             {
                 int ev = (int)(lParam & 0xFFFF);
                 if (ev is WM_LBUTTONUP or WM_LBUTTONDBLCLK) _open();
+                else if (ev == NIN_BALLOONUSERCLICK) (_notificationClick ?? _open)();
                 else if (ev == WM_RBUTTONUP) ShowMenu();
                 return 0;
             }
@@ -134,6 +160,7 @@ public sealed class Tray : IDisposable
             _added = false;
         }
         if (_icon != 0) DestroyIcon(_icon);
+        if (_bigIcon != 0) DestroyIcon(_bigIcon);
         if (_hwnd != 0) DestroyWindow(_hwnd);
     }
 

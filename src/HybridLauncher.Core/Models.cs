@@ -96,13 +96,15 @@ public sealed class OptiSetupOptions
     public OptiSetupOptions Clone() => (OptiSetupOptions)MemberwiseClone();
 }
 
-/// <summary>Custom = a build imported by the user (see <see cref="Opti.CustomBuilds"/>), not a GitHub release.</summary>
-public enum OptiChannel { Stable, Nightly, Custom }
+/// <summary>Custom = a build imported by the user (see <see cref="Opti.CustomBuilds"/>), not a GitHub release. Fork = a release of another OptiScaler repository (see <see cref="OptiFork"/>).</summary>
+public enum OptiChannel { Stable, Nightly, Custom, Fork }
 
 /// <summary>What Hybrid Launcher put into a game folder, so it can be removed exactly and originals restored.</summary>
 public sealed class InstallManifest
 {
     public OptiChannel Channel { get; set; }
+    /// <summary>For a fork: the repository ("owner/name") the release came from.</summary>
+    public string? Source { get; set; }
     public string Tag { get; set; } = "";
     public string AssetName { get; set; } = "";
     public string TargetDir { get; set; } = "";
@@ -139,6 +141,7 @@ public sealed class InstallManifest
     {
         OptiChannel.Nightly => L.F("Nightly {0}", Tag),
         OptiChannel.Custom => L.F("Custom build \"{0}\"", AssetName),
+        OptiChannel.Fork => $"{Source} {Tag}",
         _ => Tag,
     };
 }
@@ -168,6 +171,16 @@ public sealed class GameSettings
     public InstallManifest? Install { get; set; }
 
     /// <summary>
+    /// This game's own choice for the stored DLSS NR model file (<see cref="Opti.DlssNr"/>): null follows the global switch
+    /// (<see cref="AppSettings.UseDlssNr"/>), true or false is this game's exception to it.
+    /// </summary>
+    public bool? DlssNrChoice { get; set; }
+
+    /// <summary>Settings from 1.3.0-rc.4/rc.5 had a per-game switch, on by default: a game turned off there stays off.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? DlssNr { get => null; set { if (value == false) DlssNrChoice ??= false; } }
+
+    /// <summary>
     /// Plugins from the shared ASI folder turned on for this game only (file names), copied into its OptiScaler install.
     /// Null until set: before 0.11 one switch served every game, and the plugins an install already holds carry over.
     /// </summary>
@@ -176,7 +189,7 @@ public sealed class GameSettings
     /// <summary>Entries of the shared custom dll folder turned on for this game only (folder names), copied into its OptiScaler install.</summary>
     public HashSet<string> CustomDlls { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Size of the install folder at the last measurement (shown under "Open game folder" before the new one is done).</summary>
+    /// <summary>Size of the install folder at the last measurement (shown under "Game folder" before the new one is done).</summary>
     public long? SizeBytes { get; set; }
     public DateTime? SizeMeasuredAt { get; set; }
 
@@ -234,6 +247,12 @@ public sealed class GameSettings
     /// <summary>The Luma mod Hybrid Launcher put in the game folder, so it can be removed exactly.</summary>
     public LumaState? Luma { get; set; }
 
+    /// <summary>The Ultra+ mod Hybrid Launcher put in the game folder (with its add-ons), so it can be updated and removed exactly.</summary>
+    public UltraPlusState? UltraPlus { get; set; }
+
+    /// <summary>The Ultra+ game picked by hand for this game (its key), when the automatic match found none or the wrong one.</summary>
+    public string? UltraPlusKey { get; set; }
+
     /// <summary>ReShade in this game folder, as Hybrid Launcher set it up (loaded through OptiScaler or not).</summary>
     public ReShadeState ReShade { get; set; } = new();
 
@@ -242,6 +261,13 @@ public sealed class GameSettings
 
     /// <summary>When Hybrid Launcher first listed this game (the library's "Date added" order).</summary>
     public DateTime? AddedAt { get; set; }
+}
+
+/// <summary>An OptiScaler fork the user added: a GitHub repository ("owner/name") that publishes releases.</summary>
+public sealed class OptiFork
+{
+    public string Name { get; set; } = "";
+    public string Repo { get; set; } = "";
 }
 
 /// <summary>One link of the Quick access tab.</summary>
@@ -274,6 +300,42 @@ public sealed class LumaState
     public Dictionary<string, string> Backups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>ReShade from the Luma package went in as ReShade64.dll, loaded by OptiScaler.</summary>
     public bool ThroughOpti { get; set; }
+}
+
+/// <summary>
+/// An Ultra+ mod installed by Hybrid Launcher: the Ultra+ game it was made for, the archive, and every file it added (relative to
+/// <see cref="Root"/>, the game's install folder), so an update replaces exactly these and an uninstall leaves the folder as it was.
+/// </summary>
+public sealed class UltraPlusState
+{
+    /// <summary>The game's key in Ultra+'s list ("Stalker2").</summary>
+    public string GameKey { get; set; } = "";
+    /// <summary>The archive installed: "Stalker2 Ultra Plus v6.5.1.zip".</summary>
+    public string File { get; set; } = "";
+    public string Version { get; set; } = "";
+    public bool Beta { get; set; }
+    /// <summary>When Ultra+ published that archive (newer ones are updates).</summary>
+    public DateTime Published { get; set; }
+    public DateTime InstalledAt { get; set; }
+    /// <summary>The game's install folder the files are relative to.</summary>
+    public string Root { get; set; } = "";
+    /// <summary>"I manage my own UE4SS": only Ultra+'s own files went in, the game's UE4SS was left alone.</summary>
+    public bool OwnUe4ss { get; set; }
+    public List<string> Files { get; set; } = [];
+    /// <summary>Files that were there before and were replaced: relative path -> backup path.</summary>
+    public Dictionary<string, string> Backups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Add-ons installed on top: add-on name -> what went in.</summary>
+    public Dictionary<string, UltraPlusAddonState> Addons { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class UltraPlusAddonState
+{
+    public string File { get; set; } = "";
+    public string Version { get; set; } = "";
+    public DateTime Published { get; set; }
+    public DateTime InstalledAt { get; set; }
+    /// <summary>Relative to the game's install folder, as <see cref="UltraPlusState.Files"/>.</summary>
+    public List<string> Files { get; set; } = [];
 }
 
 /// <summary>A display whose HDR Hybrid Launcher turned on for a game (turned off again when the game closes, or at the next start).</summary>
@@ -450,11 +512,41 @@ public sealed class AppSettings
     /// </summary>
     public bool HardwareAcceleration { get; set; } = true;
 
+    /// <summary>Hardware acceleration is paused while a game started from Hybrid Launcher runs, and resumes when it closes.</summary>
+    public bool PauseEffectsInGame { get; set; } = true;
+
+    /// <summary>
+    /// Background saver: while the window is open but another app is in front, the moving clips and muted trailers pause, the
+    /// polling stops and Windows runs Hybrid Launcher in efficiency mode; all of it comes back the moment it is in front again.
+    /// </summary>
+    public bool BackgroundSaver { get; set; } = true;
+
     /// <summary>The game list's width, dragged by its edge (240 to 480, and at most 45 % of the window).</summary>
     public double SidebarWidth { get; set; } = 312;
 
+    /// <summary>OptiScaler forks added by the user (the known ones are in <see cref="Opti.OptiForks"/>).</summary>
+    public List<OptiFork> OptiForks { get; set; } = [];
+
+    /// <summary>OptiScaler sources whose new releases raise a notification (see <see cref="Opti.OptiUpdates"/>: "stable", "nightly", "fork:owner/name").</summary>
+    public List<string> OptiFollow { get; set; } = [];
+
+    /// <summary>The newest release already seen per followed source (its tag): a different one notifies.</summary>
+    public Dictionary<string, string> OptiSeen { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Put the stored DLSS NR model file (<see cref="Opti.DlssNr"/>) in every OptiScaler install that needs it.</summary>
+    public bool UseDlssNr { get; set; }
+
+    /// <summary>The fork ("owner/name") the Fork channel of the OptiScaler tab shows.</summary>
+    public string? SelectedFork { get; set; }
+
     /// <summary>Start Hybrid Launcher with Windows (in the notification area, without a window).</summary>
     public bool StartWithWindows { get; set; }
+
+    /// <summary>A game started from Hybrid Launcher that is up and running sends the window to the notification area; it comes back when the game closes.</summary>
+    public bool HideWhilePlaying { get; set; } = true;
+
+    /// <summary>A start with Windows opens the window too (off, the default: only the icon in the notification area).</summary>
+    public bool StartOpensWindow { get; set; }
 
     /// <summary>Displays whose HDR Hybrid Launcher turned on for a running game: turned back off when it closes, or at the next start.</summary>
     public List<HdrRestore> HdrRestore { get; set; } = [];
@@ -604,6 +696,42 @@ public sealed class AppSettings
     /// <summary>Settings → Features: read achievements and the last session of games run through a Steam emulator (Goldberg / GSE).</summary>
     public bool ReadSteamEmulator { get; set; } = true;
 
+    /// <summary>Ultra+: look for new builds of the installed mods when Hybrid Launcher starts, then every few hours (the Ultra+ page's badge).</summary>
+    public bool UltraPlusAutoCheck { get; set; } = true;
+
+    /// <summary>Ultra+: a newer build found by the background check goes in by itself (settings kept), not only counted.</summary>
+    public bool UltraPlusAutoUpdate { get; set; } = true;
+
+    /// <summary>Ultra+: a Windows notification when a newer build of an installed Ultra+ mod comes out.</summary>
+    public bool UltraPlusNotify { get; set; }
+
+    /// <summary>The bell in the title bar (Settings → Notifications).</summary>
+    public bool ShowBell { get; set; } = true;
+
+    /// <summary>Days the bell keeps a notification (0 = until cleared).</summary>
+    public int InboxKeepDays { get; set; } = 30;
+
+    /// <summary>Kinds ("opti", "ultra", "app") the bell does not keep.</summary>
+    public HashSet<string> InboxOff { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Kinds ("opti", "ultra", "app") that get no Windows pop-up (still kept in the list unless off there too).</summary>
+    public HashSet<string> PopupOff { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The Hybrid Launcher version a Windows pop-up was last shown for: one pop-up per new version.</summary>
+    public string? AppUpdatePopupShown { get; set; }
+
+    /// <summary>No Windows pop-ups while a game runs: they wait in the bell.</summary>
+    public bool QuietWhilePlaying { get; set; } = true;
+
+    /// <summary>Ultra+: the newest build already notified per Ultra+ game key (its archive name), so each build notifies once.</summary>
+    public Dictionary<string, string> UltraPlusSeen { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ultra+: offer beta builds too (newer, less tested), not only the stable ones.</summary>
+    public bool UltraPlusBetas { get; set; }
+
+    /// <summary>Ultra+: the user's own saved presets, by Ultra+ game key, then preset name -> setting -> value.</summary>
+    public Dictionary<string, Dictionary<string, Dictionary<string, string>>> UltraPlusPresets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public bool ScanSteam { get; set; } = true;
     public bool ScanEpic { get; set; } = true;
     public bool ScanGog { get; set; } = true;
@@ -645,20 +773,23 @@ public static class IconSpots
 public static class PageParts
 {
     public const string Links = "links", Tags = "tags", PlayStats = "playstats", Hdr = "hdr", Cloud = "cloud", GameFolder = "gamefolder",
-        SaveFolder = "savefolder", ConfigFolder = "configfolder", Achievements = "achievements", ModsPath = "modspath";
+        SaveFolder = "savefolder", ConfigFolder = "configfolder", Achievements = "achievements", ModsPath = "modspath",
+        InstalledMods = "installedmods", DlssNr = "dlssnr";
 
     public static readonly (string Key, string Label)[] All =
     [
         (Links, "Links on the banner"),
+        (InstalledMods, "Installed mods and their versions (top left of the banner)"),
         (Tags, "Tags on the banner (store, graphics API, upscalers, developer and date)"),
         (PlayStats, "Last played and play time"),
         (Hdr, "Smart HDR"),
         (Cloud, "Cloud saves"),
-        (GameFolder, "Open game folder"),
-        (SaveFolder, "Open saves folder"),
-        (ConfigFolder, "Open configuration folder"),
+        (GameFolder, "Game folder"),
+        (SaveFolder, "Saves folder"),
+        (ConfigFolder, "Configuration folder"),
         (Achievements, "Achievements button"),
         (ModsPath, "Where mods go (the line under the bar)"),
+        (DlssNr, "DLSS NR model file picker (OptiScaler tab, forks and custom builds)"),
     ];
 
     public static bool HiddenEverywhere(AppSettings settings, string part) => settings.HiddenPageParts.Contains(part);

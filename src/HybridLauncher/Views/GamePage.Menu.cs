@@ -151,6 +151,8 @@ public sealed partial class GamePage
                 HdrToggle_Click(HdrToggle, new RoutedEventArgs());
             };
             page.Children.Add(PropRow(L.T("Smart HDR"), L.T("Windows HDR turns on when the game starts and off when it closes."), hdr));
+            page.Children.Add(PropRow(L.T("Desktop shortcut"), L.T("Starts the game through Hybrid Launcher (Smart HDR, play time, Stop)."),
+                PropButton(L.T("Create"), () => Shortcut_Click(this, new RoutedEventArgs()))));
         }
 
         if (!game.NotInstalled)
@@ -223,8 +225,6 @@ public sealed partial class GamePage
             var pin = new ToggleSwitch { IsOn = AppState.IsPinned(game.Id), OnContent = "", OffContent = "", MinWidth = 0 };
             pin.Toggled += (_, _) => { if (pin.IsOn != AppState.IsPinned(game.Id)) Pin_Click(this, new RoutedEventArgs()); };
             page.Children.Add(PropRow(L.T("Pinned to quick access"), L.T("Pinned games sit at the top of the list."), pin));
-            page.Children.Add(PropRow(L.T("Desktop shortcut"), L.T("Starts the game through Hybrid Launcher (Smart HDR, play time, Stop)."),
-                PropButton(L.T("Create"), () => Shortcut_Click(this, new RoutedEventArgs()))));
             page.Children.Add(PropRow(L.T("Hide from the list"), L.T("Show it again from Settings."),
                 PropButton(L.T("Hide"), () => { CloseProperties(); Hide_Click(this, new RoutedEventArgs()); })));
         }

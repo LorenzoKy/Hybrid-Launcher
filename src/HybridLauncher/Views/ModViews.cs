@@ -236,7 +236,7 @@ public sealed partial class ReShadeView : UserControl
     readonly StackPanel _saved = new() { Spacing = 6 };
     readonly Grid _header = new() { Padding = new Thickness(20, 16, 20, 16), ColumnSpacing = 14, CornerRadius = new CornerRadius(8, 8, 0, 0) };
     List<string> _versions = [];
-    bool _busy;
+    bool _busy => GameJobs.Busy(_ctx.Game.Id);
     readonly ReShadeSettingsView _settingsView;
 
     public ReShadeView(ModContext ctx)
@@ -336,7 +336,9 @@ public sealed partial class ReShadeView : UserControl
         var versions = _versions.Count > 0 ? _versions : ReShade.Saved().Select(s => s.Release.Version).Distinct().ToList();
         if (versions.Count == 0)
         {
-            _version.PlaceholderText = L.T("Offline: can't list versions");
+            _version.PlaceholderText = HybridLauncher.Core.Net.Http.GitHubLimitedUntil is { } until
+                ? L.F("GitHub limit reached: versions after {0:HH:mm}", until.ToLocalTime())
+                : L.T("Offline: can't list versions");
             _run.IsEnabled = false;
             return;
         }
@@ -358,8 +360,18 @@ public sealed partial class ReShadeView : UserControl
     }
 
     /// <summary>Redraws the folder state: ReShade found, how it is loaded, the OptiScaler part and the file buttons.</summary>
+    /// <summary>Its bar follows a running reshade job for this game, also one started before the page was made again.</summary>
+    public void ShowJob(GameJobs.Job? job)
+    {
+        bool mine = job is { Kind: "reshade" };
+        _progress.Visibility = mine ? Visibility.Visible : Visibility.Collapsed;
+        if (mine && job!.Fraction >= 0) _progress.Value = job.Fraction;
+        _run.IsEnabled = job is null;
+    }
+
     public void Refresh()
     {
+        ShowJob(GameJobs.For(_ctx.Game.Id));
         var dir = _ctx.TargetDir();
         var found = dir is null ? null : ReShade.Detect(dir);
         bool optiIni = dir is not null && File.Exists(Path.Combine(dir, "OptiScaler.ini"));
@@ -436,11 +448,11 @@ public sealed partial class ReShadeView : UserControl
             bool through = found is { LoadedByOpti: true } && optiLoads == true;
             _optiBody.Children.Add(ModUi.Check(through, through ? L.T("OptiScaler loads ReShade (ReShade64.dll, LoadReshade = true)") : L.T("OptiScaler does not load ReShade yet"),
                 through ? L.T("Both work together. Press Home in game for ReShade, Insert for OptiScaler's menu.") :
-                L.T("OptiScaler and ReShade can't both be dxgi.dll. Hybrid Launcher renames ReShade's dll to ReShade64.dll and turns on LoadReshade in OptiScaler.ini (kept after OptiScaler updates).")));
+                L.T("OptiScaler and ReShade can't both be dxgi.dll. Hybrid Launcher renames ReShade's DLL to ReShade64.dll and turns on LoadReshade in OptiScaler.ini (kept after OptiScaler updates).")));
             if (opti is null && found is not null && !found.LoadedByOpti)
-                _optiBody.Children.Add(ModUi.Check(false, L.T("ReShade replaced OptiScaler's dll"), L.T("The ReShade installer wrote over OptiScaler's file. Load ReShade through OptiScaler, then reinstall OptiScaler (Hybrid Launcher offers it).")));
+                _optiBody.Children.Add(ModUi.Check(false, L.T("ReShade replaced OptiScaler's DLL"), L.T("The ReShade installer wrote over OptiScaler's file. Load ReShade through OptiScaler, then reinstall OptiScaler (Hybrid Launcher offers it).")));
             else if (opti is null && found is { LoadedByOpti: true })
-                _optiBody.Children.Add(ModUi.Check(false, L.T("OptiScaler's own dll is missing"), L.T("Only OptiScaler.ini is left (ReShade's installer may have written over OptiScaler's dll), so nothing loads ReShade64.dll. Install OptiScaler again from the OptiScaler tab.")));
+                _optiBody.Children.Add(ModUi.Check(false, L.T("OptiScaler's own DLL is missing"), L.T("Only OptiScaler.ini is left (ReShade's installer may have written over OptiScaler's DLL), so nothing loads ReShade64.dll. Install OptiScaler again from the OptiScaler tab.")));
             var row = new WrapPanel(8, []);
             if (!through) row.Children.Add(ModUi.Action(L.T("Load ReShade through OptiScaler"), "", () => _ = LoadThroughOptiAsync(), accent: true));
             else row.Children.Add(ModUi.Action(L.T("Stop loading it through OptiScaler"), "", () => _ = StopThroughOptiAsync()));
@@ -622,6 +634,7 @@ public sealed partial class ReShadeView : UserControl
         timer.Tick += (_, _) =>
         {
             if (++ticks > 200 || _ctx.Token.IsCancellationRequested) { timer.Stop(); return; }
+            if (Helpers.MediaPolicy.Quiet) return;
             var now = _ctx.TargetDir() is { } dir ? ReShade.Detect(dir)?.Version : null;
             if (now == before) return;
             timer.Stop();
@@ -633,6 +646,7 @@ public sealed partial class ReShadeView : UserControl
 
     async Task RemoveAsync()
     {
+        if (GameJobs.InTheWay(_ctx.Game.Id, _ctx.Game.Title)) return;
         var dir = _ctx.TargetDir();
         if (dir is null || ReShade.Detect(dir) is not { } found) { Refresh(); return; }
         if (OptiInstaller.RunningGameProcess(dir) is { } running)
@@ -660,13 +674,14 @@ public sealed partial class ReShadeView : UserControl
         if (version is null) return;
         bool addon = _addon.IsChecked == true;
         var release = new ReShadeRelease(version, addon);
-        _busy = true;
+        var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "reshade", "ReShade");
+        if (job is null) return;
         _run.IsEnabled = false;
         _progress.Visibility = Visibility.Visible;
         _progress.Value = 0;
         try
         {
-            var path = await ReShade.DownloadAsync(release, new Progress<double>(p => _progress.Value = p), _ctx.Token);
+            var path = await ReShade.DownloadAsync(release, new Progress<double>(p => GameJobs.Report(job, p)), job.Token);
             if (uninstallHint) App.Window?.ShowInfo(L.T("In ReShade's setup, pick this game, then Uninstall."));
             Start(path, release);
             FillSaved();
@@ -678,7 +693,7 @@ public sealed partial class ReShadeView : UserControl
         }
         finally
         {
-            _busy = false;
+            GameJobs.End(job);
             _run.IsEnabled = true;
             _progress.Visibility = Visibility.Collapsed;
         }
@@ -686,6 +701,7 @@ public sealed partial class ReShadeView : UserControl
 
     async Task LoadThroughOptiAsync()
     {
+        if (GameJobs.InTheWay(_ctx.Game.Id, _ctx.Game.Title)) return;
         var dir = _ctx.TargetDir();
         if (dir is null) return;
         if (OptiInstaller.RunningGameProcess(dir) is { } running)
@@ -711,14 +727,15 @@ public sealed partial class ReShadeView : UserControl
         Ui.Safe(Refresh);
         _ctx.OptiChanged();
         if (result.OptiDllReplaced && _ctx.Settings.Install is null)
-            App.Window?.ShowInfo(L.T("ReShade had written over OptiScaler's dll: install OptiScaler again from the OptiScaler tab. ReShade stays as ReShade64.dll."));
+            App.Window?.ShowInfo(L.T("ReShade had written over OptiScaler's DLL: install OptiScaler again from the OptiScaler tab. ReShade stays as ReShade64.dll."));
         else if (result.OptiDllReplaced && _ctx.Settings.Install is not null &&
-                await _ctx.ConfirmAsync(this, L.T("Reinstall OptiScaler?"), L.T("ReShade's installer had written over OptiScaler's dll. Reinstall OptiScaler now, with your settings? ReShade stays as ReShade64.dll."), L.T("Reinstall")))
+                await _ctx.ConfirmAsync(this, L.T("Reinstall OptiScaler?"), L.T("ReShade's installer had written over OptiScaler's DLL. Reinstall OptiScaler now, with your settings? ReShade stays as ReShade64.dll."), L.T("Reinstall")))
                 _ctx.ReinstallOpti();
     }
 
     async Task StopThroughOptiAsync()
     {
+        if (GameJobs.InTheWay(_ctx.Game.Id, _ctx.Game.Title)) return;
         var dir = _ctx.TargetDir();
         if (dir is null) return;
         try
@@ -754,7 +771,7 @@ public sealed partial class RenoDxView : UserControl
     readonly ProgressBar _progress = new() { Maximum = 1, Visibility = Visibility.Collapsed };
     List<RenoDxMod> _mods = [];
     FileSystemWatcher? _watcher;
-    bool _busy;
+    bool _busy => GameJobs.Busy(_ctx.Game.Id);
 
     public RenoDxView(ModContext ctx)
     {
@@ -949,8 +966,17 @@ public sealed partial class RenoDxView : UserControl
     bool _firstFeatures = true;
 
     /// <summary>Redraws the requirements and the installed files.</summary>
+    /// <summary>Its bar follows a running renodx job for this game, also one started before the page was made again.</summary>
+    public void ShowJob(GameJobs.Job? job)
+    {
+        bool mine = job is { Kind: "renodx" };
+        _progress.Visibility = mine ? Visibility.Visible : Visibility.Collapsed;
+        if (mine && job!.Fraction >= 0) _progress.Value = job.Fraction;
+    }
+
     public void Refresh()
     {
+        ShowJob(GameJobs.For(_ctx.Game.Id));
         var dir = _ctx.TargetDir();
         _checks.Children.Clear();
         _installed.Children.Clear();
@@ -1034,12 +1060,13 @@ public sealed partial class RenoDxView : UserControl
     async Task InstallSnapshotAsync(RenoDxLink link)
     {
         if (_busy || !CanInstall(out var dir)) return;
-        _busy = true;
+        var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "renodx", "RenoDX");
+        if (job is null) return;
         _progress.Visibility = Visibility.Visible;
         _progress.Value = 0;
         try
         {
-            var path = await RenoDx.InstallSnapshotAsync(link, dir, new Progress<double>(p => _progress.Value = p), _ctx.Token);
+            var path = await RenoDx.InstallSnapshotAsync(link, dir, new Progress<double>(p => GameJobs.Report(job, p)), job.Token);
             _ctx.Settings.RenoDxFiles[Path.GetFileName(path)] = "snapshot " + DateTime.Now.ToString("d MMM yyyy");
             SettingsStore.Save();
             App.Window?.ShowSuccess(L.F("{0} installed. Start the game and press Home for its settings.", Path.GetFileName(path)));
@@ -1048,8 +1075,8 @@ public sealed partial class RenoDxView : UserControl
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the mod"), ex.Message, ex); }
         finally
         {
-            _busy = false;
             _progress.Visibility = Visibility.Collapsed;
+            GameJobs.End(job);
             Refresh();
         }
     }
@@ -1063,10 +1090,11 @@ public sealed partial class RenoDxView : UserControl
     async Task InstallFileAsync(string file)
     {
         if (_busy || !CanInstall(out var dir)) return;
-        _busy = true;
+        var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "renodx", "RenoDX");
+        if (job is null) return;
         try
         {
-            var added = await RenoDx.InstallFromFileAsync(file, dir, _ctx.Token);
+            var added = await RenoDx.InstallFromFileAsync(file, dir, job.Token);
             foreach (var a in added) _ctx.Settings.RenoDxFiles[a] = Path.GetFileName(file);
             SettingsStore.Save();
             App.Window?.ShowSuccess(L.F("Installed {0}.", string.Join(", ", added)));
@@ -1075,7 +1103,7 @@ public sealed partial class RenoDxView : UserControl
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not install the file"), ex.Message, ex); }
         finally
         {
-            _busy = false;
+            GameJobs.End(job);
             Refresh();
         }
     }
@@ -1346,34 +1374,22 @@ public sealed partial class QuickAccessView : UserControl
         Fill();
     }
 
-    /// <summary>Folders and files Hybrid Launcher already knows for this game, not linked yet: one click adds them.</summary>
+    /// <summary>
+    /// Programs and folders that help modding this game, not linked yet: mod tools installed on this PC (Vortex, Mod Organizer 2,
+    /// Cheat Engine...), the mod folders the game already has (Mods, BepInEx, plugins...) and the logs mods write. The game, saves
+    /// and configuration folders are left out: the buttons on the launch bar open them.
+    /// </summary>
     async Task SuggestAsync()
     {
         var dir = _ctx.TargetDir();
         // Labels are saved in English (the key of the translation), so a link keeps its name if the language changes.
         var list = new List<(string Kind, string Path, string Label)>();
-        if (_ctx.Game.InstallDir.Length > 0) list.Add(("folder", _ctx.Game.InstallDir, "Install folder"));
-        if (dir is not null)
+        await Task.Run(() =>
         {
-            foreach (var (file, label) in new[] { ("OptiScaler.ini", "OptiScaler.ini"), ("ReShade.ini", "ReShade.ini"), ("OptiScaler.log", "OptiScaler log") })
-            {
-                var p = Path.Combine(dir, file);
-                if (File.Exists(p)) list.Add(("file", p, label));
-            }
-            var shaders = Path.Combine(dir, "reshade-shaders");
-            if (Directory.Exists(shaders)) list.Add(("folder", shaders, "ReShade shaders"));
-        }
-        try
-        {
-            if (await _ctx.Data.Pcgw is { } wiki)
-            {
-                var store = _ctx.Game.Store;
-                var (config, saves) = await Task.Run(() => (Core.Media.Pcgw.ExistingFolder(wiki.ConfigPaths, store), Core.Media.Pcgw.ExistingFolder(wiki.SavePaths, store)));
-                if (saves is not null) list.Add(("folder", saves, "Saves"));
-                if (config is not null) list.Add(("folder", config, "Configuration"));
-            }
-        }
-        catch (Exception ex) { Log.Warn($"Quick access suggestions: {ex.Message}"); }
+            list.AddRange(ModTools.Installed());
+            list.AddRange(ModTools.InGameFolder(_ctx.Game.InstallDir));
+            if (dir is not null && !string.Equals(dir, _ctx.Game.InstallDir, StringComparison.OrdinalIgnoreCase)) list.AddRange(ModTools.InGameFolder(dir));
+        });
         if (_ctx.Token.IsCancellationRequested) return;
 
         _suggested.Children.Clear();
@@ -1382,7 +1398,7 @@ public sealed partial class QuickAccessView : UserControl
             if (_ctx.Settings.QuickLinks.Any(l => l.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) continue;
             var (glyph, tint) = Look(kind, path);
             var p = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            p.Children.Add(new FontIcon { Glyph = "", FontSize = 11 });
+            p.Children.Add(new FontIcon { Glyph = "", FontSize = 11 });
             p.Children.Add(new FontIcon { Glyph = glyph, FontSize = 13, Foreground = new SolidColorBrush(tint) });
             p.Children.Add(new TextBlock { Text = L.T(label) });
             var b = new Button { Content = p, Padding = new Thickness(10, 5, 12, 6), CornerRadius = new CornerRadius(14) };
@@ -1397,6 +1413,92 @@ public sealed partial class QuickAccessView : UserControl
             _suggested.Children.Add(b);
         }
         _suggestedPanel.Visibility = _suggested.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+}
+
+/// <summary>Where modding tools usually live on a PC, and the mod folders and logs a game folder may already hold.</summary>
+static class ModTools
+{
+    // (label, folder under a known root, exe pattern). Roots: Program Files, Program Files (x86), Local AppData, Local Programs.
+    static readonly (string Label, string[] Folders, string Exe)[] Tools =
+    [
+        ("Vortex", ["Black Tree Gaming Ltd/Vortex", "Vortex"], "Vortex.exe"),
+        ("Mod Organizer 2", ["Mod Organizer 2", "ModOrganizer2", "MO2"], "ModOrganizer.exe"),
+        ("Nexus Mods app", ["NexusMods.App", "Nexus Mods"], "NexusMods.App.exe"),
+        ("r2modman", ["r2modman"], "r2modman.exe"),
+        ("Thunderstore Mod Manager", ["Thunderstore Mod Manager", "Overwolf/Thunderstore"], "Thunderstore Mod Manager.exe"),
+        ("Cheat Engine", ["Cheat Engine 7.6", "Cheat Engine 7.5", "Cheat Engine 7.4", "Cheat Engine"], "cheatengine-x86_64.exe"),
+        ("WeMod", ["WeMod"], "WeMod.exe"),
+        ("Special K", ["Special K"], "SKIF.exe"),
+        ("MSI Afterburner", ["MSI Afterburner"], "MSIAfterburner.exe"),
+        ("HWiNFO", ["HWiNFO64"], "HWiNFO64.exe"),
+        ("Wabbajack", ["Wabbajack"], "Wabbajack.exe"),
+    ];
+
+    // Folders of a game that hold its mods, and the logs mods write: ones found are suggested.
+    static readonly (string Relative, string Label)[] GameFolders =
+    [
+        ("Mods", "Mods folder"), ("mods", "Mods folder"), ("Mod", "Mods folder"),
+        ("BepInEx/plugins", "BepInEx plugins"), ("BepInEx/config", "BepInEx config"),
+        ("UE4SS/Mods", "UE4SS mods"), ("ue4ss/Mods", "UE4SS mods"), ("Binaries/Win64/ue4ss/Mods", "UE4SS mods"), ("Binaries/Win64/Mods", "UE4SS mods"),
+        ("red4ext/plugins", "RED4ext plugins"), ("archive/pc/mod", "Cyberpunk mods"), ("r6/scripts", "Redscript scripts"), ("bin/x64/plugins", "CET and plugins"),
+        ("plugins", "Plugins folder"), ("scripts", "Scripts folder"), ("Plugins", "Plugins folder"),
+        ("reshade-presets", "ReShade presets"), ("reshade-shaders", "ReShade shaders"), ("Presets", "Presets"),
+    ];
+
+    static readonly (string Relative, string Label)[] GameFiles =
+    [
+        ("OptiScaler.log", "OptiScaler log"), ("ReShade.log", "ReShade log"), ("BepInEx/LogOutput.log", "BepInEx log"), ("UE4SS.log", "UE4SS log"),
+        ("Binaries/Win64/UE4SS.log", "UE4SS log"), ("dxgi.log", "Special K log"), ("SpecialK.log", "Special K log"),
+    ];
+
+    public static IEnumerable<(string Kind, string Path, string Label)> Installed()
+    {
+        string?[] roots =
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Overwolf"), "C:/Modding", "C:/Games/Modding",
+        ];
+        foreach (var (label, folders, exe) in Tools)
+        {
+            string? found = null;
+            foreach (var root in roots)
+            {
+                if (string.IsNullOrEmpty(root)) continue;
+                foreach (var folder in folders)
+                {
+                    try
+                    {
+                        var p = Path.Combine(root, folder, exe);
+                        if (File.Exists(p)) { found = p; break; }
+                        // Updaters keep the app in a versioned folder (app-1.2.3/WeMod.exe): one level down.
+                        var dir = Path.Combine(root, folder);
+                        if (Directory.Exists(dir))
+                            found = Directory.EnumerateDirectories(dir).Select(d => Path.Combine(d, exe)).FirstOrDefault(File.Exists);
+                        if (found is not null) break;
+                    }
+                    catch { }
+                }
+                if (found is not null) break;
+            }
+            if (found is not null) yield return ("exe", found, label);
+        }
+    }
+
+    public static IEnumerable<(string Kind, string Path, string Label)> InGameFolder(string? dir)
+    {
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) yield break;
+        foreach (var (rel, label) in GameFolders)
+        {
+            var p = Path.Combine(dir, rel);
+            if (Directory.Exists(p)) yield return ("folder", p, label);
+        }
+        foreach (var (rel, label) in GameFiles)
+        {
+            var p = Path.Combine(dir, rel);
+            if (File.Exists(p)) yield return ("file", p, label);
+        }
     }
 }
 
@@ -1635,7 +1737,7 @@ public sealed partial class LumaView : UserControl
     readonly ProgressBar _progress = new() { Maximum = 1, Visibility = Visibility.Collapsed };
     List<LumaMod> _mods = [];
     List<LumaBuild> _builds = [];
-    bool _busy;
+    bool _busy => GameJobs.Busy(_ctx.Game.Id);
 
     public LumaView(ModContext ctx)
     {
@@ -1756,8 +1858,17 @@ public sealed partial class LumaView : UserControl
     });
 
     /// <summary>Redraws what is in the folder now.</summary>
+    /// <summary>Its bar follows a running luma job for this game, also one started before the page was made again.</summary>
+    public void ShowJob(GameJobs.Job? job)
+    {
+        bool mine = job is { Kind: "luma" };
+        _progress.Visibility = mine ? Visibility.Visible : Visibility.Collapsed;
+        if (mine && job!.Fraction >= 0) _progress.Value = job.Fraction;
+    }
+
     public void Refresh()
     {
+        ShowJob(GameJobs.For(_ctx.Game.Id));
         _state.Children.Clear();
         var dir = _ctx.TargetDir();
         if (dir is null)
@@ -1896,13 +2007,14 @@ public sealed partial class LumaView : UserControl
                     : L.F("Luma brings its own ReShade with add-on support and replaces {0}, without a backup (as chosen in Settings → Features). Your ReShade presets and shaders stay.", reshade.FileName),
                 L.T("Install Luma")))
             return;
-        _busy = true;
+        var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "luma", "Luma");
+        if (job is null) return;
         _progress.Visibility = Visibility.Visible;
         _progress.Value = 0;
         Refresh();
         try
         {
-            var state = await Luma.InstallAsync(mod, version, dir, opti, _ctx.Settings.Luma, new Progress<double>(p => _progress.Value = p), _ctx.Token, backup);
+            var state = await Luma.InstallAsync(mod, version, dir, opti, _ctx.Settings.Luma, new Progress<double>(p => GameJobs.Report(job, p)), job.Token, backup);
             _ctx.Settings.Luma = state;
             // OptiScaler keeps loading ReShade after its own reinstalls and updates.
             if (opti) _ctx.Settings.IniOverrides["Plugins/LoadReshade"] = "true";
@@ -1914,8 +2026,8 @@ public sealed partial class LumaView : UserControl
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not install Luma"), ex.Message, ex); }
         finally
         {
-            _busy = false;
             _progress.Visibility = Visibility.Collapsed;
+            GameJobs.End(job);
             Refresh();
         }
     }
@@ -1927,7 +2039,8 @@ public sealed partial class LumaView : UserControl
         if (!await _ctx.ConfirmAsync(this, L.F("Uninstall {0}?", state.Mod),
                 L.F("Removes the {0} files Luma added and puts back the {1} file(s) it replaced.", state.Files.Count, state.Backups.Count), L.T("Uninstall")))
             return;
-        _busy = true;
+        var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "luma", "Luma");
+        if (job is null) return;
         try
         {
             var problems = await Task.Run(() => Luma.Uninstall(state, dir));
@@ -1941,7 +2054,7 @@ public sealed partial class LumaView : UserControl
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not uninstall Luma"), ex.Message, ex); }
         finally
         {
-            _busy = false;
+            GameJobs.End(job);
             Refresh();
         }
     }

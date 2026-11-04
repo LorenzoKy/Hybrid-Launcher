@@ -49,12 +49,40 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     static CompositionEffectFactory? _factory;
     static Compositor? _factoryCompositor;
 
+    // Hardware acceleration off (or paused while a game runs): the blur is left out and the surface is a flat colour, which costs the
+    // GPU nothing. The brush is made again when the setting changes, so the blur comes back by itself.
+    bool _flat;
+
+    /// <summary>The tint laid over a dark base, nearly opaque: what the glass looks like without the picture behind it.</summary>
+    Color FlatColor()
+    {
+        double a = Tint.A / 255.0;
+        byte Mix(byte over, byte under) => (byte)Math.Round(over * a + under * (1 - a));
+        return Color.FromArgb(Math.Max(Tint.A, (byte)0xEB), Mix(Tint.R, 0x14), Mix(Tint.G, 0x15), Mix(Tint.B, 0x18));
+    }
+
+    void OnPolicyChanged()
+    {
+        if (CompositionBrush is null || _flat == !MediaPolicy.Effects) return;
+        CompositionBrush.Dispose();
+        CompositionBrush = null;
+        OnConnected();
+    }
+
     protected override void OnConnected()
     {
         if (CompositionBrush is not null) return;
+        MediaPolicy.Changed -= OnPolicyChanged;
+        MediaPolicy.Changed += OnPolicyChanged;
         try
         {
             var compositor = CompositionTarget.GetCompositorForCurrentThread();
+            _flat = !MediaPolicy.Effects;
+            if (_flat)
+            {
+                CompositionBrush = compositor.CreateColorBrush(FlatColor());
+                return;
+            }
             if (_factory is null || _factoryCompositor != compositor)
             {
                 var graph = new CompositeEffect
@@ -94,12 +122,14 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
 
     protected override void OnDisconnected()
     {
+        MediaPolicy.Changed -= OnPolicyChanged;
         CompositionBrush?.Dispose();
         CompositionBrush = null;
     }
 
     void Update()
     {
+        if (CompositionBrush is CompositionColorBrush flat) { flat.Color = FlatColor(); return; }
         if (CompositionBrush is not CompositionEffectBrush brush) return;
         brush.Properties.InsertScalar("Blur.BlurAmount", (float)Blur);
         brush.Properties.InsertScalar("Saturation.Saturation", (float)Saturation);

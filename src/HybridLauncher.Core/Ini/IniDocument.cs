@@ -18,6 +18,15 @@ public sealed class IniEntry
     public IReadOnlyList<string> Options { get; init; } = [];
     public string? DefaultText { get; init; }
 
+    /// <summary>
+    /// The note above a run of keys written with no blank line between them (forks often describe a group once, above its
+    /// first key): what the later keys of the run show when they have no comment of their own. Never used to tell the kind.
+    /// </summary>
+    public string SharedComment { get; init; } = "";
+
+    /// <summary>The key is in the official OptiScaler.ini (see <see cref="OptiScalerKeys"/>); false for options a fork or test build adds.</summary>
+    public bool Official => OptiScalerKeys.IsOfficial(Section, Key);
+
     public string Path => $"{Section}/{Key}";
     public string Summary => Comment.Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "";
 }
@@ -75,7 +84,9 @@ public sealed partial class IniDocument
         value = value.Replace("\r", "").Replace("\n", "");
         var line = _lines[e.LineIndex];
         var eq = line.IndexOf('=');
-        _lines[e.LineIndex] = line[..(eq + 1)] + value;
+        // A note after the value ("Key=1 ; 0 = off") stays where it was.
+        var inline = InlineComment().Match(line[(eq + 1)..]);
+        _lines[e.LineIndex] = line[..(eq + 1)] + value + (inline.Success ? inline.Groups["c"].Value : "");
         e.Value = value;
         return true;
     }
@@ -96,8 +107,17 @@ public sealed partial class IniDocument
     [GeneratedRegex(@"^\s*\[(?<s>[^\]]+)\]\s*$")]
     private static partial Regex SectionLine();
 
-    [GeneratedRegex(@"^(?<k>[A-Za-z0-9_.]+)\s*=(?<v>.*)$")]
+    // Forks write keys with dashes too, and some indent them.
+    [GeneratedRegex(@"^\s*(?<k>[A-Za-z0-9_.\-]+)\s*=(?<v>.*)$")]
     private static partial Regex KeyLine();
+
+    // "1 ; 0 = off, 1 = on": a note after the value, set off by a space.
+    [GeneratedRegex(@"^(?<v>.*?)(?<c>\s+[;#].*)$")]
+    private static partial Regex InlineComment();
+
+    // "Game or OptiScaler", "Auto, PTX, or Cubin": the separators of a list of values.
+    [GeneratedRegex(@"\s*,\s*(?:or\s+)?|\s+or\s+", RegexOptions.IgnoreCase)]
+    private static partial Regex ListSeparator();
 
     [GeneratedRegex(@"Default(?:\s*\(auto\))?\s*is\s*(?<d>.+)$", RegexOptions.IgnoreCase)]
     private static partial Regex DefaultPart();
@@ -116,11 +136,13 @@ public sealed partial class IniDocument
         Entries.Clear();
         string section = "";
         var comments = new List<string>();
+        // The note of the run of keys the line belongs to (no blank line since its first key), for keys with none of their own.
+        string shared = "";
         for (int i = 0; i < _lines.Count; i++)
         {
             var line = _lines[i];
             var trimmed = line.Trim();
-            if (trimmed.Length == 0) { comments.Clear(); continue; }
+            if (trimmed.Length == 0) { comments.Clear(); shared = ""; continue; }
             if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
             {
                 var c = trimmed.TrimStart(';', '#').Trim();
@@ -128,17 +150,21 @@ public sealed partial class IniDocument
                 continue;
             }
             var s = SectionLine().Match(line);
-            if (s.Success) { section = s.Groups["s"].Value.Trim(); comments.Clear(); continue; }
+            if (s.Success) { section = s.Groups["s"].Value.Trim(); comments.Clear(); shared = ""; continue; }
 
             var k = KeyLine().Match(line);
-            if (!k.Success) { comments.Clear(); continue; }
+            if (!k.Success) { comments.Clear(); shared = ""; continue; }
 
-            Entries.Add(Describe(section, k.Groups["k"].Value, k.Groups["v"].Value.Trim(), i, comments));
+            var value = k.Groups["v"].Value;
+            if (InlineComment().Match(value) is { Success: true } inline) value = inline.Groups["v"].Value;
+            var entry = Describe(section, k.Groups["k"].Value, value.Trim(), i, comments, comments.Count == 0 ? shared : "");
+            Entries.Add(entry);
+            if (comments.Count > 0) shared = entry.Comment;
             comments.Clear();
         }
     }
 
-    static IniEntry Describe(string section, string key, string value, int line, List<string> comments)
+    static IniEntry Describe(string section, string key, string value, int line, List<string> comments, string shared = "")
     {
         var comment = string.Join("\n", comments);
         var kind = IniValueKind.Text;
@@ -157,7 +183,13 @@ public sealed partial class IniDocument
         {
             // "xess (native DX11, Arc only), dlss - Default..." : notes in brackets are not options.
             var om = OptionsPart().Match(Parenthetical().Replace(last, ""));
-            if (om.Success && om.Groups["opts"].Value.Contains(','))
+            if (om.Success && !om.Groups["opts"].Value.Contains(',') && WordList(om.Groups["opts"].Value) is { } either && Fits(either, value, def))
+            {
+                // "Game or OptiScaler - Default is Game" (forks): single words joined by "or", the value one of them.
+                options = either;
+                kind = IniValueKind.Choice;
+            }
+            else if (om.Success && om.Groups["opts"].Value.Contains(','))
             {
                 foreach (var part in om.Groups["opts"].Value.Split(','))
                 {
@@ -173,6 +205,19 @@ public sealed partial class IniDocument
                 options = list;
                 kind = IniValueKind.Choice;
             }
+            // "Kernel format: Auto (PTX on Linux), PTX, or Cubin" (forks): a label, then a list of single words.
+            if (kind == IniValueKind.Text)
+                foreach (var c in comments)
+                {
+                    var colon = c.IndexOf(':');
+                    if (colon < 0 || WordList(c[(colon + 1)..]) is not { } labelled || !Fits(labelled, value, def)) continue;
+                    options = labelled;
+                    kind = IniValueKind.Choice;
+                    break;
+                }
+            // No "true or false" line, but the key holds true or false, or its default is one ("ExtraPacing=false", forks).
+            if (kind == IniValueKind.Text && (IsBoolWord(value) || IsAutoValue(value) && IsBoolWord(def?.Split(' ', '.', ',', ';')[0])))
+                kind = IniValueKind.Bool;
         }
 
         return new IniEntry
@@ -185,7 +230,34 @@ public sealed partial class IniDocument
             Kind = kind,
             Options = options,
             DefaultText = def,
+            SharedComment = shared,
         };
+    }
+
+    static bool IsBoolWord(string? s) => s is not null && (s.Equals("true", StringComparison.OrdinalIgnoreCase) || s.Equals("false", StringComparison.OrdinalIgnoreCase));
+
+    static bool IsAutoValue(string s) => s.Length == 0 || s.Equals("auto", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A list read from a comment is trusted only when the value is auto or one of the options, and so is the default the file
+    /// names ("300.0 or more - Default is 700.0" is a number; "Keys: intensity, style - Default is empty" names parts of a text).
+    /// </summary>
+    static bool Fits(List<string> options, string value, string? def)
+    {
+        bool In(string? v) => v is not null && (IsAutoValue(v) || options.Contains(v, StringComparer.OrdinalIgnoreCase));
+        var first = def?.Split(' ', ',', ';', '(')[0].TrimEnd('.');
+        return In(value) && (string.IsNullOrEmpty(first) || In(first));
+    }
+
+    /// <summary>"Game or OptiScaler", "Auto (detect), SM86, or SM75": every part a single word (notes in brackets aside); null otherwise.</summary>
+    static List<string>? WordList(string text)
+    {
+        var parts = ListSeparator().Split(Parenthetical().Replace(text, "").Trim().TrimEnd('.')).Where(p => p.Length > 0).ToList();
+        if (parts.Count < 2 || parts.Count > 12) return null;
+        if (!parts.All(p => p.Length <= 24 && Word().Match(p) is { Success: true } w && w.Length == p.Length)) return null;
+        // "true or false" is a switch, not a choice.
+        if (parts.All(IsBoolWord)) return null;
+        return parts.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>A comment line that is only a list of single-word values ("nofg, dlssg, fsrfg"), notes in brackets aside.</summary>

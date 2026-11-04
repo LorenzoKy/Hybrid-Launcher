@@ -17,7 +17,8 @@ public static class SettingsStore
     {
         lock (Gate)
         {
-            Current = TryRead(AppInfo.SettingsFile) ?? TryRead(AppInfo.SettingsFile + ".bak") ?? new AppSettings();
+            var file = AppInfo.SettingsFile;
+            Current = TryRead(file) ?? TryRead(file + ".bak") ?? Fresh(file);
             Normalize(Current);
             return Current;
         }
@@ -48,18 +49,114 @@ public static class SettingsStore
         }
     }
 
+    /// <summary>
+    /// Neither the settings nor their .bak could be read: start from defaults, but first keep both files aside
+    /// (settings.unreadable-&lt;time&gt;.json and .bak.json), since the next save replaces them. Nothing is lost that way.
+    /// </summary>
+    static AppSettings Fresh(string file)
+    {
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        foreach (var (from, suffix) in new[] { (file, ".json"), (file + ".bak", ".bak.json") })
+            try
+            {
+                if (!File.Exists(from)) continue;
+                var keep = Path.Combine(Path.GetDirectoryName(from)!, $"settings.unreadable-{stamp}{suffix}");
+                File.Copy(from, keep, overwrite: false);
+                Log.Warn($"Settings could not be read: a copy is kept as {keep}");
+            }
+            catch (Exception ex) { Log.Error($"Keeping a copy of {from} failed", ex); }
+        return new AppSettings();
+    }
+
     static AppSettings? TryRead(string file)
     {
+        string json;
         try
         {
             if (!File.Exists(file)) return null;
-            return JsonSerializer.Deserialize(File.ReadAllText(file), HybridJson.Default.AppSettings);
+            json = File.ReadAllText(file);
         }
         catch (Exception ex)
         {
             Log.Error($"Reading {file} failed", ex);
             return null;
         }
+        try
+        {
+            return JsonSerializer.Deserialize(json, HybridJson.Default.AppSettings);
+        }
+        catch (JsonException ex)
+        {
+            // Usually a value this version does not know (written by a newer one, e.g. an OptiScaler channel added later):
+            // drop just that value and read the rest, rather than losing every setting.
+            Log.Warn($"Reading {file}: {ex.Message} Trying again without the values it cannot read.");
+            return TryReadLenient(json, ex, file);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Reading {file} failed", ex);
+            return null;
+        }
+    }
+
+    /// <summary>Removes the value each failed read points at (its JSON path), up to 50 of them, until the rest reads.</summary>
+    public static AppSettings? TryReadLenient(string json, JsonException first, string file)
+    {
+        System.Text.Json.Nodes.JsonNode? root;
+        try { root = System.Text.Json.Nodes.JsonNode.Parse(json); }
+        catch (Exception ex) { Log.Error($"Reading {file} failed: not valid JSON", ex); return null; }
+        var error = first;
+        for (int i = 0; i < 50 && root is not null; i++)
+        {
+            if (error.Path is not { Length: > 1 } path || !RemoveAt(root, path))
+            {
+                Log.Error($"Reading {file} failed", error);
+                return null;
+            }
+            Log.Warn($"Settings: left out {path}, which this version cannot read");
+            try { return root.Deserialize(HybridJson.Default.AppSettings); }
+            catch (JsonException next) { error = next; }
+            catch (Exception ex) { Log.Error($"Reading {file} failed", ex); return null; }
+        }
+        Log.Error($"Reading {file} failed: too many values this version cannot read", error);
+        return null;
+    }
+
+    /// <summary>
+    /// Removes the node a System.Text.Json error path points at ($.Games.steam:1.Install.Channel). The path is not parsed (keys are not
+    /// escaped in it): the tree is walked and each node's own path compared. False when no node has that path.
+    /// </summary>
+    public static bool RemoveAt(System.Text.Json.Nodes.JsonNode root, string path)
+    {
+        var target = Find(root, path);
+        switch (target?.Parent)
+        {
+            case System.Text.Json.Nodes.JsonObject o:
+                var key = o.FirstOrDefault(p => ReferenceEquals(p.Value, target)).Key;
+                return key is not null && o.Remove(key);
+            case System.Text.Json.Nodes.JsonArray a:
+                return a.Remove(target);
+            default:
+                return false;
+        }
+    }
+
+    static System.Text.Json.Nodes.JsonNode? Find(System.Text.Json.Nodes.JsonNode? node, string path)
+    {
+        if (node is null) return null;
+        var own = node.GetPath();
+        if (string.Equals(own, path, StringComparison.OrdinalIgnoreCase)) return node;
+        // Only go down where the path continues (keeps it quick on big settings files).
+        if (!path.StartsWith(own, StringComparison.OrdinalIgnoreCase)) return null;
+        IEnumerable<System.Text.Json.Nodes.JsonNode?> children = node switch
+        {
+            System.Text.Json.Nodes.JsonObject o => o.Select(p => p.Value),
+            System.Text.Json.Nodes.JsonArray a => a,
+            _ => [],
+        };
+        foreach (var c in children)
+            if (Find(c, path) is { } hit) return hit;
+        return null;
     }
 
     // Tabs that used to stand alone and now are sections of another tab (see GameTabs.Resolve in the app).
@@ -106,6 +203,8 @@ public static class SettingsStore
     {
         s.HiddenGames = new HashSet<string>(s.HiddenGames ?? [], StringComparer.OrdinalIgnoreCase);
         s.CollapsedCards = new HashSet<string>(s.CollapsedCards ?? [], StringComparer.OrdinalIgnoreCase);
+        s.InboxOff = new HashSet<string>(s.InboxOff ?? [], StringComparer.OrdinalIgnoreCase);
+        s.PopupOff = new HashSet<string>(s.PopupOff ?? [], StringComparer.OrdinalIgnoreCase);
         s.Palette ??= "Windows";
         s.IniView = string.IsNullOrWhiteSpace(s.IniView) ? "essentials" : s.IniView;
         s.GameTab = string.IsNullOrWhiteSpace(s.GameTab) ? "overview" : s.GameTab;

@@ -138,10 +138,13 @@ public sealed partial class TrailerPlayer : UserControl
     /// <summary>Paused by Hybrid Launcher (a game started, the window was hidden, effects turned off), not by the user: it resumes by itself.</summary>
     bool _autoPaused;
 
+    /// <summary>A muted trailer is only moving pictures: it rests while the window is behind another app (background saver).</summary>
+    static bool Resting => Helpers.MediaPolicy.InBackground && !_sound;
+
     void OnPolicyChanged()
     {
         if (_player is null) return;
-        if (Helpers.MediaPolicy.Suspended || !Helpers.MediaPolicy.Effects)
+        if (Helpers.MediaPolicy.Suspended || !Helpers.MediaPolicy.Effects || Resting)
         {
             if (_player.PlaybackSession.PlaybackState is MediaPlaybackState.Playing or MediaPlaybackState.Buffering or MediaPlaybackState.Opening)
             {
@@ -149,7 +152,7 @@ public sealed partial class TrailerPlayer : UserControl
                 _autoPaused = true;
             }
         }
-        else if (_autoPaused && Helpers.MediaPolicy.MayAutoplay)
+        else if (_autoPaused && Helpers.MediaPolicy.MayAutoplay && !Resting)
         {
             _autoPaused = false;
             _player.Play();
@@ -195,23 +198,45 @@ public sealed partial class TrailerPlayer : UserControl
     {
         Stop();
         if (user) Helpers.MediaPolicy.SetUserPaused(false);
-        bool start = user ? !Helpers.MediaPolicy.Suspended : Helpers.MediaPolicy.MayAutoplay;
+        bool start = user ? !Helpers.MediaPolicy.Suspended : Helpers.MediaPolicy.MayAutoplay && !Resting;
         // Held back only by Hybrid Launcher (not by the user's pause): it starts by itself once that is over.
         _autoPaused = !start && !Helpers.MediaPolicy.UserPaused;
         if (!start) Log.Info($"Trailer held paused: {Helpers.MediaPolicy.Why}");
         int gen = _gen;
-        Windows.Media.Core.MediaSource source;
-        if (hls)
+        double level = _level;
+        bool muted = !_sound;
+        // The source and the player are made on a thread-pool (MTA) thread, never on the UI thread. A MediaPlayer made on the
+        // UI thread ties some of its own inner handlers to it: closing that player off the UI thread (see Stop) then calls
+        // into the UI thread while holding the player's lock, and if the UI thread is at that moment handling the player's
+        // MediaOpened (it wants the same lock) both wait for ever - Hybrid Launcher froze switching game while a trailer opened.
+        var player = await Task.Run(async () =>
         {
-            var adaptive = await Windows.Media.Streaming.Adaptive.AdaptiveMediaSource.CreateFromUriAsync(uri);
-            if (gen != _gen) return;
-            source = adaptive.Status == Windows.Media.Streaming.Adaptive.AdaptiveMediaSourceCreationStatus.Success
-                ? Windows.Media.Core.MediaSource.CreateFromAdaptiveMediaSource(adaptive.MediaSource)
-                : Windows.Media.Core.MediaSource.CreateFromUri(uri);
+            Windows.Media.Core.MediaSource source;
+            if (hls)
+            {
+                var adaptive = await Windows.Media.Streaming.Adaptive.AdaptiveMediaSource.CreateFromUriAsync(uri);
+                source = adaptive.Status == Windows.Media.Streaming.Adaptive.AdaptiveMediaSourceCreationStatus.Success
+                    ? Windows.Media.Core.MediaSource.CreateFromAdaptiveMediaSource(adaptive.MediaSource)
+                    : Windows.Media.Core.MediaSource.CreateFromUri(uri);
+            }
+            else source = Windows.Media.Core.MediaSource.CreateFromUri(uri);
+            var p = new MediaPlayer();
+            // No Windows media flyout for a trailer, and none of the command manager's handlers (their release was the call
+            // into the UI thread in that freeze).
+            p.CommandManager.IsEnabled = false;
+            p.AutoPlay = start;
+            p.Volume = level;
+            p.IsMuted = muted;
+            p.Source = source;
+            return p;
+        });
+        if (gen != _gen)
+        {
+            // Another trailer, picture or page came first.
+            _ = Task.Run(() => { try { player.Dispose(); } catch { } });
+            return;
         }
-        else source = Windows.Media.Core.MediaSource.CreateFromUri(uri);
 
-        var player = new MediaPlayer { Source = source, AutoPlay = start, Volume = _level, IsMuted = !_sound };
         player.MediaFailed += (_, e) => DispatcherQueue.TryEnqueue(() =>
         {
             if (gen != _gen) return;
@@ -242,7 +267,9 @@ public sealed partial class TrailerPlayer : UserControl
                 var p = _player;
                 _video.SetMediaPlayer(null);
                 p.Pause();
-                p.Dispose();
+                // Disposing a player that streams takes a few hundred ms: off the UI thread, so leaving the page (a switch to
+                // another game) never waits for it. Safe only because PlayAsync makes the player off the UI thread.
+                _ = Task.Run(() => { try { p.Dispose(); } catch { } });
             }
             catch (Exception ex) { Log.Warn($"Trailer stop: {ex.Message}"); }
             _player = null;

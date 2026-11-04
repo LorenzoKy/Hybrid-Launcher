@@ -45,9 +45,9 @@
   let w = 0, h = 0, dpr = 1, raf = 0;
   let mx = 0, my = 0, tx = 0, ty = 0;              // pointer, eased
   const glows = [
-    { col: [215, 20, 58], r: 0.46, px: 0.18, py: 0.24, sx: 0.00008, sy: 0.00006, a: 0.13, depth: 0.6 },
-    { col: [244, 239, 228], r: 0.5, px: 0.84, py: 0.3, sx: 0.00006, sy: 0.00009, a: 0.045, depth: 0.9 },
-    { col: [142, 12, 38], r: 0.36, px: 0.55, py: 0.08, sx: 0.0001, sy: 0.00007, a: 0.1, depth: 0.4 },
+    { col: [224, 20, 43], r: 0.46, px: 0.18, py: 0.24, sx: 0.00008, sy: 0.00006, a: 0.13, depth: 0.6 },
+    { col: [246, 244, 241], r: 0.5, px: 0.84, py: 0.3, sx: 0.00006, sy: 0.00009, a: 0.045, depth: 0.9 },
+    { col: [140, 10, 22], r: 0.36, px: 0.55, py: 0.08, sx: 0.0001, sy: 0.00007, a: 0.1, depth: 0.4 },
   ];
   const stars = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), z: 0.2 + Math.random() * 0.8, tw: Math.random() * 6.28 }));
   const streaks = [];
@@ -92,12 +92,12 @@
       let sx = (st.x * w - tx * 30 * st.z) % w, sy = (st.y * h - ty * 24 * st.z - scrollY * 0.06 * st.z) % h;
       if (sx < 0) sx += w; if (sy < 0) sy += h;
       const a = 0.15 + 0.35 * st.z * (0.65 + 0.35 * Math.sin(t * 0.0015 + st.tw));
-      x.fillStyle = `rgba(244, 239, 228, ${a.toFixed(3)})`;
+      x.fillStyle = `rgba(246, 244, 241, ${a.toFixed(3)})`;
       x.fillRect(sx, sy, st.z * 1.5, st.z * 1.5);
     }
 
     // A streak of light, now and then
-    if (!still && Math.random() < 0.0025 && streaks.length < 1) streaks.push({ x: Math.random() * w * 0.8, y: Math.random() * h * 0.4, life: 0, hue: Math.random() < 0.6 ? '240, 70, 106' : '244, 239, 228' });
+    if (!still && Math.random() < 0.0025 && streaks.length < 1) streaks.push({ x: Math.random() * w * 0.8, y: Math.random() * h * 0.4, life: 0, hue: Math.random() < 0.6 ? '255, 77, 74' : '246, 244, 241' });
     for (let i = streaks.length - 1; i >= 0; i--) {
       const k = streaks[i]; k.life += 1;
       const p = k.life / 60, len = 140;
@@ -115,17 +115,17 @@
     const fade = Math.max(0, 1 - sc * 0.6);
     if (fade > 0 && hz < h) {
       const glow = x.createRadialGradient(vx, hz, 0, vx, hz, w * 0.5);
-      glow.addColorStop(0, `rgba(215, 20, 58, ${0.18 * fade})`);
-      glow.addColorStop(0.4, `rgba(142, 12, 38, ${0.06 * fade})`);
+      glow.addColorStop(0, `rgba(224, 20, 43, ${0.18 * fade})`);
+      glow.addColorStop(0.4, `rgba(140, 10, 22, ${0.06 * fade})`);
       glow.addColorStop(1, 'rgba(0,0,0,0)');
       x.fillStyle = glow; x.fillRect(0, hz - w * 0.3, w, w * 0.6);
 
       x.save();
       x.beginPath(); x.rect(0, hz, w, h - hz); x.clip();
       const lg = x.createLinearGradient(0, hz, 0, h);
-      lg.addColorStop(0, 'rgba(215, 20, 58, 0)');
-      lg.addColorStop(0.3, `rgba(215, 40, 70, ${0.16 * fade})`);
-      lg.addColorStop(1, `rgba(244, 239, 228, ${0.14 * fade})`);
+      lg.addColorStop(0, 'rgba(224, 20, 43, 0)');
+      lg.addColorStop(0.3, `rgba(228, 44, 52, ${0.16 * fade})`);
+      lg.addColorStop(1, `rgba(246, 244, 241, ${0.14 * fade})`);
       x.strokeStyle = lg; x.lineWidth = 1;
       x.beginPath();
       const n = 22;
@@ -140,7 +140,7 @@
       x.restore();
       // A thin horizon line
       const hl = x.createLinearGradient(0, 0, w, 0);
-      hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.5, `rgba(255, 150, 165, ${0.35 * fade})`); hl.addColorStop(1, 'rgba(255,255,255,0)');
+      hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.5, `rgba(255, 160, 150, ${0.35 * fade})`); hl.addColorStop(1, 'rgba(255,255,255,0)');
       x.fillStyle = hl; x.fillRect(0, hz - 0.5, w, 1);
     }
 

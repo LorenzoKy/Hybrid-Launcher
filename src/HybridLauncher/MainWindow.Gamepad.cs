@@ -36,17 +36,23 @@ public sealed partial class MainWindow
         _padTimer = DispatcherQueue.CreateTimer();
         _padTimer.Interval = TimeSpan.FromMilliseconds(16);
         _padTimer.Tick += (_, _) => PollPad();
-        void Changed()
+        // The controller is read 60 times a second, but only while one is connected and the window is in front: behind another
+        // app (a game) it is never read anyway, so the timer stops instead of waking the process for nothing.
+        bool front = true;
+        void Apply()
         {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                PadConnected = Gamepad.Gamepads.Count > 0;
-                if (PadConnected) _padTimer.Start();
-                else { _padTimer.Stop(); _padHeld.Clear(); _padDir = null; }
-            });
+            PadConnected = Gamepad.Gamepads.Count > 0;
+            if (PadConnected && front && !_hidden) _padTimer.Start();
+            else { _padTimer.Stop(); _padHeld.Clear(); _padDir = null; }
         }
+        void Changed() => DispatcherQueue.TryEnqueue(Apply);
         Gamepad.GamepadAdded += (_, _) => Changed();
         Gamepad.GamepadRemoved += (_, _) => Changed();
+        Activated += (_, e) =>
+        {
+            front = e.WindowActivationState != WindowActivationState.Deactivated;
+            Apply();
+        };
         Changed();
         Closed += (_, _) => _padTimer.Stop();
     }
@@ -102,6 +108,7 @@ public sealed partial class MainWindow
     /// <summary>One controller press (also the self-test's way in).</summary>
     public void Pad(PadKey key)
     {
+        NotePadPress();
         try
         {
             switch (key)

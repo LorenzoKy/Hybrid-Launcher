@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/LorenzoKy/Hybrid-Launcher?include_prereleases&label=download&color=D7143A" /></a>
+  <a href="https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/LorenzoKy/Hybrid-Launcher?include_prereleases&label=download&color=E0142B" /></a>
   <img alt="Windows 11, 64-bit" src="https://img.shields.io/badge/Windows-11%20%C2%B7%2064--bit-2A2E38" />
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-555" /></a>
   <a href="https://lorenzoky.github.io/Hybrid-Launcher/"><img alt="Website" src="https://img.shields.io/badge/website-lorenzoky.github.io-555" /></a>
@@ -60,23 +60,35 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md
 **Your games**
 - **One library** for Steam, Epic Games, GOG, Xbox / Game Pass and your own folders: covers, play time, achievements,
   pins, search, filters, renaming, controller support.
-- **A page per game** with Play, store details, trailer, reviews, HowLongToBeat, PCGamingWiki fixes, links and notes.
+- **A page per game** with Play, store details, trailer, reviews, HowLongToBeat, PCGamingWiki fixes, links and notes, and a
+  quiet summary of the mods installed in it (OptiScaler, ReShade, Ultra+… with their versions) in the banner's corner.
 - **Direct downloads** from your Steam, Epic and GOG accounts, with pause, resume and updates that leave your mods in place.
 - **Cloud saves** on OneDrive, MEGA or a folder (Google Drive, a NAS, a USB drive), one or several at once, with history and conflict handling.
 
 **Mods**
 - **OptiScaler** through its own installer, with a quick panel, profiles, saved versions, custom builds and
   **custom DLLs** (extra FSR, DLSS or DLSSG dlls per game).
+- **Forks/Unofficial Builds** of OptiScaler beside Stable and Nightly (add any fork by its GitHub address), an
+  **Update available** button when a newer build of yours is out, and optional notifications per channel or fork. The settings
+  a fork adds to OptiScaler.ini get switches, sliders and lists like the official ones, marked *this build only*.
+  Builds that need NVIDIA's DLSS NR model file get it from one copy you pick once, on for every game or only some.
+- **Ultra+** for Unreal Engine games *(experimental)*: install, update, add-ons and its settings from the game's Ultra+ tab,
+  with automatic updates and notifications if you want them. It is new and tried on few games so far; *Uninstall* puts the
+  folder back as it was.
 - **ReShade, RenoDX and Luma**, matched to the game where possible; removal keeps your presets.
 - **Backups** of every file a mod replaces, so removing it puts the game back.
 - **Smart HDR**: Windows HDR on when the game starts, off when it closes.
+- **Update notifications** in one list beside Minimize, with Windows pop-ups you choose per source (OptiScaler builds you
+  follow, Ultra+, Hybrid Launcher itself), held back while a game runs.
 
 **Extras**
 - **Achievements** with rarity, a platinum trophy and a pop-up you design.
-- **Quick access** shortcuts per game, **My PC** with your hardware and driver upscaler versions, tray mode, start with
-  Windows, a welcome tour and a one-click bug report.
+- **Quick access** shortcuts per game, **My PC** with your hardware and driver upscaler versions, tray mode (the window steps aside
+  while a game runs and comes back when it closes), start with Windows, a welcome tour and a one-click bug report.
+- **Light on your PC**: with another window in front it rests (clips paused, Windows efficiency mode) and wakes up the moment
+  you click it; games open in an instant.
 - **Make it yours**: keep only the features you need (*Everything*, *Only OptiScaler*, *Just a launcher*…), and toggle,
-  drag or hide tabs, launch bar items and colour themes.
+  drag or hide tabs, launch bar items and colour themes, including the warm *Cozy* theme.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" width="100%" alt="The first-start picker in Hybrid Launcher: five starting points, a live preview of a game's page, and a switch for each feature" />

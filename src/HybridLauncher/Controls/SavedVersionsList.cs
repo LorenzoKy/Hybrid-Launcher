@@ -74,6 +74,7 @@ public sealed partial class SavedVersionsList : UserControl
             {
                 OptiChannel.Nightly => Windows.UI.Color.FromArgb(0x55, 0xD2, 0x99, 0x22),
                 OptiChannel.Custom => Windows.UI.Color.FromArgb(0x55, 0x9A, 0x5C, 0xFF),
+                OptiChannel.Fork => Windows.UI.Color.FromArgb(0x55, 0x22, 0x9A, 0xD2),
                 _ => Windows.UI.Color.FromArgb(0x55, 0x2E, 0xA0, 0x43),
             }),
             Child = new TextBlock { Text = L.T(v.ChannelLabel).ToUpper(), FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 40 },

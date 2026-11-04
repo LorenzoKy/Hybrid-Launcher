@@ -23,11 +23,15 @@ public sealed partial class PlayButton : UserControl
 {
     public enum Mode { Play, Starting, Stop, Stopping, Install, Downloading }
 
-    const double Corner = 4;
+    const double Corner = 9;
     readonly Button _button;
     readonly Border _surface = new() { CornerRadius = new CornerRadius(Corner) };
     // The gloss on the top half (always there) and the hover veil over the whole face (faded on the compositor).
-    readonly Border _gloss = new() { CornerRadius = new CornerRadius(Corner, Corner, 0, 0), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+    readonly Border _gloss = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
+    // The foot of the face: a soft darkening towards the bottom edge, which gives the flat colour its depth.
+    readonly Border _shade = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
+    // A thin line of light just inside the top edge, fading out before the corners (no outline: it never reaches them).
+    readonly Border _edge = new() { Height = 1, Margin = new Thickness(Corner + 4, 1, Corner + 4, 0), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
     readonly Border _veil = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
     readonly Grid _glowHost = new() { IsHitTestVisible = false };
     readonly Grid _back = new() { IsHitTestVisible = false };
@@ -57,9 +61,13 @@ public sealed partial class PlayButton : UserControl
     static readonly string StopPath = "M2.5,3.5 C2.5,2.9 2.9,2.5 3.5,2.5 L12.5,2.5 C13.1,2.5 13.5,2.9 13.5,3.5 L13.5,12.5 C13.5,13.1 13.1,13.5 12.5,13.5 L3.5,13.5 C2.9,13.5 2.5,13.1 2.5,12.5 Z";
     static readonly string DownloadPath = "M6.9,1 H9.1 V8.3 L11.7,5.7 L13.2,7.2 L8,12.4 L2.8,7.2 L4.3,5.7 L6.9,8.3 Z M2,13.6 H14 V15.6 H2 Z";
 
+    // Play, Stop, Downloading… share one width range: a long word gets a smaller size instead of stretching the button.
+    const double MinFace = 168, MaxFace = 196, SidePad = 30, TextSize = 21;
+    readonly StackPanel _content;
+
     public PlayButton()
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var content = _content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(_ring);
         content.Children.Add(_icon);
         content.Children.Add(_text);
@@ -68,12 +76,14 @@ public sealed partial class PlayButton : UserControl
         // The spring scales the face only: scaling the word with it redrew the text as a stretched bitmap (soft, ringing edges).
         _back.Children.Add(_glowHost);
         _back.Children.Add(_surface);
+        _back.Children.Add(_shade);
         _back.Children.Add(_gloss);
+        _back.Children.Add(_edge);
         _back.Children.Add(_veil);
         var face = new Grid();
         face.Children.Add(_back);
-        // As wide as the word needs: Play is short, Downloading longer; never narrower than a comfortable target.
-        face.Children.Add(new Border { Child = content, Padding = new Thickness(32, 0, 34, 0) });
+        // Icon and word centred with even sides; the width stays between MinFace and MaxFace whatever the word (see FitLabel).
+        face.Children.Add(new Border { Child = content, Padding = new Thickness(SidePad, 0, SidePad, 0) });
 
         // A Button for focus, keyboard and screen readers; its template draws nothing but the face above.
         _button = new Button
@@ -101,17 +111,36 @@ public sealed partial class PlayButton : UserControl
         _button.AddHandler(PointerReleasedEvent, new PointerEventHandler((_, _) => { _down = false; Animate(); }), true);
         _button.AddHandler(PointerCaptureLostEvent, new PointerEventHandler((_, _) => { _down = false; Animate(); }), true);
         Content = _button;
-        MinWidth = 168;
+        MinWidth = MinFace;
+        MaxWidth = MaxFace;
         MinHeight = 58;
 
         SizeChanged += (_, e) =>
         {
-            _gloss.Height = e.NewSize.Height / 2;
             if (_visual is not null) _visual.CenterPoint = new Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
         };
-        Loaded += (_, _) => SetUpComposition();
+        Loaded += (_, _) =>
+        {
+            SetUpComposition();
+            HybridLauncher.Helpers.MediaPolicy.Changed -= OnPolicyChanged;
+            HybridLauncher.Helpers.MediaPolicy.Changed += OnPolicyChanged;
+        };
+        Unloaded += (_, _) => HybridLauncher.Helpers.MediaPolicy.Changed -= OnPolicyChanged;
         ElementCompositionPreview.GetElementVisual(_veil).Opacity = 0;
         SetMode(Mode.Play);
+    }
+
+    /// <summary>
+    /// A word too long for the widest face (Downloading, Stopping, a longer translation) is drawn smaller, so the button keeps
+    /// nearly the same width in every state instead of stretching the launch bar.
+    /// </summary>
+    void FitLabel()
+    {
+        _text.FontSize = TextSize;
+        _content.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        double room = MaxFace - 2 * SidePad, need = _content.DesiredSize.Width, word = _text.DesiredSize.Width;
+        if (need <= room || word <= 0) return;
+        _text.FontSize = Math.Max(13, Math.Floor(TextSize * Math.Max(0, word - (need - room)) / word));
     }
 
     /// <summary>The glow: a blurred shadow of a sprite tucked under the face (its corners never show), in the button's colour.</summary>
@@ -124,8 +153,8 @@ public sealed partial class PlayButton : UserControl
             _visual.CenterPoint = new Vector3((float)ActualWidth / 2, (float)ActualHeight / 2, 0);
             var compositor = _visual.Compositor;
             _shadow = compositor.CreateDropShadow();
-            _shadow.BlurRadius = 14;
-            _shadow.Offset = new Vector3(0, 4, 0);
+            _shadow.BlurRadius = 26;
+            _shadow.Offset = new Vector3(0, 8, 0);
             _glow = compositor.CreateSpriteVisual();
             _glow.Brush = compositor.CreateColorBrush(_color);
             _glow.RelativeSizeAdjustment = Vector2.One;
@@ -172,10 +201,14 @@ public sealed partial class PlayButton : UserControl
         _cancel.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), StopPath);
         _cancel.Fill = ink;
         _cancel.Visibility = mode == Mode.Starting ? Visibility.Visible : Visibility.Collapsed;
+        FitLabel();
         var name = mode == Mode.Starting ? L.T("Starting… Click to force the game closed") : text;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_button, name);
         ToolTipService.SetToolTip(_button, mode == Mode.Starting ? name : null);
-        // The 0.14 two-tone gradient, softer: a little lighter at the top, a little deeper at the bottom.
+        // Modern depth, in soft layers rather than a glossy band: the face runs from a lifted top through its own colour to a
+        // deeper foot (a darker, richer shade of the same hue, not black, so it never turns muddy); a wide dome of light rises
+        // from the top edge; a hairline of light sits just under that edge; a faint shade gathers along the bottom. No outline.
+        bool light = HybridLauncher.Helpers.Contrast.IsLight(color);
         _surface.Background = new LinearGradientBrush
         {
             StartPoint = new Windows.Foundation.Point(0, 0),
@@ -183,23 +216,44 @@ public sealed partial class PlayButton : UserControl
             GradientStops =
             {
                 new GradientStop { Color = Mix(color, Microsoft.UI.Colors.White, 0.10), Offset = 0 },
-                new GradientStop { Color = color, Offset = 0.5 },
-                new GradientStop { Color = Mix(color, Microsoft.UI.Colors.Black, 0.16), Offset = 1 },
+                new GradientStop { Color = color, Offset = 0.55 },
+                new GradientStop { Color = Deepen(color), Offset = 1 },
             },
         };
-        // No rim: a hairline darker at the bottom broke up on the rounded corners (Steam's Play is a plain fill too). The face's
-        // own gradient and the gloss give it its edge.
         _surface.BorderThickness = new Thickness(0);
-        // Less shine and veil on a light face, where they would wash the dark word out.
-        bool light = HybridLauncher.Helpers.Contrast.IsLight(color);
-        _gloss.Background = new LinearGradientBrush
+        _gloss.Background = new RadialGradientBrush
+        {
+            MappingMode = BrushMappingMode.RelativeToBoundingBox,
+            Center = new Windows.Foundation.Point(0.5, -0.15),
+            GradientOrigin = new Windows.Foundation.Point(0.5, -0.15),
+            RadiusX = 0.78,
+            RadiusY = 1.05,
+            GradientStops =
+            {
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x1E : (byte)0x38, 0xFF, 0xFF, 0xFF), Offset = 0 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x0A : (byte)0x12, 0xFF, 0xFF, 0xFF), Offset = 0.55 },
+                new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 1 },
+            },
+        };
+        _edge.Background = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(1, 0),
+            GradientStops =
+            {
+                new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 0 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x40 : (byte)0x70, 0xFF, 0xFF, 0xFF), Offset = 0.5 },
+                new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 1 },
+            },
+        };
+        _shade.Background = new LinearGradientBrush
         {
             StartPoint = new Windows.Foundation.Point(0, 0),
             EndPoint = new Windows.Foundation.Point(0, 1),
             GradientStops =
             {
-                new GradientStop { Color = Color.FromArgb(light ? (byte)0x0E : (byte)0x1C, 0xFF, 0xFF, 0xFF), Offset = 0 },
-                new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 1 },
+                new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 0.6 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x14 : (byte)0x26, 0, 0, 0), Offset = 1 },
             },
         };
         _veil.Background = new SolidColorBrush(Color.FromArgb(light ? (byte)0x14 : (byte)0x22, 0xFF, 0xFF, 0xFF));
@@ -207,6 +261,8 @@ public sealed partial class PlayButton : UserControl
         ApplyGlow();
         Pulse(mode == Mode.Stop);
     }
+
+    void OnPolicyChanged() => Pulse(_mode == Mode.Stop);
 
     /// <summary>The words of the modes, in the order of <see cref="SetMode"/>: Starting, Stop, Downloading, Closing, Download, Play.</summary>
     static readonly string[] Labels = [L.T("Starting…"), L.T("Stop"), L.T("Downloading"), L.T("Closing…"), L.T("Download"), L.T("Play")];
@@ -216,6 +272,15 @@ public sealed partial class PlayButton : UserControl
         HybridLauncher.Helpers.ThemeRes.Current.TryGetValue("SystemAccentColor", out var v) && v is Color c ? c
         : (HybridLauncher.Helpers.ThemeRes.Current["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(0xFF, 0x9A, 0x5C, 0xFF);
 
+    /// <summary>The colour of the face's foot: darker and a little more saturated, so the shade keeps the hue's richness.</summary>
+    static Color Deepen(Color c)
+    {
+        double max = Math.Max(c.R, Math.Max(c.G, c.B)), min = Math.Min(c.R, Math.Min(c.G, c.B));
+        double mid = (max + min) / 2;
+        byte Push(byte v) => (byte)Math.Clamp((mid + (v - mid) * 1.15) * 0.8, 0, 255);
+        return Color.FromArgb(c.A, Push(c.R), Push(c.G), Push(c.B));
+    }
+
     static Color Mix(Color a, Color b, double t) => Color.FromArgb(a.A,
         (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
 
@@ -223,8 +288,9 @@ public sealed partial class PlayButton : UserControl
     {
         if (_shadow is null) return;
         _shadow.Color = Color.FromArgb(0xFF, _color.R, _color.G, _color.B);
-        _shadow.Opacity = _over ? 0.6f : 0.32f;
-        _shadow.BlurRadius = _over ? 22 : 14;
+        // A wide, soft pool of the button's colour under it, stronger on hover.
+        _shadow.Opacity = _over ? 0.7f : 0.42f;
+        _shadow.BlurRadius = _over ? 38 : 26;
     }
 
     /// <summary>Hover fades the veil in and lifts the face a little, a press sinks it: on the compositor, smooth at any refresh rate.</summary>
@@ -246,11 +312,14 @@ public sealed partial class PlayButton : UserControl
         _visual.StartAnimation("Scale", spring);
     }
 
-    /// <summary>While the game runs, the Stop square breathes slowly (on the compositor: no layout, smooth at any refresh rate).</summary>
+    /// <summary>
+    /// While the game runs, the Stop square breathes slowly (on the compositor: no layout, smooth at any refresh rate). A forever
+    /// animation makes the window draw every frame, so it waits while the effects are paused for the game (Settings → Graphics).
+    /// </summary>
     void Pulse(bool on)
     {
         var icon = ElementCompositionPreview.GetElementVisual(_icon);
-        if (!on)
+        if (!on || !HybridLauncher.Helpers.MediaPolicy.Effects)
         {
             icon.StopAnimation("Opacity");
             icon.Opacity = 1;

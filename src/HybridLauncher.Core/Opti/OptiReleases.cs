@@ -9,6 +9,8 @@ public sealed record OptiRelease(OptiChannel Channel, string Tag, string Title, 
     /// <summary>The release notes as GitHub has them (Markdown), and the release's page.</summary>
     public string Notes { get; init; } = "";
     public string PageUrl { get; init; } = "";
+    /// <summary>For a fork's release: its repository ("owner/name").</summary>
+    public string? Repo { get; init; }
 
     public string Display => $"{Tag}  ·  {Published.ToLocalTime():yyyy-MM-dd}";
 }
@@ -19,12 +21,25 @@ public static class OptiReleases
     public static string Repo(OptiChannel channel) => channel == OptiChannel.Stable ? "optiscaler/OptiScaler" : "optiscaler/OptiScaler-nightly";
     public static string ReleasesPage(OptiChannel channel) => $"https://github.com/{Repo(channel)}/releases";
 
-    public static async Task<List<OptiRelease>> GetAsync(OptiChannel channel, bool force = false, CancellationToken ct = default)
+    public static Task<List<OptiRelease>> GetAsync(OptiChannel channel, bool force = false, CancellationToken ct = default) =>
+        GetAsync(channel, Repo(channel), force, ct);
+
+    /// <summary>The releases of a fork's repository ("owner/name").</summary>
+    public static Task<List<OptiRelease>> GetForkAsync(string repo, bool force = false, CancellationToken ct = default) =>
+        GetAsync(OptiChannel.Fork, repo, force, ct);
+
+    public static string ForkPage(string repo) => $"https://github.com/{repo}/releases";
+
+    static async Task<List<OptiRelease>> GetAsync(OptiChannel channel, string repo, bool force, CancellationToken ct)
     {
-        var url = $"https://api.github.com/repos/{Repo(channel)}/releases?per_page=30";
-        var json = await Http.GetCachedAsync(url, $"releases-{channel.ToString().ToLowerInvariant()}.json",
-            TimeSpan.FromMinutes(30), force, "application/vnd.github+json", ct);
-        if (json is null) throw new InvalidOperationException(L.T("Could not reach GitHub to list OptiScaler releases (and nothing is cached yet)."));
+        var url = $"https://api.github.com/repos/{repo.ToLowerInvariant()}/releases?per_page=30";
+        // GitHub names are case-insensitive: one cache (and one request) per fork, however its name was written. The update
+        // checks ask with the lower-case key, the OptiScaler tab with the name as listed: both used to fetch it apart.
+        var cache = channel == OptiChannel.Fork ? $"releases-fork-{Safe(repo).ToLowerInvariant()}.json" : $"releases-{channel.ToString().ToLowerInvariant()}.json";
+        var json = await Http.GetCachedAsync(url, cache, TimeSpan.FromMinutes(30), force, "application/vnd.github+json", ct);
+        if (json is null) throw new InvalidOperationException(Http.GitHubLimitedUntil is { } until
+            ? L.F("GitHub's limit of requests without sign-in is used up until {0:HH:mm}, and these releases are not cached yet.", until.ToLocalTime())
+            : L.T("Could not reach GitHub to list OptiScaler releases (and nothing is cached yet)."));
 
         var list = new List<OptiRelease>();
         using var doc = JsonDocument.Parse(json);
@@ -37,21 +52,26 @@ public static class OptiReleases
             var title = r.TryGetProperty("name", out var n) ? n.GetString() ?? tag : tag;
             var published = r.TryGetProperty("published_at", out var p) && p.ValueKind == JsonValueKind.String ? p.GetDateTime() : DateTime.MinValue;
 
-            foreach (var a in r.GetProperty("assets").EnumerateArray())
+            // The archive of the build: forks put extras beside it (an optional forwarder, a troubleshooting zip), so one named
+            // after OptiScaler comes first, the others only when none is.
+            var archives = r.GetProperty("assets").EnumerateArray()
+                .Where(e => e.GetProperty("name").GetString() is { } file && (file.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            static int Rank(string asset) =>
+                Extra.Any(x => asset.Contains(x, StringComparison.OrdinalIgnoreCase)) ? 2 : asset.Contains("optiscaler", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+            var pick = archives.OrderBy(e => Rank(e.GetProperty("name").GetString()!)).Cast<JsonElement?>().FirstOrDefault();
+            if (pick is not { } a) continue;
+            var name = a.GetProperty("name").GetString() ?? "";
+            string? sha = null;
+            if (a.TryGetProperty("digest", out var d) && d.GetString() is { } digest && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                sha = digest[7..].ToLowerInvariant();
+            list.Add(new OptiRelease(channel, tag, title, published, name,
+                a.GetProperty("browser_download_url").GetString()!, a.GetProperty("size").GetInt64(), sha)
             {
-                var name = a.GetProperty("name").GetString() ?? "";
-                if (!name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
-                string? sha = null;
-                if (a.TryGetProperty("digest", out var d) && d.GetString() is { } digest && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-                    sha = digest[7..].ToLowerInvariant();
-                list.Add(new OptiRelease(channel, tag, title, published, name,
-                    a.GetProperty("browser_download_url").GetString()!, a.GetProperty("size").GetInt64(), sha)
-                {
-                    Notes = r.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "",
-                    PageUrl = r.TryGetProperty("html_url", out var page) ? page.GetString() ?? "" : "",
-                });
-                break;
-            }
+                Notes = r.TryGetProperty("body", out var body) ? (body.GetString() ?? "").Replace("﻿", "") : "",
+                PageUrl = r.TryGetProperty("html_url", out var page) ? page.GetString() ?? "" : "",
+                Repo = channel == OptiChannel.Fork ? repo : null,
+            });
         }
         return list.OrderByDescending(r => r.Published).ToList();
     }
@@ -59,7 +79,7 @@ public static class OptiReleases
     /// <summary>Downloads (or reuses a verified cached copy of) a release archive.</summary>
     public static async Task<string> DownloadAsync(OptiRelease release, IProgress<double>? progress, CancellationToken ct)
     {
-        var dest = Path.Combine(AppInfo.DownloadsDir, release.Channel.ToString().ToLowerInvariant(), Safe(release.Tag), release.AssetName);
+        var dest = Path.Combine(AppInfo.DownloadsDir, release.Channel.ToString().ToLowerInvariant(), FolderName(release), release.AssetName);
         if (File.Exists(dest) && await VerifyAsync(dest, release, ct))
         {
             Log.Info($"Using cached {dest}");
@@ -77,6 +97,9 @@ public static class OptiReleases
         PruneOldDownloads(release.Channel);
         return dest;
     }
+
+    /// <summary>The folder a release is kept in: its tag, or for a fork its repository and tag (two forks can share a tag).</summary>
+    public static string FolderName(OptiRelease r) => Safe(r.Repo is null ? r.Tag : $"{r.Repo.Replace('/', '_')}_{r.Tag}");
 
     static async Task<bool> VerifyAsync(string file, OptiRelease release, CancellationToken ct)
     {
@@ -99,6 +122,9 @@ public static class OptiReleases
         }
         catch (Exception ex) { Log.Warn($"Pruning downloads failed: {ex.Message}"); }
     }
+
+    // Archives beside a build that are not the build.
+    static readonly string[] Extra = ["optional", "forwarder", "troubleshoot", "source", "symbols", "pdb"];
 
     static string Safe(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 }

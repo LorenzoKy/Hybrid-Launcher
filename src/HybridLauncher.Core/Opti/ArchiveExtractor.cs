@@ -26,29 +26,52 @@ public static class ArchiveExtractor
         EnsureInside(destination);
     }
 
-    static void ExtractManaged(string archive, string destination, CancellationToken ct)
+    public static void ExtractManaged(string archive, string destination, CancellationToken ct)
     {
         var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
         using var a = ArchiveFactory.Open(archive, null);
-        using var reader = a.ExtractAllEntries();
-        while (reader.MoveToNextEntry())
+        // Solid archives and 7z are read front to back (ExtractAllEntries); zip and the rest entry by entry. ExtractAllEntries
+        // on an ordinary zip throws, which sent every zip release to tar.exe.
+        if (a.IsSolid || a.Type == SharpCompress.Common.ArchiveType.SevenZip)
+        {
+            using var reader = a.ExtractAllEntries();
+            while (reader.MoveToNextEntry())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (Place(root, destination, reader.Entry.Key, reader.Entry.IsDirectory) is { } file)
+                {
+                    using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
+                    reader.WriteEntryTo(fs);
+                }
+            }
+            return;
+        }
+        foreach (var entry in a.Entries)
         {
             ct.ThrowIfCancellationRequested();
-            var entry = reader.Entry;
-            if (entry.Key is null) continue;
-            var full = Path.GetFullPath(Path.Combine(destination, entry.Key));
-            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Archive entry escapes the destination: {entry.Key}");
-
-            if (entry.IsDirectory)
+            if (Place(root, destination, entry.Key, entry.IsDirectory) is { } file)
             {
-                Directory.CreateDirectory(full);
-                continue;
+                using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var es = entry.OpenEntryStream();
+                es.CopyTo(fs);
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            using var fs = new FileStream(full, FileMode.Create, FileAccess.Write, FileShare.None);
-            reader.WriteEntryTo(fs);
         }
+    }
+
+    /// <summary>Where an entry goes (its folders made), or null for a folder entry; throws for one that would land outside.</summary>
+    static string? Place(string root, string destination, string? key, bool isDirectory)
+    {
+        if (key is null) return null;
+        var full = Path.GetFullPath(Path.Combine(destination, key));
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"Archive entry escapes the destination: {key}");
+        if (isDirectory)
+        {
+            Directory.CreateDirectory(full);
+            return null;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        return full;
     }
 
     static async Task ExtractWithTarAsync(string archive, string destination, CancellationToken ct)

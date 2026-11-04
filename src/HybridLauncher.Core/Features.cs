@@ -7,7 +7,7 @@ namespace HybridLauncher.Core;
 /// </summary>
 public static class Features
 {
-    public const string Opti = "opti", Mods = "mods", Achievements = "ach", Hdr = "hdr", Cloud = "cloud", Pcgw = "pcgw", Extras = "extras";
+    public const string Opti = "opti", Mods = "mods", UltraPlus = "ultra", Achievements = "ach", Hdr = "hdr", Cloud = "cloud", Pcgw = "pcgw", Extras = "extras";
 
     /// <param name="Tabs">Game page tabs it shows (see GameTabs in the app).</param>
     /// <param name="Parts">Game page parts it shows (see <see cref="PageParts"/>).</param>
@@ -18,6 +18,7 @@ public static class Features
     [
         new(Opti, "OptiScaler", "Swap DLSS, FSR and XeSS in one click, with frame generation and a quick panel.", "", 0xFF9A7CFF, ["opti"], [], ["optiwiki"]),
         new(Mods, "ReShade & Mods", "ReShade effects, plus RenoDX and Luma for HDR.", "", 0xFFF07F2A, ["mods"], []),
+        new(UltraPlus, "Ultra+", "Better lighting, shadows and ray tracing for Unreal Engine games, with updates and presets.", "", 0xFF4FD6B0, ["ultra"], []),
         new(Achievements, "Achievements", "Trophies on the game page, and pop-ups while you play.", "trophy", 0xFFF2B82E, ["ach"], [PageParts.Achievements]),
         new(Hdr, "Smart HDR", "Windows HDR turns on with the game and off when it closes.", "", 0xFFFFC857, [], [PageParts.Hdr]),
         new(Cloud, "Cloud saves", "Saves backed up to OneDrive, MEGA or a folder, with a history.", "", 0xFF5FA8FF, [], [PageParts.Cloud]),

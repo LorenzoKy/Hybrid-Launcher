@@ -52,7 +52,49 @@ public static class GameInfo
         }
     }
 
+    // The art found this session, per game: a switch back to a game (or one the pointer rested on in the list, see Warm) shows its
+    // banner at once instead of reading and parsing the store's JSON from disk again. Only complete answers are kept, so a game
+    // looked at while offline is asked again later. Bounded: the oldest go first.
+    static readonly Dictionary<string, GameArt> Known = new(StringComparer.OrdinalIgnoreCase);
+    static readonly Queue<string> KnownOrder = new();
+    const int KnownMax = 96;
+
+    /// <summary>The art of a game: from this session's memory when it was already found, else from the cache or the store.</summary>
     public static async Task<GameArt> GetAsync(Game game, CancellationToken ct = default)
+    {
+        // The cache janitor may have removed the picture since: then it is looked up again.
+        lock (Known) if (Known.TryGetValue(game.Id, out var known) && Exists(known.HeroImage)) return known;
+        var art = await LoadAsync(game, ct);
+        if (art.SteamAppId is not null && art.HeroImage is not null)
+            lock (Known)
+            {
+                if (Known.ContainsKey(game.Id)) Known[game.Id] = art;
+                else if (Known.TryAdd(game.Id, art))
+                {
+                    KnownOrder.Enqueue(game.Id);
+                    while (KnownOrder.Count > KnownMax) Known.Remove(KnownOrder.Dequeue());
+                }
+            }
+        return art;
+    }
+
+    /// <summary>
+    /// The pointer rests on a game in the list: its art is looked up in the background, so a click shows the banner at once.
+    /// Nothing happens for a game already known; a lookup that fails is only logged.
+    /// </summary>
+    public static void Warm(Game game)
+    {
+        lock (Known) if (Known.ContainsKey(game.Id)) return;
+        _ = Task.Run(async () =>
+        {
+            try { await GetAsync(game); }
+            catch (Exception ex) { Log.Warn($"Art warm-up for {game.Name}: {ex.Message}"); }
+        });
+    }
+
+    static bool Exists(string? image) => image is null || !Path.IsPathRooted(image) || File.Exists(image);
+
+    static async Task<GameArt> LoadAsync(Game game, CancellationToken ct)
     {
         try
         {

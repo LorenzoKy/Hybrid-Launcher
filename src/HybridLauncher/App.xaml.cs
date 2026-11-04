@@ -49,8 +49,28 @@ public partial class App : Application
     /// Ends the app once the main window has closed for real. Exit() asks politely; a background thread then ends the process
     /// anyway if a stuck thread or a pending call still holds it (the window is already gone, settings are already saved).
     /// </summary>
+    /// <summary>
+    /// From the window's close on, every exception thrown (even one caught) goes to the log with where it came from: a crash
+    /// while the app ends leaves nothing else behind (no dialog, nothing in the event log).
+    /// </summary>
+    public static void WatchShutdown()
+    {
+        if (Interlocked.Exchange(ref _watching, 1) == 1) return;
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            try { Log.Warn($"Shutdown: {e.Exception.GetType().Name} on thread {Environment.CurrentManagedThreadId}: {e.Exception.Message}\n{new System.Diagnostics.StackTrace(1, false)}"); }
+            catch { }
+        };
+    }
+
+    static int _watching;
+
+    /// <summary>The window has closed (or the app is ending): delayed UI work must not start any more.</summary>
+    public static bool ShuttingDown => Volatile.Read(ref _watching) == 1 || Volatile.Read(ref _exiting) == 1;
+
     public static void ExitForSure()
     {
+        WatchShutdown();
         if (Interlocked.Exchange(ref _exiting, 1) == 1) return;
         new Thread(() =>
         {
@@ -106,7 +126,7 @@ public partial class App : Application
         Window = new MainWindow();
         // Started with Windows: only the icon in the notification area, the window opens from there.
         // From a desktop shortcut: the game starts, Hybrid Launcher stays in the notification area to watch it.
-        bool tray = launch is not null || Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase);
+        bool tray = launch is not null || (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase) && !AppState.Settings.StartOpensWindow);
         if (tray) Window.StartInTray();
         else Window.Activate();
         Helpers.MediaPolicy.Attach(Window, hidden: tray);

@@ -40,6 +40,27 @@
     </LinearGradientBrush>
 
     <!-- A Windows 11 settings-style card: one rounded surface per section. -->
+    <!-- The app's fixed tints (section icons, folder tiles): read through these brushes so the palette can bring them into one
+         family (Palettes.ApplyResources replaces them; Cozy softens them further). Wash = the same colour, faint, behind an icon. -->
+    <SolidColorBrush x:Key="TintGoldBrush" Color="#FFF2B82E" />
+    <SolidColorBrush x:Key="TintGoldWashBrush" Color="#26F2B82E" />
+    <SolidColorBrush x:Key="TintAmberBrush" Color="#FFFFC857" />
+    <SolidColorBrush x:Key="TintAmberWashBrush" Color="#26FFC857" />
+    <SolidColorBrush x:Key="TintOrangeBrush" Color="#FFF07F2A" />
+    <SolidColorBrush x:Key="TintOrangeWashBrush" Color="#26F07F2A" />
+    <SolidColorBrush x:Key="TintVioletBrush" Color="#FFB9A3FF" />
+    <SolidColorBrush x:Key="TintVioletWashBrush" Color="#26B9A3FF" />
+    <SolidColorBrush x:Key="TintSlateBrush" Color="#FF8B94A8" />
+    <SolidColorBrush x:Key="TintSlateWashBrush" Color="#268B94A8" />
+    <SolidColorBrush x:Key="TintBlueBrush" Color="#FF5FA8FF" />
+    <SolidColorBrush x:Key="TintBlueWashBrush" Color="#265FA8FF" />
+    <SolidColorBrush x:Key="TintCyanBrush" Color="#FF4FC3F7" />
+    <SolidColorBrush x:Key="TintCyanWashBrush" Color="#264FC3F7" />
+    <SolidColorBrush x:Key="TintPinkBrush" Color="#FFE05CB8" />
+    <SolidColorBrush x:Key="TintPinkWashBrush" Color="#26E05CB8" />
+    <SolidColorBrush x:Key="TintGreenBrush" Color="#FF3FC26A" />
+    <SolidColorBrush x:Key="TintGreenWashBrush" Color="#263FC26A" />
+
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
@@ -82,9 +103,20 @@
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
+    <!-- The words under a setting or a heading: a point larger than WinUI's caption with room between the lines, so a description
+         of two or three lines reads easily on every tab. -->
     <Style x:Key="RowDescription" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="LineHeight" Value="19" />
         <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- A small fact under a heading (file name, date, size): a quiet rounded chip, no outline. -->
+    <Style x:Key="OptiChip" TargetType="Border">
+        <Setter Property="Background" Value="#14FFFFFF" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="8,3,9,4" />
     </Style>
 
     <!-- Small square icon buttons in card headers (refresh, open folder...). -->
@@ -153,8 +185,8 @@
 
     <!-- Buttons in the see-through launch bar (the bar is always dark, so the text is white). -->
     <Style x:Key="GlassButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
-        <!-- A little rounder than Play, so the buttons read as soft pills beside its squared face (Hydra-like). -->
-        <Setter Property="CornerRadius" Value="6" />
+        <!-- The same soft corner as the Play button, so the bar reads as one family. -->
+        <Setter Property="CornerRadius" Value="9" />
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="MinHeight" Value="46" />
         <Setter Property="FontSize" Value="14" />
@@ -163,8 +195,19 @@
 
     <!-- The toggle in the launch bar (HDR). -->
     <Style x:Key="GlassToggleButton" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="9" />
         <Setter Property="MinHeight" Value="46" />
+    </Style>
+
+    <!-- The launch bar's labelled buttons (HDR, Cloud, folders, achievements): no face of their own at rest, so they blend
+         into the bar's glass instead of a second see-through layer on it; the face shows on hover and press only. -->
+    <Style x:Key="FlatGlassButton" TargetType="Button" BasedOn="{StaticResource GlassButton}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style x:Key="FlatGlassToggleButton" TargetType="ToggleButton" BasedOn="{StaticResource GlassToggleButton}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
 
     <!-- The Play button: big, bold, a two-tone accent gradient and a soft lighter rim. -->
