@@ -1,5 +1,87 @@
 # Changelog
 
+## 1.3.1 — 2026-11-06 · Achievement pop-ups, controller and settings search
+
+**Hybrid Launcher 1.3.1** redraws the achievement pop-up from scratch, with looks like the consoles' and stores', the game's
+own platinum and your own sounds; adds a Controller tab with button remapping and a Home button that also opens the trophy you
+just earned; lets you search every setting; keeps your play time; and finds Epic games 1.3.0 missed.
+
+### ✨ New
+
+- **Achievement pop-up looks.** Settings → *Achievements* → *Look*: Hybrid Launcher, PlayStation 5 Like, PlayStation 4 Like
+  (white or black), Xbox Like, Steam Like, GOG Like, Epic Games Like, Minimal, or *Match the game's store*. The console- and
+  store-like looks are Hybrid Launcher's own drawings inspired by them, not the originals: they follow their size, place and
+  motion, at the size of the other looks on a desk monitor; where an original has the console's logo, Hybrid Launcher's own
+  mark is drawn instead, and the trophy is Hybrid Launcher's own in the bronze, silver, gold or platinum of the tier.
+- **Where the original shows it.** The default position puts each look where its console or store shows it (PS5 top right,
+  PS4 top left, Xbox bottom centre…). Top centre and Bottom centre can be picked too.
+- **Preview with a real game.** Settings → Achievements shows one of a game's real achievements exactly like an unlock would
+  look. Nothing is unlocked or written.
+- **More sources.** Local achievements (Settings → Achievements → *Sources*, on by default) are read, GOG achievements are read while a GOG game runs (signed in),
+  and other tools can show an unlock through the app's feed folder (Epic, Xbox or anything else).
+- **Achievements tab in Settings**, with its own *Restore defaults*.
+- **Platinum.** The game's own achievement for unlocking all the others (most games have one, like *Tireless — Unlock all
+  achievements*) shows as the platinum: its own name and picture, Hybrid Launcher's platinum trophy in platinum and diamond
+  blue, always after the other unlocks. Single achievements are bronze, silver or gold by how rare they are (gold under 10% of
+  players). *Platinum* in the real-game preview shows that game's platinum.
+- **Search all settings.** The box beside the Settings title finds any setting in every tab, by its name, its description or
+  its choices, grouped by tab and section. Pick one to go straight to it; Enter goes to the best match, Ctrl+F jumps to the box.
+- **Your play time is kept.** Hybrid Launcher keeps its own record of the time you play (always on), so the hours of a game
+  come back when you uninstall it and install it again, move it, add it by hand again or get it from another store.
+- **Sounds.** Settings → Achievements, under the pop-ups: Windows' notification sound, your own sounds, or none, and a *Sound
+  volume* slider. With *My sounds* bronze, silver, gold and the platinum can each play their own .wav, with one for every
+  achievement as the fallback. No sounds come with Hybrid Launcher.
+- **Sound presets.** Keep sets of your own sounds and switch between them, or load a folder of .wav files in one go (they
+  go to bronze, silver, gold and platinum by their names).
+- **Controller tab in Settings.** Controller navigation on or off (for people who move the mouse with a controller through
+  another tool), and what each button does: any action can be given to any button (A, B, X, Y, LB, RB, LT, RT, View, Menu, L3,
+  R3), swapping with the action that had it. New actions: *Search*, and *Previous / Next section* (My PC, Library, Downloads,
+  Settings). LB / RB change tab on game pages and in Settings, and the section on pages without tabs.
+- **Home button.** Optional (Settings → Controller): the Xbox / Guide or PS button brings Hybrid Launcher to the front from a
+  game or any app, on the page of the game being played, and pressed again goes back to the game. Press or hold; works with
+  Xbox controllers, handhelds that show up as one, and PlayStation controllers directly or through DS4Windows, DualSenseX or
+  Steam Input. Pressed while an achievement pop-up is on screen (or just after it), it opens that achievement in the game's
+  *Achievements* tab, lit for a moment, as a console opens the trophy you just earned.
+- **Welcome to the new version.** After an update, the first time the window opens, a short window shows what's new in
+  that version, with a link to the full list of changes. A first install gets the welcome tour instead.
+- **Settings are easier to get around.** Each tab opens with what it holds and a button for each of its sections, which
+  scrolls straight to it (mouse, touch or controller).
+
+### 🎨 Changes
+
+- **Notification list.** Bigger bell that swings when something new arrives. Notifications are grouped by day, can be
+  filtered by kind (OptiScaler, Ultra+, Hybrid Launcher), removed one by one, and *Clear* can be undone until the list closes.
+  Opening one marks it read.
+- **GOG achievements** show on the game's page while signed in to GOG.
+
+### 🐛 Fixes
+
+- **Epic Games: some installed games were not found.** Games whose Epic manifest has an empty `MainGameAppName` (The Outer
+  Worlds: Spacer's Choice Edition, Red Dead Redemption 2 and others) were taken for DLC and skipped. Thanks to shoftiel2481
+  on Discord for tracking it down.
+- **Settings cut off on the right at 1080p** ([#5](https://github.com/LorenzoKy/Hybrid-Launcher/issues/5)). In a maximized
+  1080p window some Settings tabs (About the most, Notifications and Storage a little) ran past the right edge: the page's
+  column was placed by the width its content wanted, then stretched to its full width from there. It now always takes the
+  page's width (up to its maximum), centred. Every page and tab is checked at 1080p by the self-test now. A maximized window
+  left at its old size after a resolution change also fits the screen again by itself. Thanks to bovanik on Discord and
+  Kindbad on GitHub for the reports.
+- The Hybrid Launcher pop-up (and the Steam, GOG and Epic looks) has a fixed size like the other looks: it no longer grows
+  with a long description, which could push it past its own edge or the edge of the screen.
+- PlayStation 4 looks: the trophy sits a little lower, clear of the letters that reach below the line (p, g, y).
+- A game's *Achievements* tab: the date and rarity under each achievement no longer end mid-word on a narrow tile, they go on
+  two lines. PCGamingWiki tables keep the rounded ends of their shaded rows.
+- The achievement's picture shows from the first frame: pictures are fetched when a game starts, and a pop-up opens with
+  its picture already loaded instead of downloading it while on screen.
+- Sharper pop-ups: the trophies and the Hybrid Launcher mark are drawn at their real size (they were drawn small and
+  stretched), and the PlayStation looks sit on whole pixels.
+- Pop-ups that slide in from the bottom of the screen (Steam, Xbox) could show tearing: the window stays still now and the
+  pop-up moves inside it.
+- The version list of a game's OptiScaler tab showed a new build only after a restart, even after the notification about it.
+  It now updates as soon as the new build is found, with no extra requests.
+- A test build or a second copy of Hybrid Launcher could take over *Start with Windows*, so Windows started that copy at
+  sign-in instead of yours. Only the copy that owns the entry rewrites it now, and the switch shows what Windows will do.
+- The pop-up no longer leaves a dark box or trail while it moves or fades, and it no longer crashes the app when it opens.
+
 ## 1.3.0 — 2026-11-04 · Forks, Ultra+ (experimental) and update notifications
 
 **Hybrid Launcher 1.3.0** installs OptiScaler forks and unofficial builds, manages Ultra+ for Unreal Engine games (experimental), shows at a

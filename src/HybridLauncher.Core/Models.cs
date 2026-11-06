@@ -408,8 +408,9 @@ public sealed class IniProfile
 /// <summary>Achievement pop-up options (Settings → Achievements).</summary>
 public sealed class PopupSettings
 {
-    /// <summary>"BottomRight", "BottomLeft", "TopRight", "TopLeft", or "Custom" (<see cref="X"/>, <see cref="Y"/>).</summary>
-    public string Corner { get; set; } = "BottomRight";
+    /// <summary>"Native" (where the chosen look's original shows it), "BottomRight", "BottomLeft", "TopRight", "TopLeft",
+    /// "TopCenter", "BottomCenter", or "Custom" (<see cref="X"/>, <see cref="Y"/>).</summary>
+    public string Corner { get; set; } = "Native";
 
     /// <summary>Where a "Custom" pop-up sits: 0 = left / top edge of the screen's work area, 1 = right / bottom edge.</summary>
     public double X { get; set; } = 1;
@@ -427,21 +428,67 @@ public sealed class PopupSettings
     /// <summary>"Normal" or "Large".</summary>
     public string Size { get; set; } = "Normal";
 
+    /// <summary>
+    /// How the pop-up is drawn: "Hybrid", "PlayStation", "PlayStation4", "PlayStation4Black", "Xbox", "Steam", "Gog", "Epic", "Minimal", or "Auto" (the look of the
+    /// game's own store). <see cref="Style"/> and the background colours only apply to Hybrid and Minimal.
+    /// </summary>
+    public string Look { get; set; } = "Hybrid";
+
     /// <summary>"Accent" (colour theme), "Gold", "Steam" (blue), or "Custom" with <see cref="CustomColor"/>.</summary>
     public string Style { get; set; } = "Accent";
 
     /// <summary>#RRGGBB used when <see cref="Style"/> is "Custom".</summary>
     public string CustomColor { get; set; } = "#9A5CFF";
 
-    /// <summary>"None", "Windows" (the system notification sound) or "File" (<see cref="SoundFile"/>, a .wav).</summary>
+    /// <summary>
+    /// "Windows" (the system notification sound), "File" (your own .wav files: <see cref="TierSounds"/> for a rarity, else
+    /// <see cref="SoundFile"/>, else the system sound) or "None". "Look" is an older value (looks came with their own sounds,
+    /// no longer shipped) and plays like "Windows".
+    /// </summary>
     public string Sound { get; set; } = "Windows";
+
+    /// <summary>How loud the pop-up's sound plays, 0..1 (1 = as recorded).</summary>
+    public double Volume { get; set; } = 1;
+
+    /// <summary>Your .wav for every achievement (when its rarity has none of its own).</summary>
     public string? SoundFile { get; set; }
+
+    /// <summary>Your .wav per rarity tier: "Bronze", "Silver", "Gold" or "Platinum" → its path. A missing tier plays <see cref="SoundFile"/>.</summary>
+    public Dictionary<string, string> TierSounds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Saved sets of your own sounds (Settings → Achievements → Sound preset): name → slot → .wav, the slots being "All" (every
+    /// achievement) and the tiers. Picking one fills My sounds with it.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> SoundPresets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Show the share of players who have it (Steam's global stats).</summary>
     public bool ShowRarity { get; set; } = true;
 
     /// <summary>"Game" (the display the game runs on) or "Primary".</summary>
     public string Screen { get; set; } = "Game";
+}
+
+/// <summary>Settings → Controller: what each button does in the app, and the Home button that brings Hybrid Launcher to the front.</summary>
+public sealed class ControllerSettings
+{
+    /// <summary>Action → button ("Press" → "A"…), only what differs from the defaults. Actions and buttons: see the app's PadActions.</summary>
+    public Dictionary<string, string> Buttons { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The controller's Home button (Xbox / Guide, PS) brings Hybrid Launcher to the front from a game or any app.</summary>
+    public bool HomeButton { get; set; }
+
+    /// <summary>"Press" or "Hold" (half a second, so a short press stays the console's or Game Bar's own).</summary>
+    public string HomeTrigger { get; set; } = "Press";
+
+    /// <summary>What opens: "Game" (the page of the game running, else as it was), "Library" or "Last" (as it was).</summary>
+    public string HomeOpens { get; set; } = "Game";
+
+    /// <summary>Pressed again while Hybrid Launcher is in front: back to the game (or app) it came from.</summary>
+    public bool HomeGoesBack { get; set; } = true;
+
+    /// <summary>Also read the PS button of PlayStation controllers connected directly (no Xbox emulation in between).</summary>
+    public bool HomePlayStation { get; set; } = true;
 }
 
 /// <summary>How the library is ordered and filtered.</summary>
@@ -497,6 +544,12 @@ public sealed class AppSettings
     /// <summary>The welcome tour was shown (finished or skipped); Settings can start it again.</summary>
     public bool TourSeen { get; set; }
 
+    /// <summary>
+    /// The version this window was last opened on (x.y.z). After an update it differs, and "Welcome to the new version" shows
+    /// once; a first start sets it with the welcome tour instead.
+    /// </summary>
+    public string? LastVersionSeen { get; set; }
+
     /// <summary>The first-start feature picker was answered (see <see cref="Features"/>); Settings → Features opens it again.</summary>
     public bool FeaturesChosen { get; set; }
 
@@ -544,6 +597,15 @@ public sealed class AppSettings
 
     /// <summary>A game started from Hybrid Launcher that is up and running sends the window to the notification area; it comes back when the game closes.</summary>
     public bool HideWhilePlaying { get; set; } = true;
+
+    /// <summary>
+    /// A controller steers Hybrid Launcher's window (focus, A to press, B back...). Off for people who move the mouse with a
+    /// controller through another tool (JoyToKey, JoyXoff, Steam Input's desktop layout): both would act on the same press.
+    /// </summary>
+    public bool GamepadInput { get; set; } = true;
+
+    /// <summary>Settings → Controller: the buttons' actions and the Home button.</summary>
+    public ControllerSettings Controller { get; set; } = new();
 
     /// <summary>A start with Windows opens the window too (off, the default: only the icon in the notification area).</summary>
     public bool StartOpensWindow { get; set; }

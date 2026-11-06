@@ -600,7 +600,7 @@ public static class Icons
     {
         if (glyph != TrophyGlyph) return new FontIcon { Glyph = glyph, FontSize = fontSize };
         var size = Math.Round(fontSize * 1.15);
-        var geometry = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), TrophyPath);
+        var geometry = NewGeometry(TrophyPath);
         geometry.Transform = new ScaleTransform { ScaleX = size / 16, ScaleY = size / 16 };
         return new PathIcon { Data = geometry, Width = size, Height = size };
     }
@@ -615,6 +615,19 @@ public static class Icons
         return new FontIcon { Glyph = glyph, FontSize = fontSize, Foreground = new SolidColorBrush(tint), VerticalAlignment = VerticalAlignment.Center };
     }
 
+    /// <summary>
+    /// A geometry of its own from path markup, freshly parsed each time, so no two shapes ever share one (each trophy part sets
+    /// its own scale on it).
+    /// </summary>
+    public static Geometry NewGeometry(string d)
+    {
+        // Parsed as a path's data (WinUI has no converter for PathGeometry.Figures), then taken off it.
+        var path = (Microsoft.UI.Xaml.Shapes.Path)XamlReader.Load($"<Path xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" Data=\"{d}\" />");
+        var g = path.Data;
+        path.Data = null;
+        return g;
+    }
+
     /// <summary>The achievements gold.</summary>
     public static readonly Color Gold = Color.FromArgb(0xFF, 0xFF, 0xD3, 0x4D);
 
@@ -626,7 +639,7 @@ public static class Icons
         VerticalAlignment = VerticalAlignment.Center,
         Child = new PathIcon
         {
-            Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), TrophyPath),
+            Data = NewGeometry(TrophyPath),
             Width = 16,
             Height = 16,
             Foreground = foreground ?? new SolidColorBrush(Gold),
@@ -644,14 +657,35 @@ public static class Icons
     /// The trophy with depth, as PlayStation draws its trophies: the metal lit from the left like a cylinder (light, then its
     /// colour, then deep at the right edge), a lit rim on top, a shine down the bowl, the bowl darkening towards the stem, the
     /// plinth shaded top to bottom and a thin dark outline. Gold for achievements; <paramref name="platinum"/> (every achievement
-    /// unlocked) is a cool silver-blue with a sparkle, a different trophy at a glance.
+    /// unlocked) is its own trophy (<see cref="PlatinumTrophy"/>), different at a glance.
     /// </summary>
-    public static FrameworkElement Trophy(double size, bool platinum = false)
+    public static FrameworkElement Trophy(double size, bool platinum = false) => TierTrophy(size, platinum ? "Platinum" : "Gold");
+
+    /// <summary>
+    /// The same shaded trophy in a PlayStation tier's metal: "Bronze" a rosy copper, "Silver" a cool grey, "Gold" the achievements
+    /// gold, "Platinum" its own (<see cref="PlatinumTrophy"/>). Used by the PlayStation pop-ups, so their trophies are the app's own.
+    /// </summary>
+    public static FrameworkElement TierTrophy(double size, string tier)
     {
-        var (light, mid, dark, deep) = platinum
-            ? (Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF), Color.FromArgb(0xFF, 0xC9, 0xD6, 0xE8), Color.FromArgb(0xFF, 0x86, 0x99, 0xB4), Color.FromArgb(0xFF, 0x4E, 0x5C, 0x74))
-            : (Color.FromArgb(0xFF, 0xFF, 0xF2, 0xB0), Color.FromArgb(0xFF, 0xF5, 0xC2, 0x42), Color.FromArgb(0xFF, 0xC0, 0x84, 0x14), Color.FromArgb(0xFF, 0x7C, 0x50, 0x08));
-        static Geometry G(string d) => (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), d);
+        static Color C(uint v) => Color.FromArgb(0xFF, (byte)(v >> 16), (byte)(v >> 8), (byte)v);
+        if (tier == "Platinum") return PlatinumTrophy(size);
+        bool platinum = false;
+        // Drawn at its own size: the geometry is scaled, not the shapes. A Viewbox would draw the 16 px trophy and stretch that
+        // picture (soft when big, grainy when small).
+        double k = size / 16;
+        var (light, mid, dark, deep) = tier switch
+        {
+            "Silver" => (C(0xFFFFFF), C(0xC6CBD2), C(0x8C939C), C(0x50555C)),
+            "Bronze" => (C(0xF6CDB4), C(0xCC8664), C(0x8E4F36), C(0x5A2E1E)),
+            _ => (C(0xFFF2B0), C(0xF5C242), C(0xC08414), C(0x7C5008)),
+        };
+        Geometry G(string d)
+        {
+            var g = NewGeometry(d);
+            // No transform at the drawn size: a 1:1 scale left the 16 px trophy (Settings → Platinum) with nothing but its gem.
+            if (k != 1) g.Transform = new ScaleTransform { ScaleX = k, ScaleY = k };
+            return g;
+        }
         static LinearGradientBrush Across(params (Color C, double At)[] stops)
         {
             var b = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 0) };
@@ -665,13 +699,13 @@ public static class Icons
             return b;
         }
         var clear = Color.FromArgb(0, 0, 0, 0);
-        var grid = new Grid { Width = 16, Height = 16 };
+        var grid = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
         // The whole silhouette, lit from the left; its dark outline gives it an edge on any background.
         grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
         {
             Data = G(TrophyPath),
             Fill = Across((dark, 0), (light, 0.3), (mid, 0.55), (dark, 0.85), (deep, 1)),
-            Stroke = new SolidColorBrush(Color.FromArgb(0xC0, deep.R, deep.G, deep.B)), StrokeThickness = 0.45,
+            Stroke = new SolidColorBrush(Color.FromArgb(0xC0, deep.R, deep.G, deep.B)), StrokeThickness = 0.45 * k,
         });
         // The bowl darkens towards the stem; the plinth from its lit top to its shadowed foot.
         grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(CupPath), Fill = Down((clear, 0), (clear, 0.45), (Color.FromArgb(0x60, 0, 0, 0), 1)) });
@@ -681,6 +715,151 @@ public static class Icons
         grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(ShinePath), Fill = Down((Color.FromArgb(0xD0, 0xFF, 0xFF, 0xFF), 0), (Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 1)) });
         if (platinum)
             grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(SparklePath), Fill = new SolidColorBrush(Color.FromArgb(0xFF, 0xE8, 0xF4, 0xFF)) });
-        return new Viewbox { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center, Child = grid };
+        return grid;
+    }
+
+    /// <summary>
+    /// The platinum trophy, Hybrid Launcher's own and unlike the tiers: platinum and diamond blue: the metal lit from the top left (a bright
+    /// white through icy platinum to a deep sapphire edge), a diamond sheen of cyan and white across the bowl, a cut diamond-blue
+    /// star gem on the bowl, a soft blue glow behind and two sparkles. Same silhouette as the others, so it lines up wherever a trophy goes.
+    /// </summary>
+    public static FrameworkElement PlatinumTrophy(double size)
+    {
+        static Color C(uint v, byte a = 0xFF) => Color.FromArgb(a, (byte)(v >> 16), (byte)(v >> 8), (byte)v);
+        static Windows.Foundation.Point P(double x, double y) => new(x, y);
+        double k = size / 16;
+        Geometry G(string d)
+        {
+            var g = NewGeometry(d);
+            // No transform at the drawn size: a 1:1 scale left the 16 px trophy (Settings → Platinum) with nothing but its gem.
+            if (k != 1) g.Transform = new ScaleTransform { ScaleX = k, ScaleY = k };
+            return g;
+        }
+        static LinearGradientBrush Grad(Windows.Foundation.Point from, Windows.Foundation.Point to, params (Color C, double At)[] stops)
+        {
+            var b = new LinearGradientBrush { StartPoint = from, EndPoint = to };
+            foreach (var (c, at) in stops) b.GradientStops.Add(new GradientStop { Color = c, Offset = at });
+            return b;
+        }
+        var grid = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+
+        // A soft blue glow behind it (only where it is big enough to show).
+        if (size >= 24)
+        {
+            var aura = new RadialGradientBrush { Center = P(0.5, 0.42), GradientOrigin = P(0.5, 0.42), RadiusX = 0.5, RadiusY = 0.5 };
+            aura.GradientStops.Add(new GradientStop { Color = C(0x8FD0FF, 0x55), Offset = 0 });
+            aura.GradientStops.Add(new GradientStop { Color = C(0x8FD0FF, 0x00), Offset = 1 });
+            grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = size * 1.1, Height = size * 1.1, Margin = new Thickness(-size * 0.05), Fill = aura });
+        }
+
+        // The metal: lit from the top left, white through icy platinum to deep sapphire, with a dark blue edge.
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Data = G(TrophyPath),
+            Fill = Grad(P(0.05, 0), P(0.95, 1), (C(0xFFFFFF), 0), (C(0xEAF4FC), 0.2), (C(0xBCD8F0), 0.42), (C(0x6E9DD0), 0.66), (C(0x34609A), 0.88), (C(0x1F3A66), 1)),
+            Stroke = new SolidColorBrush(C(0x14264A, 0xD0)), StrokeThickness = 0.45 * k,
+        });
+        // A diamond sheen across the bowl: cyan fire, then white.
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(CupPath), Fill = Grad(P(0, 0.2), P(1, 0.8), (C(0x7FDBFF, 0x00), 0.1), (C(0x7FDBFF, 0x60), 0.4), (C(0xFFFFFF, 0x48), 0.62), (C(0xFFFFFF, 0x00), 0.9)) });
+        // The bowl darkens towards the stem, the plinth from a lit top to a deep foot.
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(CupPath), Fill = Grad(P(0, 0), P(0, 1), (C(0x000000, 0), 0), (C(0x000000, 0), 0.5), (C(0x0F1E3A, 0x80), 1)) });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(PlinthPath), Fill = Grad(P(0, 0), P(0, 1), (C(0xF0F7FF, 0x70), 0), (C(0x0F1E3A, 0x70), 1)) });
+        // The rim catches the light; a shine down the left of the bowl.
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(RimPath), Fill = Grad(P(0, 0), P(1, 0), (C(0xFFFFFF, 0xF0), 0), (C(0xD9EEFF, 0xE0), 0.5), (C(0x7FB4E8, 0x80), 1)) });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(ShinePath), Fill = Grad(P(0, 0), P(0, 1), (C(0xFFFFFF, 0xE0), 0), (C(0xFFFFFF, 0x00), 1)) });
+
+        // A cut star gem on the bowl, a diamond: white at its heart, ice blue to deep diamond blue at its points.
+        if (size >= 14)
+        {
+            var gem = new PathGeometry();
+            double cx = 8 * k, cy = 5.15 * k, r = 2.05 * k, t = 0.55 * k;
+            var f = new PathFigure { StartPoint = P(cx, cy - r), IsClosed = true, IsFilled = true };
+            foreach (var (x, y) in new[] { (cx + t, cy - t), (cx + r, cy), (cx + t, cy + t), (cx, cy + r), (cx - t, cy + t), (cx - r, cy), (cx - t, cy - t) })
+                f.Segments.Add(new LineSegment { Point = P(x, y) });
+            gem.Figures.Add(f);
+            var gemFill = new RadialGradientBrush { Center = P(0.5, 0.5), GradientOrigin = P(0.4, 0.38), RadiusX = 0.55, RadiusY = 0.55 };
+            gemFill.GradientStops.Add(new GradientStop { Color = C(0xFFFFFF), Offset = 0 });
+            gemFill.GradientStops.Add(new GradientStop { Color = C(0xC8ECFF), Offset = 0.35 });
+            gemFill.GradientStops.Add(new GradientStop { Color = C(0x3D8FE0), Offset = 1 });
+            grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = gem, Fill = gemFill, Stroke = new SolidColorBrush(C(0x123366, 0x90)), StrokeThickness = 0.22 * k });
+        }
+
+        // Sparkles: white to ice at the top right, a small one at the left.
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = G(SparklePath), Fill = Grad(P(0, 0), P(1, 1), (C(0xFFFFFF), 0), (C(0xA8E2FF), 1)) });
+        if (size >= 20)
+        {
+            var small = G(SparklePath);
+            small.Transform = new TransformGroup { Children = { new ScaleTransform { ScaleX = k * 0.5, ScaleY = k * 0.5 }, new TranslateTransform { X = -4.6 * k, Y = 6.2 * k } } };
+            grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = small, Fill = new SolidColorBrush(C(0xCDEBFF, 0xE0)) });
+        }
+        return grid;
+    }
+
+    /// <summary>
+    /// The platinum emblem, Hybrid Launcher's own (the picture of a platinum that has none of its own): a medallion of deep diamond
+    /// blue with a burst of light behind the platinum trophy, a polished platinum ring with a blue sheen, and sparkles.
+    /// Meant to be seen at a glance, unlike the single achievements' pictures. Drawn at its size (no Viewbox).
+    /// </summary>
+    public static FrameworkElement PlatinumEmblem(double size)
+    {
+        static Color C(uint v, byte a = 0xFF) => Color.FromArgb(a, (byte)(v >> 16), (byte)(v >> 8), (byte)v);
+        double r = size / 2;
+        var grid = new Grid { Width = size, Height = size, IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+
+        // The disc: diamond blue in the middle, near black at the edge.
+        var disc = new RadialGradientBrush { Center = new Windows.Foundation.Point(0.5, 0.42), GradientOrigin = new Windows.Foundation.Point(0.5, 0.38), RadiusX = 0.6, RadiusY = 0.6 };
+        disc.GradientStops.Add(new GradientStop { Color = C(0x3F78C0), Offset = 0 });
+        disc.GradientStops.Add(new GradientStop { Color = C(0x1A3466), Offset = 0.55 });
+        disc.GradientStops.Add(new GradientStop { Color = C(0x09111F), Offset = 1 });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = size * 0.94, Height = size * 0.94, Fill = disc });
+
+        // A burst of light: sixteen rays from the centre, fading out towards the rim.
+        var rays = new PathGeometry();
+        for (int k = 0; k < 16; k++)
+        {
+            double a = k * Math.PI / 8, w = k % 2 == 0 ? 0.11 : 0.06, len = r * (k % 2 == 0 ? 0.9 : 0.72);
+            var f = new PathFigure { StartPoint = new Windows.Foundation.Point(r, r), IsClosed = true, IsFilled = true };
+            f.Segments.Add(new LineSegment { Point = new Windows.Foundation.Point(r + len * Math.Cos(a - w), r + len * Math.Sin(a - w)) });
+            f.Segments.Add(new LineSegment { Point = new Windows.Foundation.Point(r + len * Math.Cos(a + w), r + len * Math.Sin(a + w)) });
+            rays.Figures.Add(f);
+        }
+        var rayFill = new RadialGradientBrush { Center = new Windows.Foundation.Point(0.5, 0.5), GradientOrigin = new Windows.Foundation.Point(0.5, 0.5), RadiusX = 0.5, RadiusY = 0.5 };
+        rayFill.GradientStops.Add(new GradientStop { Color = C(0xF2F8FF, 0xB0), Offset = 0 });
+        rayFill.GradientStops.Add(new GradientStop { Color = C(0x9ED6FF, 0x50), Offset = 0.5 });
+        rayFill.GradientStops.Add(new GradientStop { Color = C(0x9ED6FF, 0x00), Offset = 0.95 });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = rays, Fill = rayFill });
+
+        // The platinum ring, its sheen running from white through ice blue to steel and back, and a thin inner line.
+        var ring = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 1) };
+        ring.GradientStops.Add(new GradientStop { Color = C(0xFFFFFF), Offset = 0 });
+        ring.GradientStops.Add(new GradientStop { Color = C(0xD2ECFF), Offset = 0.25 });
+        ring.GradientStops.Add(new GradientStop { Color = C(0x7AA7D6), Offset = 0.5 });
+        ring.GradientStops.Add(new GradientStop { Color = C(0xEAF6FF), Offset = 0.75 });
+        ring.GradientStops.Add(new GradientStop { Color = C(0xA9CBEB), Offset = 1 });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = size * 0.94, Height = size * 0.94, Stroke = ring, StrokeThickness = Math.Max(1.5, size * 0.065) });
+        grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = size * 0.74, Height = size * 0.74, Stroke = new SolidColorBrush(C(0xFFFFFF, 0x38)), StrokeThickness = Math.Max(0.75, size * 0.012) });
+
+        // The trophy itself, in platinum, a little above the centre as on a medal.
+        var trophy = PlatinumTrophy(Math.Round(size * 0.54));
+        trophy.HorizontalAlignment = HorizontalAlignment.Center;
+        trophy.VerticalAlignment = VerticalAlignment.Center;
+        trophy.Margin = new Thickness(0, 0, 0, size * 0.03);
+        grid.Children.Add(trophy);
+
+        // Sparkles: one big at the top right, two small.
+        void Star(double cx, double cy, double sr, byte alpha)
+        {
+            var g = new PathGeometry();
+            var f = new PathFigure { StartPoint = new Windows.Foundation.Point(cx, cy - sr), IsClosed = true, IsFilled = true };
+            double t = sr * 0.22;
+            foreach (var (x, y) in new[] { (cx + t, cy - t), (cx + sr, cy), (cx + t, cy + t), (cx, cy + sr), (cx - t, cy + t), (cx - sr, cy), (cx - t, cy - t) })
+                f.Segments.Add(new LineSegment { Point = new Windows.Foundation.Point(x, y) });
+            g.Figures.Add(f);
+            grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = g, Fill = new SolidColorBrush(C(0xFFFFFF, alpha)) });
+        }
+        Star(size * 0.80, size * 0.20, size * 0.13, 0xFF);
+        Star(size * 0.20, size * 0.32, size * 0.065, 0xD0);
+        Star(size * 0.76, size * 0.78, size * 0.055, 0xB0);
+        return grid;
     }
 }

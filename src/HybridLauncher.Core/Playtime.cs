@@ -14,7 +14,8 @@ public readonly record struct PlayStats(long Minutes, DateTime? LastPlayed, stri
 
 /// <summary>
 /// Steam games: read from the Steam client's own userdata\&lt;account&gt;\config\localconfig.vdf (no login, no API key).
-/// Other games: counted by Hybrid Launcher itself (see <see cref="GameSessions"/>) when they are started from Hybrid Launcher.
+/// Other games: counted by Hybrid Launcher itself (see <see cref="GameSessions"/>) and kept in its own record
+/// (<see cref="PlaytimeLedger"/>), so the hours stay when the game is uninstalled, moved or added again.
 /// </summary>
 public static class Playtime
 {
@@ -25,14 +26,35 @@ public static class Playtime
 
     public static PlayStats Get(Game game, GameSettings settings)
     {
+        var own = Counted(game, settings);
         if (game is { Store: GameStore.Steam, SteamAppId: { } appId } && SteamApps().TryGetValue(appId, out var s))
-            return new PlayStats(s.Minutes, s.LastPlayed > 0 ? DateTimeOffset.FromUnixTimeSeconds(s.LastPlayed).LocalDateTime : null, "Steam");
+        {
+            var stats = new PlayStats(s.Minutes, s.LastPlayed > 0 ? DateTimeOffset.FromUnixTimeSeconds(s.LastPlayed).LocalDateTime : null, "Steam");
+            // Hybrid Launcher's record when it knows more (hours from another store's copy of the game, or Steam's count lost).
+            return own.Minutes > stats.Minutes ? own : stats;
+        }
+        return own;
+    }
+
+    /// <summary>The time Hybrid Launcher counted: the game's settings and its own record (which keeps it across installs).</summary>
+    static PlayStats Counted(Game game, GameSettings settings)
+    {
+        PlaytimeLedger.Keep(game, settings.PlayMinutes, settings.LastPlayed);
+        long minutes = settings.PlayMinutes;
+        DateTime? last = settings.LastPlayed;
+        if (PlaytimeLedger.Get(game) is { } kept)
+        {
+            minutes = Math.Max(minutes, kept.Minutes);
+            last = Max(last, kept.LastPlayed);
+        }
         // A game run through a Steam emulator: the time Hybrid Launcher counted, and the last session from the emulator's saves when newer.
         if (game.EmulatorAppId is { } emu && SettingsStore.Current.ReadSteamEmulator && SteamEmulator.LastPlayed(emu) is { } emuLast
-            && (settings.LastPlayed is null || emuLast > settings.LastPlayed))
-            return new PlayStats(settings.PlayMinutes, emuLast, "Hybrid Launcher");
-        return new PlayStats(settings.PlayMinutes, settings.LastPlayed, game.Store == GameStore.Steam ? "Steam" : "Hybrid Launcher");
+            && (last is null || emuLast > last))
+            return new PlayStats(minutes, emuLast, "Hybrid Launcher");
+        return new PlayStats(minutes, last, "Hybrid Launcher");
     }
+
+    static DateTime? Max(DateTime? a, DateTime? b) => a is null ? b : b is null ? a : a > b ? a : b;
 
     /// <summary>Re-reads localconfig.vdf only when Steam rewrote it (it does at the end of every session).</summary>
     static Dictionary<string, (long Minutes, long LastPlayed)> SteamApps()

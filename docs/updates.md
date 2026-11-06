@@ -13,6 +13,8 @@ The only thing you do is confirm.
    from there and closes.
 4. The new version waits for the old one to close, copies its files over the app's folder (only the files the release ships:
    nothing else in the folder is touched) and opens the updated app, which says *Updated to …* and cleans up the cache.
+5. The first time the window opens on the new version (also when it started in the notification area), **Welcome to Hybrid
+   Launcher x.y.z** shows that version's highlights and a link to everything that changed. It shows once per version.
 
 Your games, settings, accounts and cloud saves live in `%LOCALAPPDATA%\HybridLauncher`, not in the app's folder, so an
 update never touches them.

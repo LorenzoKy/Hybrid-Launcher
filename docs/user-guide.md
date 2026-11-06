@@ -168,14 +168,30 @@ which game. The app only reads the list; it never changes your online status.
   window in front, clips and muted trailers pause, nothing is polled and Windows runs Hybrid Launcher in efficiency mode;
   downloads keep full speed), **Choose features** (the first-start picker again: keep everything, or only OptiScaler, OptiScaler +
   ReShade, no achievements, just a launcher, or your own mix), close to the notification area, start with Windows, the
-  welcome tour, the tabs, and the **achievement
-  pop-up** (position, screen, size, colour, background, opacity, time on screen, sound, rarity; *Try it* shows a sample).
-  **Game files a mod replaces**: back them up first (the default), just replace them, or ask at each OptiScaler or Luma
-  install. Without a backup, uninstalling a mod removes its files but cannot bring back the ones it replaced.
+  welcome tour, the tabs. **Game files a mod replaces**: back them up first (the default), just replace them, or ask at each
+  OptiScaler or Luma install. Without a backup, uninstalling a mod removes its files but cannot bring back the ones it replaced.
+- **Controller**: controller navigation on or off, what each button does (any action on any button), and the **Home button**
+  (see [Using a controller](#using-a-controller)).
+- **Achievements**: the **pop-up** and where its unlocks come from.
+  - *Look*: Hybrid Launcher, PlayStation 5 Like, PlayStation 4 Like (white or black), Xbox Like, Steam Like, GOG Like, Epic
+    Games Like, Minimal, or *Match the game's store*. The console- and store-like looks are Hybrid Launcher's own drawings.
+  - Position (*Where the original shows it* by default, a corner, top or bottom centre, or a spot you drag it to), screen,
+    size, colours, opacity, time on screen and the rarity line. *Try it* shows a sample; *Preview with a real game* shows one
+    of a game's real achievements, and *Platinum* that game's platinum. Nothing is unlocked or written.
+  - Tiers: bronze for 30% of players or more, silver from 10%, gold under 10%. The **platinum** is the game's own achievement
+    for unlocking all the others, shown last in the platinum tier.
+  - **Sounds**: Windows' notification sound, none, or *My sounds*: a .wav per tier (bronze, silver, gold, platinum) with one
+    for every achievement as the fallback, a volume slider, and presets (*Load a folder* maps files by their names). No
+    sounds come with Hybrid Launcher.
+  - *Sources*: Steam, **Local achievements** (on by default), GOG while signed in, and a feed folder other tools can write to.
+- **Notifications**: for each source (OptiScaler, Ultra+, Hybrid Launcher), whether it goes to the app's list, a Windows
+  pop-up, both or neither; how long the list keeps them; none while a game runs.
 - **Cloud saves**: see [cloud-saves.md](cloud-saves.md).
 - **Storage**: install folders, game updates, custom OptiScaler builds, saved versions, cache.
 - **About**: version, **Updates** (check now, check at start), credits.
 - *Restore defaults* resets only the open tab; your games and accounts are never touched.
+- **Search all settings**: the box beside the title (Ctrl+F) finds any setting in every tab by its name, description or
+  choices; pick a result to go straight to it, Enter goes to the best match.
 
 ## Using a controller
 
@@ -183,8 +199,19 @@ The **D-pad or left stick** moves between controls, **A** presses, **B** goes ba
 **right stick** scroll, **Y** plays the open game, **X** opens the right-click menu, **View** or **Menu** jumps to the game list.
 The controller is read only while the app is the window in front, so a running game never steers it.
 
+Settings → **Controller** gives any action to any button (it swaps with the one that had it), with *Search* and *Previous /
+Next section* as extra actions.
+
+The **Home button** (Settings → Controller, off by default) reads the Xbox / Guide button or the PS button even while a game
+is in front: Hybrid Launcher comes forward on the page of the game being played, and a second press goes back to the game.
+Press or hold, as you prefer. Pressed while an achievement pop-up is on screen, or within a few seconds after it, it opens that
+achievement in the game's *Achievements* tab, lit for a moment. It works with Xbox controllers, handhelds that show up as one,
+and PlayStation controllers connected directly or through DS4Windows, DualSenseX or Steam Input.
+
 ## Good to know
 
 - Your data: `%LOCALAPPDATA%\HybridLauncher` (settings, cache, backups, logs). Deleting it resets the app.
 - Closing the window keeps the app in the notification area; *Quit* there closes it for real.
 - Desktop shortcuts made by the app start the game through it, so Smart HDR, play time and cloud saves still work.
+- Play time is kept in Hybrid Launcher's own record too (`playtime.json`), so a game's hours come back after you uninstall
+  and install it again, move it, or get it from another store.

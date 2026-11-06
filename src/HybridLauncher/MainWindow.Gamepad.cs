@@ -13,13 +13,13 @@ using VirtualKey = Windows.System.VirtualKey;
 namespace HybridLauncher;
 
 /// <summary>What a controller press means in Hybrid Launcher, whatever the controller (Xbox layout names).</summary>
-public enum PadKey { Up, Down, Left, Right, A, B, X, Y, LB, RB, LT, RT, Menu, View }
+public enum PadKey { Up, Down, Left, Right, A, B, X, Y, LB, RB, LT, RT, Menu, View, L3, R3 }
 
 /// <summary>
 /// The controller in Hybrid Launcher's window: the D-pad or the left stick moves the focus from control to
-/// control (as the arrow keys and Tab do), A presses what has the focus, B goes back or closes a menu, LB / RB change tab,
-/// LT / RT and the right stick scroll, Y plays the game of the open page, X opens the right-click menu of what has the focus,
-/// Menu or View jumps to the game list. Read only while Hybrid Launcher is the window in front, so a
+/// control (as the arrow keys and Tab do) and the right stick scrolls; the buttons do what Settings → Controller gives them
+/// (<see cref="PadActions"/>; by default A presses, B goes back, X opens the right-click menu, Y plays, LB / RB change tab, LT / RT
+/// scroll a page, Menu jumps to the game list, View to Search). Read only while Hybrid Launcher is the window in front, so a
 /// game running on top never steers it; the timer runs only while a controller is connected.
 /// </summary>
 public sealed partial class MainWindow
@@ -30,6 +30,11 @@ public sealed partial class MainWindow
     DateTime _padRepeat;
 
     public static bool PadConnected { get; private set; }
+
+    /// <summary>Settings → Features → Controller navigation was switched: the controller is read again, or left alone.</summary>
+    public void GamepadSettingChanged() => _padApply?.Invoke();
+
+    Action? _padApply;
 
     void StartGamepad()
     {
@@ -42,10 +47,12 @@ public sealed partial class MainWindow
         void Apply()
         {
             PadConnected = Gamepad.Gamepads.Count > 0;
-            if (PadConnected && front && !_hidden) _padTimer.Start();
+            // Turned off in Settings: never read, so a tool that maps the controller to the mouse is the only one acting on it.
+            if (PadConnected && front && !_hidden && AppState.Settings.GamepadInput) _padTimer.Start();
             else { _padTimer.Stop(); _padHeld.Clear(); _padDir = null; }
         }
         void Changed() => DispatcherQueue.TryEnqueue(Apply);
+        _padApply = Apply;
         Gamepad.GamepadAdded += (_, _) => Changed();
         Gamepad.GamepadRemoved += (_, _) => Changed();
         Activated += (_, e) =>
@@ -60,7 +67,7 @@ public sealed partial class MainWindow
     void PollPad()
     {
         var pads = Gamepad.Gamepads;
-        if (pads.Count == 0 || _closed || _hidden || !IsForeground()) { _padHeld.Clear(); _padDir = null; return; }
+        if (pads.Count == 0 || _closed || _hidden || !AppState.Settings.GamepadInput || !IsForeground()) { _padHeld.Clear(); _padDir = null; return; }
         GamepadReading r;
         try { r = pads[0].GetCurrentReading(); }
         catch { return; }
@@ -82,6 +89,8 @@ public sealed partial class MainWindow
         On(r.RightTrigger > 0.6, PadKey.RT);
         On((b & GamepadButtons.Menu) != 0, PadKey.Menu);
         On((b & GamepadButtons.View) != 0, PadKey.View);
+        On((b & GamepadButtons.LeftThumbstick) != 0, PadKey.L3);
+        On((b & GamepadButtons.RightThumbstick) != 0, PadKey.R3);
 
         // Buttons act once per press.
         foreach (var k in now)
@@ -105,7 +114,7 @@ public sealed partial class MainWindow
             Scroll(-r.RightThumbstickY * 26, r.RightThumbstickX * 26, animate: false);
     }
 
-    /// <summary>One controller press (also the self-test's way in).</summary>
+    /// <summary>One controller press (also the self-test's way in): a direction moves, a button does its action.</summary>
     public void Pad(PadKey key)
     {
         NotePadPress();
@@ -117,23 +126,57 @@ public sealed partial class MainWindow
                 case PadKey.Down: Move(FocusNavigationDirection.Down, VirtualKey.Down); break;
                 case PadKey.Left: Move(FocusNavigationDirection.Left, VirtualKey.Left); break;
                 case PadKey.Right: Move(FocusNavigationDirection.Right, VirtualKey.Right); break;
-                case PadKey.A: Press(); break;
-                case PadKey.B: Back(); break;
-                case PadKey.X: ContextMenu(); break;
-                case PadKey.Y: (ContentFrame.Content as GamePage)?.PlayFromPad(); break;
-                case PadKey.LB or PadKey.RB:
-                    int by = key == PadKey.LB ? -1 : 1;
-                    if (ContentFrame.Content is GamePage g) g.StepTab(by);
-                    else if (ContentFrame.Content is SettingsPage s) s.StepTab(by);
-                    break;
-                case PadKey.LT: Scroll(-0.85, 0, animate: true, pages: true); break;
-                case PadKey.RT: Scroll(0.85, 0, animate: true, pages: true); break;
-                case PadKey.Menu or PadKey.View:
-                    if ((Nav.SelectedItem as Control ?? Nav.MenuItems.OfType<Control>().FirstOrDefault()) is { } item) item.Focus(FocusState.Keyboard);
-                    break;
+                default: Do(PadActions.ActionOf(key)); break;
             }
         }
         catch (Exception ex) { Log.Warn($"Controller {key}: {ex.Message}"); }
+    }
+
+    /// <summary>What a button does (Settings → Controller).</summary>
+    public void Do(PadAction action)
+    {
+        switch (action)
+        {
+            case PadAction.Press: Press(); break;
+            case PadAction.Back: Back(); break;
+            case PadAction.Menu: ContextMenu(); break;
+            case PadAction.Play: (ContentFrame.Content as GamePage)?.PlayFromPad(); break;
+            case PadAction.PrevTab or PadAction.NextTab:
+                int by = action == PadAction.PrevTab ? -1 : 1;
+                if (ContentFrame.Content is GamePage g) g.StepTab(by);
+                else if (ContentFrame.Content is SettingsPage s) s.StepTab(by);
+                else StepSection(by);
+                break;
+            case PadAction.PageUp: Scroll(-0.85, 0, animate: true, pages: true); break;
+            case PadAction.PageDown: Scroll(0.85, 0, animate: true, pages: true); break;
+            case PadAction.GameList:
+                if ((Nav.SelectedItem as Control ?? Nav.MenuItems.OfType<Control>().FirstOrDefault()) is { } item) item.Focus(FocusState.Keyboard);
+                break;
+            case PadAction.Search: SearchBox.Focus(FocusState.Keyboard); break;
+            case PadAction.PrevSection: StepSection(-1); break;
+            case PadAction.NextSection: StepSection(1); break;
+        }
+    }
+
+    /// <summary>My PC, Library, Downloads, Settings: the one before or after the open page (a game page counts as the Library).</summary>
+    public void StepSection(int by)
+    {
+        var items = new List<object>();
+        foreach (var tag in new[] { HardwareTag, LibraryTag, DownloadsTag })
+            if (Nav.MenuItems.Concat(Nav.FooterMenuItems).OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag as string == tag && i.Visibility == Visibility.Visible) is { } it)
+                items.Add(it);
+        if (Nav.SettingsItem is NavigationViewItem settings) items.Add(settings);
+        if (items.Count == 0) return;
+        int at = ContentFrame.Content switch
+        {
+            HardwarePage => items.FindIndex(i => (i as NavigationViewItem)?.Tag as string == HardwareTag),
+            DownloadsPage => items.FindIndex(i => (i as NavigationViewItem)?.Tag as string == DownloadsTag),
+            SettingsPage => items.IndexOf(Nav.SettingsItem),
+            _ => items.FindIndex(i => (i as NavigationViewItem)?.Tag as string == LibraryTag),
+        };
+        var next = items[((Math.Max(0, at) + by) % items.Count + items.Count) % items.Count];
+        Nav.SelectedItem = next;
+        (next as Control)?.Focus(FocusState.Keyboard);
     }
 
     int OpenPopups() => RootGrid.XamlRoot is { } root ? VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Count(p => p.Child is not null && p.IsOpen && p.Child is not ToolTip) : 0;

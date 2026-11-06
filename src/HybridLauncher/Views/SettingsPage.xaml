@@ -6,22 +6,32 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:HybridLauncher.Controls">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="1600" Padding="24,8,24,40" Spacing="4">
-            <!-- The title, and on the right Restore defaults for the open tab (each tab has its own defaults). -->
+    <!-- The column's width is set in code (at most 1600, see PageScroller_SizeChanged): with MaxWidth here the ScrollViewer
+         centred it by the width its content wanted, then it stretched to 1600 from there and ran past a 1080p window (issue #5). -->
+    <ScrollViewer x:Name="PageScroller" VerticalScrollBarVisibility="Auto" SizeChanged="PageScroller_SizeChanged">
+        <StackPanel x:Name="PageColumn" HorizontalAlignment="Center" Padding="24,8,24,40" Spacing="4">
+            <!-- The title, the search through every tab, and on the right Restore defaults for the open tab (each tab has its own defaults). -->
             <Grid Margin="0,8,0,12" ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
-                <Button x:Name="RestoreDefaultsButton" Grid.Column="1" VerticalAlignment="Center" Padding="12,6" Click="RestoreDefaults_Click">
+                <AutoSuggestBox x:Name="SettingsSearch" Grid.Column="1" MaxWidth="420" Margin="12,0,0,0" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                PlaceholderText="Search all settings" TextChanged="SettingsSearch_TextChanged" QuerySubmitted="SettingsSearch_QuerySubmitted">
+                    <AutoSuggestBox.QueryIcon><SymbolIcon Symbol="Find" /></AutoSuggestBox.QueryIcon>
+                </AutoSuggestBox>
+                <Button x:Name="RestoreDefaultsButton" Grid.Column="2" VerticalAlignment="Center" Padding="12,6" Click="RestoreDefaults_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE777;" FontSize="14" />
                         <TextBlock x:Name="RestoreDefaultsText" Text="Restore defaults" />
                     </StackPanel>
                 </Button>
             </Grid>
+
+            <!-- While searching: what matches, in every tab, grouped by tab and section (built in code). -->
+            <StackPanel x:Name="SearchResults" Spacing="4" Visibility="Collapsed" />
 
             <!-- One tab per area: what Hybrid Launcher looks like, what it does, what it keeps on disk, and about. -->
             <SelectorBar x:Name="SettingsTabs" Margin="0,0,0,12" SelectionChanged="SettingsTabs_SelectionChanged">
@@ -30,6 +40,12 @@
                 </SelectorBarItem>
                 <SelectorBarItem Text="Features" Tag="features">
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xE9E9;" Foreground="{ThemeResource TintBlueBrush}" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem Text="Controller" Tag="controller">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE7FC;" Foreground="{ThemeResource TintVioletBrush}" /></SelectorBarItem.Icon>
+                </SelectorBarItem>
+                <SelectorBarItem x:Name="AchievementsTabItem" Text="Achievements" Tag="achievements">
+                    <SelectorBarItem.Icon><FontIcon Glyph="&#xE735;" Foreground="{ThemeResource TintAmberBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
                 <SelectorBarItem Text="Notifications" Tag="notifications">
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xEA8F;" Foreground="{ThemeResource TintGoldBrush}" /></SelectorBarItem.Icon>
@@ -44,6 +60,20 @@
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xE946;" Foreground="{ThemeResource TintGreenBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
             </SelectorBar>
+
+            <!-- What the open tab holds, and its sections: each one a button that scrolls to it (by mouse, touch or controller). -->
+            <Grid x:Name="TabIntro" ColumnSpacing="14" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border x:Name="TabIntroTile" Width="44" Height="44" CornerRadius="12" VerticalAlignment="Top">
+                    <ContentPresenter x:Name="TabIntroIcon" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock x:Name="TabIntroText" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                    <ScrollViewer x:Name="TabSectionsScroller" HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="TabSections" Orientation="Horizontal" Spacing="6" Margin="0,0,0,2" />
+                    </ScrollViewer>
+                </StackPanel>
+            </Grid>
 
             <StackPanel x:Name="AppearancePanel" Spacing="4">
             <TextBlock Text="LANGUAGE" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
@@ -294,18 +324,6 @@
                 </Grid>
             </Border>
 
-            <TextBlock Text="STEAM EMULATORS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
-            <Border Style="{StaticResource RowStyle}">
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Read Goldberg / GSE saves" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Games run through a Steam emulator (Goldberg SteamEmu, gbe_fork): their achievements and last session, read from the emulator's saves. Hybrid Launcher counts the play time when it starts them." Style="{StaticResource RowDescription}" />
-                    </StackPanel>
-                    <ToggleSwitch x:Name="EmulatorToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Emulator_Toggled" />
-                </Grid>
-            </Border>
-
             <TextBlock Text="GAME" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
@@ -328,20 +346,118 @@
                 </Grid>
             </Border>
 
-            <TextBlock Text="ACHIEVEMENTS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <TextBlock Text="GAME DETECTION" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Stores to scan" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Installed games are found from each launcher's own records. Nothing is changed in the launchers." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <CheckBox x:Name="SteamCheck" Content="Steam" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="EpicCheck" Content="Epic" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="GogCheck" Content="GOG" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="XboxCheck" Content="Xbox" MinWidth="0" Click="Sources_Changed" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Games folders" Style="{StaticResource RowHeader}" />
+                            <TextBlock Text="Each sub-folder that contains an .exe is listed as a game." Style="{StaticResource RowDescription}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Add folder…" Click="AddLibrary_Click" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel x:Name="LibrariesList" Spacing="4" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel>
+                        <TextBlock Text="Games added by hand" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Added with “Add a game (pick its .exe)”." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="CustomList" Spacing="4" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel>
+                        <TextBlock Text="Hidden games" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Games you hid from the list." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="HiddenList" Spacing="4" />
+                </StackPanel>
+            </Border>
+
+            </StackPanel>
+
+            <!-- Notifications: built in code (NotificationSettingsView), made again when something changes. -->
+            <StackPanel x:Name="NotificationsPanel" Spacing="4" Visibility="Collapsed" />
+
+            <!-- Achievements: the unlock pop-up, its look, place, sound, and a preview with a real game. -->
+            <StackPanel x:Name="AchievementsPanel" Spacing="4" Visibility="Collapsed">
+            <StackPanel x:Name="AchievementPopupsPanel" Spacing="4">
+            <TextBlock Text="POP-UPS" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Unlock pop-ups" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="A small pop-up (where you choose, in the colours you choose) when Steam records a new achievement, while Hybrid Launcher is open. Steam games only for now; read from Steam's own files, nothing is sent anywhere. It shows over borderless / windowed games, not over exclusive full screen." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="A small pop-up (where you choose, in the look you choose) when a game unlocks an achievement, while Hybrid Launcher is open: Steam, GOG, local achievements and the feed folder. Read on this PC, nothing is sent anywhere. It shows over borderless / windowed games, not over exclusive full screen." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Try it" Click="TestPopup_Click" VerticalAlignment="Center" />
+                    <Button x:Name="TryPopupButton" Grid.Column="1" Content="Try it" Click="TestPopup_Click" VerticalAlignment="Center" />
                     <ToggleSwitch x:Name="PopupToggle" Grid.Column="2" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Popup_Toggled" />
                 </Grid>
             </Border>
+            <!-- A real achievement of a game in the library, shown exactly as an unlock would be: nothing is unlocked or written. -->
+            <Border x:Name="PreviewGameRow" Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Preview with a real game" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="PreviewGameText" Text="Shows one of the game's real achievements (its name, picture and rarity) the same way an unlock would, in the look of its store when the look matches the store. Platinum shows the game's own platinum: its achievement for unlocking all the others. Nothing is unlocked." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="PreviewGameCombo" Grid.Column="1" MinWidth="220" MaxWidth="320" VerticalAlignment="Center" PlaceholderText="Pick a game" />
+                    <Button x:Name="PreviewGameButton" Grid.Column="2" Content="Show" VerticalAlignment="Center" Click="PreviewGame_Click" />
+                    <Button x:Name="PreviewPlatinumButton" Grid.Column="3" VerticalAlignment="Center" Click="PreviewPlatinum_Click" ToolTipService.ToolTip="The pop-up of this game's platinum: its achievement for unlocking all the others">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <ContentPresenter x:Name="PreviewPlatinumIcon" VerticalAlignment="Center" />
+                            <TextBlock Text="Platinum" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Border>
             <!-- How the pop-up looks; "Try it" above shows the result. -->
-            <Border x:Name="PopupOptions" Style="{StaticResource RowStyle}">
+            <Border x:Name="PopupLookRow" Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Look" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Which store's notification to imitate. “Match the game's store” uses the Steam, GOG, Epic or Xbox look of each game. Colour and background below apply to Hybrid Launcher and Minimal; the others keep their own colours." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="LookCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="PopupLook_Changed">
+                        <ComboBoxItem Content="Hybrid Launcher" Tag="Hybrid" />
+                        <ComboBoxItem Content="PlayStation 5 Like" Tag="PlayStation" />
+                        <ComboBoxItem Content="PlayStation 4 Like" Tag="PlayStation4" />
+                        <ComboBoxItem Content="PlayStation 4 Like (black)" Tag="PlayStation4Black" />
+                        <ComboBoxItem Content="Xbox Like" Tag="Xbox" />
+                        <ComboBoxItem Content="Steam Like" Tag="Steam" />
+                        <ComboBoxItem Content="GOG Like" Tag="Gog" />
+                        <ComboBoxItem Content="Epic Games Like" Tag="Epic" />
+                        <ComboBoxItem Content="Minimal" Tag="Minimal" />
+                        <ComboBoxItem Content="Match the game's store" Tag="Auto" />
+                    </ComboBox>
+                </Grid>
+            </Border>
+            <Border x:Name="PopupOptions" Style="{StaticResource RowStyle}" Margin="0,4,0,0">
                 <Grid ColumnSpacing="16" RowSpacing="10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -357,15 +473,17 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Position" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
                     <ComboBox x:Name="CornerCombo" Grid.Column="1" MinWidth="200" SelectionChanged="PopupOption_Changed">
+                        <ComboBoxItem Content="Where the original shows it" Tag="Native" />
                         <ComboBoxItem Content="Bottom right" Tag="BottomRight" />
                         <ComboBoxItem Content="Bottom left" Tag="BottomLeft" />
                         <ComboBoxItem Content="Top right" Tag="TopRight" />
                         <ComboBoxItem Content="Top left" Tag="TopLeft" />
+                        <ComboBoxItem Content="Top centre" Tag="TopCenter" />
+                        <ComboBoxItem Content="Bottom centre" Tag="BottomCenter" />
                         <ComboBoxItem Content="Exactly where I put it" Tag="Custom" />
                     </ComboBox>
 
@@ -423,18 +541,8 @@
                         <TextBlock x:Name="SecondsText" MinWidth="40" VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <TextBlock Grid.Row="8" Text="Sound" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="SoundFileButton" Content="Pick .wav…" Click="SoundFile_Click" Visibility="Collapsed" />
-                        <ComboBox x:Name="SoundCombo" MinWidth="200" SelectionChanged="PopupOption_Changed">
-                            <ComboBoxItem Content="None" Tag="None" />
-                            <ComboBoxItem Content="Windows notification" Tag="Windows" />
-                            <ComboBoxItem Content="My sound (.wav)" Tag="File" />
-                        </ComboBox>
-                    </StackPanel>
-
-                    <TextBlock Grid.Row="9" Text="Show how rare it is" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <ToggleSwitch x:Name="RarityToggle" Grid.Row="9" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" Toggled="PopupOption_Changed" />
+                    <TextBlock Grid.Row="8" Text="Show how rare it is" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <ToggleSwitch x:Name="RarityToggle" Grid.Row="8" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" Toggled="PopupOption_Changed" />
 
                     <TextBlock Grid.Row="5" Text="Background" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
                     <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Spacing="8">
@@ -454,61 +562,28 @@
                         <Slider x:Name="OpacitySlider" Width="150" Minimum="60" Maximum="100" StepFrequency="1" VerticalAlignment="Center" ValueChanged="Opacity_Changed" />
                         <TextBlock x:Name="OpacityText" MinWidth="40" VerticalAlignment="Center" />
                     </StackPanel>
+
                 </Grid>
             </Border>
-
-            <TextBlock Text="GAME DETECTION" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
+            </StackPanel>
+            <!-- Sounds, under the pop-ups: built in code (AchievementSoundsView), made again when something changes. -->
+            <StackPanel x:Name="AchievementSoundsPanel" Spacing="4" Margin="0,16,0,0" />
+            <!-- Where achievements are read from besides the stores (Local achievements: on by default, set only here). -->
+            <TextBlock Text="SOURCES" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Stores to scan" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Installed games are found from each launcher's own records. Nothing is changed in the launchers." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Local achievements" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Achievements and the last session of games that keep them in save files on this PC: shown on the game page and announced with a pop-up like the others." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                        <CheckBox x:Name="SteamCheck" Content="Steam" MinWidth="0" Click="Sources_Changed" />
-                        <CheckBox x:Name="EpicCheck" Content="Epic" MinWidth="0" Click="Sources_Changed" />
-                        <CheckBox x:Name="GogCheck" Content="GOG" MinWidth="0" Click="Sources_Changed" />
-                        <CheckBox x:Name="XboxCheck" Content="Xbox" MinWidth="0" Click="Sources_Changed" />
-                    </StackPanel>
+                    <ToggleSwitch x:Name="LocalAchievementsToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="LocalAchievements_Toggled" />
                 </Grid>
             </Border>
-            <Border Style="{StaticResource RowStyle}">
-                <StackPanel Spacing="8">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="Games folders" Style="{StaticResource RowHeader}" />
-                            <TextBlock Text="Each sub-folder that contains an .exe is listed as a game." Style="{StaticResource RowDescription}" />
-                        </StackPanel>
-                        <Button Grid.Column="1" Content="Add folder…" Click="AddLibrary_Click" VerticalAlignment="Center" />
-                    </Grid>
-                    <StackPanel x:Name="LibrariesList" Spacing="4" />
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource RowStyle}">
-                <StackPanel Spacing="8">
-                    <StackPanel>
-                        <TextBlock Text="Games added by hand" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Added with “Add a game (pick its .exe)”." Style="{StaticResource RowDescription}" />
-                    </StackPanel>
-                    <StackPanel x:Name="CustomList" Spacing="4" />
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource RowStyle}">
-                <StackPanel Spacing="8">
-                    <StackPanel>
-                        <TextBlock Text="Hidden games" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Games you hid from the list." Style="{StaticResource RowDescription}" />
-                    </StackPanel>
-                    <StackPanel x:Name="HiddenList" Spacing="4" />
-                </StackPanel>
-            </Border>
-
             </StackPanel>
 
-            <!-- Notifications: built in code (NotificationSettingsView), made again when something changes. -->
-            <StackPanel x:Name="NotificationsPanel" Spacing="4" Visibility="Collapsed" />
+            <!-- Controller: built in code (ControllerSettingsView), made again when something changes. -->
+            <StackPanel x:Name="ControllerPanel" Spacing="4" Visibility="Collapsed" />
 
             <!-- Cloud saves: built in code (CloudSettingsView), made again when the provider changes. -->
             <StackPanel x:Name="CloudPanel" Spacing="4" Visibility="Collapsed" />

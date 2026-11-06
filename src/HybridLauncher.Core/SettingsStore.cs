@@ -242,6 +242,14 @@ public static class SettingsStore
         s.CustomTint ??= "#8A4DFF";
         s.CustomBackground ??= "#16121F";
         s.Popup ??= new PopupSettings();
+        s.Controller ??= new ControllerSettings();
+        s.Controller.Buttons = new Dictionary<string, string>(s.Controller.Buttons ?? [], StringComparer.OrdinalIgnoreCase);
+        s.Popup.TierSounds = new Dictionary<string, string>(s.Popup.TierSounds ?? [], StringComparer.OrdinalIgnoreCase);
+        s.Popup.SoundPresets = new Dictionary<string, Dictionary<string, string>>(
+            (s.Popup.SoundPresets ?? []).Where(p => p.Value is not null).ToDictionary(p => p.Key, p => new Dictionary<string, string>(p.Value, StringComparer.OrdinalIgnoreCase)),
+            StringComparer.OrdinalIgnoreCase);
+        // Before 1.3.1 the looks came with their own sounds (no longer shipped): the system sound takes their place.
+        if (s.Popup.Sound is not ("Windows" or "File" or "None")) s.Popup.Sound = "Windows";
         s.Cloud ??= new CloudSaveSettings();
         s.Cloud.KeepVersions = Math.Clamp(s.Cloud.KeepVersions, 1, 30);
         // Before 0.20 the providers were desktop sync apps (OneDrive, Dropbox…), each a folder: they carry on as the folder provider.

@@ -117,7 +117,7 @@ public sealed partial class GamePage
         if (parts.Count > 0)
             menu.Items.Add(new MenuFlyoutItem
             {
-                Text = L.F("Syncs: {0}", string.Join(", ", parts.Select(p => p.Name switch { "saves" => L.T("saves"), "config" => L.T("game settings"), _ => L.T("emulator achievements") }))),
+                Text = L.F("Syncs: {0}", string.Join(", ", parts.Select(p => p.Name switch { "saves" => L.T("saves"), "config" => L.T("game settings"), _ => L.T("local achievements") }))),
                 IsEnabled = false,
             });
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -148,7 +148,7 @@ public sealed partial class GamePage
             }));
             if (settings.CloudSaveDir is { } saves) menu.Items.Add(Item(L.T("Open the saves folder"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(saves)), Directory.Exists(saves)));
             if (parts.FirstOrDefault(p => p.Name == "config") is { } config) menu.Items.Add(Item(L.T("Open the game's settings folder"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(config.Dir))));
-            if (parts.FirstOrDefault(p => p.Name == "goldberg") is { } emu) menu.Items.Add(Item(L.T("Open the emulator's achievements folder"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(emu.Dir))));
+            if (parts.FirstOrDefault(p => p.Name == "goldberg") is { } emu) menu.Items.Add(Item(L.T("Open the local achievements folder"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(emu.Dir))));
             if (CloudSaves.GameDir(game) is { } inCloud) menu.Items.Add(Item(L.T("Open the game's cloud folder"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(inCloud)), Directory.Exists(inCloud)));
             var backups = CloudSaves.LocalBackupsDir(game);
             menu.Items.Add(Item(L.T("Open Hybrid Launcher's backups of these saves"), "", () => Ui.Safe(() => GameLauncher.OpenFolder(backups)), Directory.Exists(backups)));

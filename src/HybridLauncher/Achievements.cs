@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using HybridLauncher.Core;
+using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Steam;
 using HybridLauncher.Helpers;
 using Microsoft.UI;
@@ -32,9 +33,12 @@ public static class AchievementWatcher
     {
         try
         {
+            _ui = ui;
+            StartEmulators();
+            StartGog();
+            StartFeed();
             var dir = SteamAchievements.StatsDir;
             if (dir is null || _watcher is not null) return;
-            _ui = ui;
 
             // What is already unlocked is not news: remember it before listening.
             var account = SteamAchievements.CurrentAccountId();
@@ -76,6 +80,11 @@ public static class AchievementWatcher
     {
         try { _watcher?.Dispose(); } catch { }
         _watcher = null;
+        foreach (var w in EmuWatchers) try { w.Dispose(); } catch { }
+        EmuWatchers.Clear();
+        try { _feed?.Dispose(); } catch { }
+        _feed = null;
+        _gogTimer?.Stop();
     }
 
     // Watcher thread: hop to the UI thread at once, everything else happens there.
@@ -94,7 +103,7 @@ public static class AchievementWatcher
             timer = _ui.CreateTimer();
             timer.Interval = TimeSpan.FromMilliseconds(1200);
             timer.IsRepeating = false;
-            timer.Tick += (_, _) => _ = CheckAsync(appId);
+            timer.Tick += (_, _) => _ = appId.StartsWith("emu:", StringComparison.Ordinal) ? CheckEmulatorAsync(appId[4..]) : CheckAsync(appId);
             Pending[appId] = timer;
         }
         timer.Stop();
@@ -114,524 +123,274 @@ public static class AchievementWatcher
                 Known[appId] = now;
             }
             Changed?.Invoke(appId);
+            // First read (the game has just started): the pictures of what is still locked are fetched now, so a pop-up shows its
+            // picture at once instead of downloading it while it is on screen.
+            if (before is null && schema is not null && AppState.Settings.AchievementPopups)
+                AchievementPopup.Prefetch(schema.Where(a => !now.Contains(a.Key)).Select(a => a.IconUrl));
 
             if (before is null || schema is null || !AppState.Settings.AchievementPopups) return;
             var fresh = schema.Where(a => now.Contains(a.Key) && !before.Contains(a.Key)).ToList();
             if (fresh.Count == 0) return;
-            var game = AppState.Find($"steam:{appId}")?.Name;
+            var found = AppState.Find($"steam:{appId}");
+            var game = found?.Name;
             Log.Info($"New achievements in {game ?? appId}: {string.Join(", ", fresh.Select(a => a.ApiName))}");
-            // A burst (another account signing in, a restored backup) is summed up rather than shown one by one.
-            if (fresh.Count > 3)
-            {
-                AchievementPopup.Show(L.F("{0} achievements unlocked", fresh.Count), string.Join(", ", fresh.Take(4).Select(a => a.Name)) + "…", fresh[0].IconUrl, game);
-                return;
-            }
-            // Rarity comes from Steam's public stats (cached): the pop-up never waits more than a moment for it.
-            Dictionary<string, double> percents = [];
-            if (AppState.Settings.Popup.ShowRarity)
-            {
-                try
-                {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                    percents = await SteamAchievements.GlobalPercentagesAsync(appId, cts.Token);
-                }
-                catch (Exception ex) { Log.Warn($"Rarity for {appId}: {ex.Message}"); }
-            }
-            foreach (var a in fresh)
-                AchievementPopup.Show(a.Name, a.Description, a.IconUrl, game, percents.TryGetValue(a.ApiName, out var p) ? p : null);
+            await AnnounceAsync(fresh, game, GameStore.Steam, appId, PlatinumAchievement.Find(schema)?.Key, found?.Id);
         }
         catch (Exception ex)
         {
             Log.Warn($"Achievement check for {appId}: {ex.Message}");
         }
     }
-}
-
-/// <summary>
-/// A Steam-like unlock toast: a small borderless window in a corner of the screen the game runs on, always on top,
-/// shown without taking focus (so a game keeps it). One at a time; the rest wait in a queue.
-/// Corner (or an exact spot), size, colours, opacity, duration, sound and rarity line come from Settings → Achievements.
-/// </summary>
-public static class AchievementPopup
-{
-    sealed record Item(string Name, string Description, string? IconUrl, string? Game, double? Percent);
-
-    static readonly Queue<Item> Waiting = new();
-    static Window? _current;
-
-    public static void Show(string name, string description, string? iconUrl, string? game, double? percent = null)
-    {
-        Waiting.Enqueue(new Item(name, description, iconUrl, game, percent));
-        if (_current is null) ShowNext();
-    }
-
-    static string SampleIcon => new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AchievementSample.png")).AbsoluteUri;
-
-    static Item Sample => new("Perfect Blend", L.T("Saw what an unlock looks like. This one is only a test."), SampleIcon, "Game: The game", 12.4);
-
-    /// <summary>A sample with the current settings; replaces one that is showing, so changes can be compared quickly.</summary>
-    public static void ShowTest()
-    {
-        if (_current is { } shown) Finish(shown, next: false);
-        Waiting.Clear();
-        Show(Sample.Name, Sample.Description, Sample.IconUrl, Sample.Game, Sample.Percent);
-    }
-
-    public static void CloseAll()
-    {
-        Waiting.Clear();
-        if (_current is { } shown) Finish(shown, next: false);
-        if (_placing is { } placing) { try { placing.Close(); } catch { } _placing = null; }
-        _current = null;
-    }
-
-    // ---------- placing it by hand ----------
-
-    static Window? _placing;
-    static Action<double, double>? _placed;
-
-    /// <summary>The window of the pop-up on screen, or null (self-test pictures and checks).</summary>
-    internal static nint? CurrentHandle => _current is { } w ? WinRT.Interop.WindowNative.GetWindowHandle(w) : null;
-    internal static nint? PlacingHandle => _placing is { } w ? WinRT.Interop.WindowNative.GetWindowHandle(w) : null;
 
     /// <summary>
-    /// A sample to drag to the exact spot (Settings → Achievements → Position → Exactly where I put it); every time it is let go
-    /// the spot is saved and <paramref name="placed"/> hears it (0..1 across and down the screen). Its Done button closes it.
+    /// Turns new unlocks into pop-ups. A burst (another account signing in, a restored backup) is summed up rather than shown one
+    /// by one. Rarity comes from the source (GOG) or from Steam's public stats (cached): the pop-up never waits more than a moment.
+    /// The game's own platinum (<paramref name="platinumKey"/>: its achievement for unlocking all the others) shows as itself in
+    /// the platinum tier, always on its own and last, as on a console.
     /// </summary>
-    public static void Place(Action<double, double> placed)
+    static async Task AnnounceAsync(List<Achievement> fresh, string? game, GameStore store, string? steamAppId, string? platinumKey = null, string? gameId = null)
     {
-        _placed = placed;
-        if (_placing is not null) { MovePlacement(); return; }
-        try { _placing = Open(Sample with { Description = L.T("Drag me to where unlocks should appear, then press Done."), Percent = null }, placing: true); }
-        catch (Exception ex) { Log.Warn($"Pop-up placing failed: {ex.Message}"); _placing = null; }
-    }
-
-    /// <summary>The sliders moved: the sample follows them.</summary>
-    public static void MovePlacement()
-    {
-        if (_placing is not { } w) return;
-        var app = w.AppWindow;
-        var (x, y) = Spot(AppState.Settings.Popup, TargetDisplay(AppState.Settings.Popup).WorkArea, app.Size.Width, app.Size.Height, Native.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(w)) / 96.0);
-        app.Move(new PointInt32(x, y));
-    }
-
-    /// <summary>Where the pop-up goes on <paramref name="area"/>: a corner with a margin, or the exact spot.</summary>
-    static (int X, int Y) Spot(PopupSettings o, RectInt32 area, int w, int h, double scale)
-    {
-        int margin = (int)(20 * (scale <= 0 ? 1 : scale));
-        if (o.Corner == "Custom")
-            return (area.X + (int)Math.Round(Math.Clamp(o.X, 0, 1) * Math.Max(0, area.Width - w)),
-                    area.Y + (int)Math.Round(Math.Clamp(o.Y, 0, 1) * Math.Max(0, area.Height - h)));
-        bool left = o.Corner.EndsWith("Left", StringComparison.Ordinal), top = o.Corner.StartsWith("Top", StringComparison.Ordinal);
-        return (left ? area.X + margin : area.X + area.Width - w - margin, top ? area.Y + margin : area.Y + area.Height - h - margin);
-    }
-
-    static void ShowNext()
-    {
-        while (Waiting.TryDequeue(out var item))
+        var platinum = platinumKey is null ? null : fresh.FirstOrDefault(a => a.Key == platinumKey);
+        if (platinum is not null)
+        {
+            Log.Info($"{game}: platinum {platinum.ApiName}");
+            fresh = [.. fresh.Where(a => a != platinum), platinum];
+        }
+        if (fresh.Count > 3)
+        {
+            var rest = fresh.Where(a => a != platinum).ToList();
+            AchievementPopup.Show(new Toast(L.F("{0} achievements unlocked", rest.Count), string.Join(", ", rest.Take(4).Select(a => a.Name)) + "…", rest[0].IconUrl, game, null, store, GameId: gameId, AchievementKey: rest[0].Key));
+            fresh = platinum is null ? [] : [platinum];
+        }
+        Dictionary<string, double> percents = [];
+        if (AppState.Settings.Popup.ShowRarity && steamAppId is not null)
         {
             try
             {
-                _current = Open(item, placing: false);
-                return;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                percents = await SteamAchievements.GlobalPercentagesAsync(steamAppId, cts.Token);
             }
-            catch (Exception ex)
-            {
-                Log.Warn($"Achievement pop-up failed: {ex.Message}");
-                _current = null;
-            }
+            catch (Exception ex) { Log.Warn($"Rarity for {steamAppId}: {ex.Message}"); }
         }
+        foreach (var a in fresh)
+            AchievementPopup.Show(new Toast(a.Name, a.Description, a.IconUrl, game, a.GlobalPercent ?? (percents.TryGetValue(a.ApiName, out var p) ? p : null), store, Completion: a == platinum, GameId: gameId, AchievementKey: a.Key));
     }
 
-    static Window Open(Item item, bool placing)
+    /// <summary>
+    /// Compares a set read from any store with what was known (first read: only what was unlocked in the last half minute counts as
+    /// new, so a game's older unlocks never pop up) and announces what is new.
+    /// </summary>
+    /// <param name="firstWindow">On the first read, how far back an unlock still counts as new (at least the time between two reads).</param>
+    static async Task DiffAsync(string key, AchievementSet set, Game game, GameStore store, string? steamAppId = null, TimeSpan? firstWindow = null)
     {
-        var o = AppState.Settings.Popup;
-        double size = o.Size == "Large" ? 1.3 : 1.0;
-        var accent = AccentColor(o);
-        double seconds = Math.Clamp(o.Seconds, 2, 15);
-        var root = Content(item, accent, BackgroundColor(o, accent), Math.Clamp(o.Opacity, 0.6, 1), size, o.ShowRarity, out var slide, out var timeBar);
-        Button? done = null;
-        if (placing)
+        var now = set.Items.Where(a => a.Unlocked).Select(a => a.Key).ToHashSet();
+        HashSet<string>? before;
+        lock (Known)
         {
-            // The sample being placed: a hint and a Done button over it, and it never leaves by itself.
-            done = new Button
-            {
-                Content = L.T("Done"),
-                Style = HybridLauncher.Views.Ui.Style("AccentButtonStyle"),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 8, 8, 0),
-                Padding = new Thickness(14, 4, 14, 5),
-            };
-            root.Children.Add(done);
+            Known.TryGetValue(key, out before);
+            Known[key] = now;
         }
-        var window = new Window { Title = "Hybrid Launcher achievement", Content = root };
-
-        var app = window.AppWindow;
-        app.IsShownInSwitchers = false;
-        if (app.Presenter is OverlappedPresenter p)
-        {
-            p.IsAlwaysOnTop = true;
-            p.IsResizable = false;
-            p.IsMaximizable = false;
-            p.IsMinimizable = false;
-            p.SetBorderAndTitleBar(false, false);
-        }
-
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        // A plain pop-up window: no caption or sizing frame left over from the normal window (WinUI keeps a thin light
-        // line of it along the top), a tool window (not in Alt+Tab) that never takes the focus from the game.
-        const int GWL_STYLE = -16, GWL_EXSTYLE = -20;
-        const long WS_POPUP = 0x80000000L, WS_VISIBLE = 0x10000000L, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOPMOST = 0x8;
-        _ = SetWindowLongPtr(hwnd, GWL_STYLE, unchecked((nint)(WS_POPUP | WS_VISIBLE)));
-        _ = SetWindowLongPtr(hwnd, GWL_EXSTYLE, (nint)(GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | (placing ? 0 : WS_EX_NOACTIVATE)));
-        _ = SetWindowPos(hwnd, -1 /* HWND_TOPMOST */, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0020); // NOSIZE | NOMOVE | NOACTIVATE | FRAMECHANGED
-        int corner = 2; // DWMWCP_ROUND
-        _ = DwmSetWindowAttribute(hwnd, 33, ref corner, sizeof(int)); // DWMWA_WINDOW_CORNER_PREFERENCE
-        // Windows 11 draws a thin light frame round borderless windows: none here, the pop-up draws its own accent outline.
-        int none = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
-        _ = DwmSetWindowAttribute(hwnd, 34, ref none, sizeof(int)); // DWMWA_BORDER_COLOR
-
-        var area = TargetDisplay(o).WorkArea;
-        double scale = Native.GetDpiForWindow(hwnd) / 96.0;
-        if (scale <= 0) scale = 1;
-        double widthDip = 440 * size;
-        int w = (int)(widthDip * scale);
-        bool left = o.Corner == "Custom" ? o.X < 0.5 : o.Corner.EndsWith("Left", StringComparison.Ordinal);
-        // The height follows the text (a long name or description wraps instead of being cut): measured before it shows.
-        int Height()
-        {
-            root.Measure(new Windows.Foundation.Size(widthDip, double.PositiveInfinity));
-            return (int)Math.Ceiling(Math.Max(96 * size, root.DesiredSize.Height) * scale);
-        }
-        int h = Height();
-        var (x, y) = Spot(o, area, w, h, scale);
-        app.MoveAndResize(new RectInt32(x, y, w, h));
-        app.Show(placing);
-        if (!placing) PlaySound(o);
-
-        // Once laid out in the window (fonts loaded), fit the height again if it differs.
-        root.Loaded += (_, _) =>
-        {
-            int h2 = Height();
-            if (Math.Abs(h2 - h) <= 2) return;
-            var (x2, y2) = Spot(o, area, w, h2, scale);
-            app.MoveAndResize(new RectInt32(x2, y2, w, h2));
-        };
-
-        // Slide in from the near edge while the time line starts running down; fade out, then the next one.
-        var sb = new Storyboard();
-        sb.Children.Add(Anim(slide, "X", left ? -48 : 48, 0, 280));
-        sb.Children.Add(Anim(root, "Opacity", 0, 1, 220));
-        if (!placing)
-        {
-            var run = new DoubleAnimation { From = 1, To = 0, Duration = TimeSpan.FromSeconds(seconds) };
-            Storyboard.SetTarget(run, timeBar);
-            Storyboard.SetTargetProperty(run, "ScaleX");
-            sb.Children.Add(run);
-        }
-        sb.Begin();
-
-        if (placing)
-        {
-            // Dragged by its body (Windows moves it, as by a title bar); each drop saves the spot.
-            root.PointerPressed += (_, e) =>
-            {
-                if (e.OriginalSource is DependencyObject d && IsInside(d, done)) return;
-                _ = ReleaseCapture();
-                _ = SendMessageW(hwnd, 0xA1 /* WM_NCLBUTTONDOWN */, 2 /* HTCAPTION */, 0);
-                var pos = app.Position;
-                var a = TargetDisplay(AppState.Settings.Popup).WorkArea;
-                double fx = a.Width > app.Size.Width ? (pos.X - a.X) / (double)(a.Width - app.Size.Width) : 0;
-                double fy = a.Height > app.Size.Height ? (pos.Y - a.Y) / (double)(a.Height - app.Size.Height) : 0;
-                var s = AppState.Settings.Popup;
-                s.Corner = "Custom";
-                s.X = Math.Clamp(fx, 0, 1);
-                s.Y = Math.Clamp(fy, 0, 1);
-                SettingsStore.Save();
-                _placed?.Invoke(s.X, s.Y);
-            };
-            done!.Click += (_, _) =>
-            {
-                _placing = null;
-                try { window.Close(); } catch { }
-            };
-            window.Closed += (_, _) => { if (_placing == window) _placing = null; };
-            return window;
-        }
-
-        // Time up: fade out, then close. The close never waits on the fade alone: a pop-up over a full-screen game may not
-        // be drawn, and its storyboard then never ends, which used to leave it on screen.
-        void FadeOut()
-        {
-            try
-            {
-                var fade = new Storyboard();
-                fade.Children.Add(Anim(root, "Opacity", 1, 0, 300));
-                fade.Completed += (_, _) => Finish(window);
-                fade.Begin();
-            }
-            catch { Finish(window); }
-            After(window, TimeSpan.FromMilliseconds(600), () => Finish(window));
-        }
-        After(window, TimeSpan.FromSeconds(seconds), FadeOut);
-        // The last guard: whatever happened to the timers and the fade, it is gone shortly after its time.
-        var queue = window.DispatcherQueue;
-        _ = Task.Delay(TimeSpan.FromSeconds(seconds + 2)).ContinueWith(_ => queue.TryEnqueue(() => Finish(window)), TaskScheduler.Default);
-        // A click sends it away at once.
-        root.Tapped += (_, _) => Finish(window);
-        return window;
-    }
-
-    static bool IsInside(DependencyObject? d, DependencyObject? target)
-    {
-        for (; d is not null && target is not null; d = VisualTreeHelper.GetParent(d))
-            if (d == target) return true;
-        return false;
-    }
-
-    static void After(Window window, TimeSpan delay, Action action) => Later.Run(window.DispatcherQueue, delay, action);
-
-    static readonly HashSet<Window> Closed = [];
-
-    static void Finish(Window window, bool next = true)
-    {
-        if (!Closed.Add(window)) return;
-        try { window.Close(); } catch { }
-        if (_current == window) _current = null;
-        if (next && _current is null) ShowNext();
-        // Forget it once its timers are surely done.
-        var queue = window.DispatcherQueue;
-        _ = Task.Delay(20000).ContinueWith(_ => queue?.TryEnqueue(() => Closed.Remove(window)), TaskScheduler.Default);
-    }
-
-    /// <summary>The display of the window in front (the game), or the main display.</summary>
-    static DisplayArea TargetDisplay(PopupSettings o)
-    {
-        try
-        {
-            if (o.Screen == "Game" && GetForegroundWindow() is var fg && fg != 0)
-                return DisplayArea.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(fg), DisplayAreaFallback.Primary);
-        }
-        catch (Exception ex) { Log.Warn($"Pop-up display: {ex.Message}"); }
-        return DisplayArea.Primary;
-    }
-
-    static void PlaySound(PopupSettings o)
-    {
-        try
-        {
-            const uint Async = 0x0001, NoDefault = 0x0002, Alias = 0x00010000, FileName = 0x00020000;
-            if (o.Sound == "Windows") _ = PlaySoundW("Notification.Default", 0, Alias | Async | NoDefault);
-            else if (o.Sound == "File" && o.SoundFile is { } f && File.Exists(f)) _ = PlaySoundW(f, 0, FileName | Async | NoDefault);
-        }
-        catch (Exception ex) { Log.Warn($"Pop-up sound: {ex.Message}"); }
-    }
-
-    static Grid Content(Item item, Windows.UI.Color accent, Windows.UI.Color? background, double opacity, double size, bool showRarity, out TranslateTransform slide, out ScaleTransform timeBar)
-    {
-        var accentBrush = new SolidColorBrush(accent);
-        var light = Windows.UI.Color.FromArgb(0xFF, (byte)(accent.R + (255 - accent.R) / 2), (byte)(accent.G + (255 - accent.G) / 2), (byte)(accent.B + (255 - accent.B) / 2));
-
-        // The icon in an accent ring, a small check badge on its corner.
-        var icon = new Border
-        {
-            Width = 64 * size,
-            Height = 64 * size,
-            CornerRadius = new CornerRadius(8 * size),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, accent.R, accent.G, accent.B)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xC0, accent.R, accent.G, accent.B)),
-            BorderThickness = new Thickness(1.5),
-        };
-        if (item.IconUrl is not null && Uri.TryCreate(item.IconUrl, UriKind.Absolute, out var uri))
-            icon.Child = Smooth.Art(new BitmapImage { UriSource = uri, DecodePixelWidth = (int)(64 * size * 2) }, Smooth.Inner(icon), Stretch.UniformToFill);
+        if (!AppState.Settings.AchievementPopups) return;
+        if (before is null) AchievementPopup.Prefetch(set.Items.Where(a => !a.Unlocked).Select(a => a.IconUrl));
+        List<Achievement> fresh;
+        if (before is not null) fresh = set.Items.Where(a => a.Unlocked && !before.Contains(a.Key)).ToList();
         else
-            icon.Child = new FontIcon { Glyph = "\uE734", FontSize = 28 * size, Foreground = new SolidColorBrush(light) };
-        var badge = new Border
         {
-            Width = 22 * size,
-            Height = 22 * size,
-            CornerRadius = new CornerRadius(11 * size),
-            Background = accentBrush,
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x12, 0x10, 0x18)),
-            BorderThickness = new Thickness(2),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, -6, -6),
-            Child = new FontIcon { Glyph = "\uE73E", FontSize = 10 * size, Foreground = new SolidColorBrush(Colors.White) },
-        };
-        var iconBox = new Grid { VerticalAlignment = VerticalAlignment.Center };
-        iconBox.Children.Add(icon);
-        iconBox.Children.Add(badge);
-
-        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock
-        {
-            Text = L.T("ACHIEVEMENT UNLOCKED"),
-            FontSize = 10.5 * size,
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            CharacterSpacing = 90,
-            Foreground = new SolidColorBrush(light),
-        });
-        text.Children.Add(new TextBlock
-        {
-            Text = item.Name,
-            FontSize = 16 * size,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Colors.White),
-            TextWrapping = TextWrapping.Wrap,
-            MaxLines = 2,
-            TextTrimming = TextTrimming.WordEllipsis,
-        });
-        if (item.Description.Length > 0)
-            text.Children.Add(new TextBlock
-            {
-                Text = item.Description,
-                FontSize = 12.5 * size,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xC8, 0xFF, 0xFF, 0xFF)),
-                TextWrapping = TextWrapping.Wrap,
-                MaxLines = 3,
-                TextTrimming = TextTrimming.WordEllipsis,
-            });
-        var foot = new List<string>();
-        if (item.Game is { Length: > 0 } game) foot.Add(game);
-        if (showRarity && item.Percent is { } pct) foot.Add(L.F("{0:0.#}% of players", pct) + (pct < 10 ? "  ·  " + L.T("rare") : ""));
-        if (foot.Count > 0)
-            text.Children.Add(new TextBlock
-            {
-                Text = string.Join("  ·  ", foot),
-                FontSize = 11 * size,
-                Margin = new Thickness(0, 2, 0, 0),
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-
-        var grid = new Grid { ColumnSpacing = 16 * size, Padding = new Thickness(16 * size, 14 * size, 18 * size, 16 * size) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.Children.Add(iconBox);
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-
-        slide = new TranslateTransform();
-        timeBar = new ScaleTransform { ScaleX = 1 };
-        // The time left, as a thin accent line along the bottom edge.
-        var bar = new Border { Height = 3, VerticalAlignment = VerticalAlignment.Bottom, Background = accentBrush, RenderTransform = timeBar, Opacity = 0.9 };
-        var root = new Grid
-        {
-            RequestedTheme = ElementTheme.Dark,
-            CornerRadius = new CornerRadius(8),
-            Background = Back(accent, background, opacity),
-            RenderTransform = slide,
-            Opacity = 0,
-        };
-        root.Children.Add(grid);
-        root.Children.Add(bar);
-        // Its own outline instead of Windows' light frame: a thin accent edge, brighter at the top-left, fading round the corner.
-        root.Children.Add(new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            BorderThickness = new Thickness(1),
-            IsHitTestVisible = false,
-            BorderBrush = new LinearGradientBrush
-            {
-                StartPoint = new(0, 0),
-                EndPoint = new(1, 1),
-                GradientStops =
-                {
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0xB0, accent.R, accent.G, accent.B), Offset = 0 },
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0x30, accent.R, accent.G, accent.B), Offset = 0.6 },
-                    new GradientStop { Color = Windows.UI.Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF), Offset = 1 },
-                },
-            },
-        });
-        return root;
-    }
-
-    /// <summary>The background: the user's colour, or a dark tint of the accent; <paramref name="opacity"/> lets the game show through.</summary>
-    static Brush Back(Windows.UI.Color accent, Windows.UI.Color? chosen, double opacity)
-    {
-        byte a = (byte)Math.Round(255 * opacity);
-        if (chosen is { } c)
-        {
-            var darker = Windows.UI.Color.FromArgb(a, (byte)(c.R * 0.7), (byte)(c.G * 0.7), (byte)(c.B * 0.7));
-            return new LinearGradientBrush
-            {
-                StartPoint = new(0, 0), EndPoint = new(1, 1),
-                GradientStops = { new GradientStop { Color = Windows.UI.Color.FromArgb(a, c.R, c.G, c.B), Offset = 0 }, new GradientStop { Color = darker, Offset = 1 } },
-            };
+            var cutoff = DateTime.Now - (firstWindow ?? TimeSpan.FromSeconds(30));
+            fresh = set.Items.Where(a => a.Unlocked && a.UnlockedAt is { } t && t > cutoff).ToList();
         }
-        return new LinearGradientBrush
-        {
-            StartPoint = new(0, 0), EndPoint = new(1, 1),
-            GradientStops =
-            {
-                new GradientStop { Color = Windows.UI.Color.FromArgb(a, (byte)(0x18 + accent.R / 12), (byte)(0x16 + accent.G / 12), (byte)(0x20 + accent.B / 12)), Offset = 0 },
-                new GradientStop { Color = Windows.UI.Color.FromArgb(a, 0x0E, 0x0D, 0x12), Offset = 0.65 },
-            },
-        };
+        if (fresh.Count == 0) return;
+        Log.Info($"New achievements in {game.Name}: {string.Join(", ", fresh.Select(a => a.ApiName))}");
+        await AnnounceAsync(fresh, game.Name, store, steamAppId, set.Platinum?.Key, game.Id);
     }
 
-    static Windows.UI.Color? BackgroundColor(PopupSettings o, Windows.UI.Color accent) => TryParseHex(o.Background, out var c) ? c : null;
+    // ---------- preview with a real game ----------
 
-    /// <summary>The pop-up's colour: the colour theme's accent (or the Windows one), gold, Steam blue, or the user's own.</summary>
-    static Windows.UI.Color AccentColor(PopupSettings o)
-    {
-        switch (o.Style)
+    /// <summary>Games of the library whose achievements can be read here: Steam (schema in Steam's cache), Steam emulators, GOG when signed in.</summary>
+    public static List<Game> PreviewGames() => AppState.Games
+        .Where(g => g switch
         {
-            case "Gold": return Windows.UI.Color.FromArgb(255, 0xF2, 0xC2, 0x3A);
-            case "Steam": return Windows.UI.Color.FromArgb(255, 0x66, 0xC0, 0xF4);
-            case "Custom" when TryParseHex(o.CustomColor, out var c): return c;
-        }
-        if (Palettes.Get(AppState.Settings.Palette).Accent is { } accent) return accent;
-        try { return new Windows.UI.ViewManagement.UISettings().GetColorValue(Windows.UI.ViewManagement.UIColorType.AccentLight2); }
-        catch { return Windows.UI.Color.FromArgb(255, 0x9A, 0x5C, 0xFF); }
-    }
+            { Store: GameStore.Steam, SteamAppId: { } id } => SteamAchievements.HasSchema(id),
+            { EmulatorAppId: not null, EmulatorSettingsDir: not null } => SettingsStore.Current.ReadSteamEmulator,
+            _ => GogAccount.SignedIn && GogAchievements.ProductId(g) is not null,
+        })
+        .OrderBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase)
+        .ToList();
 
-    public static bool TryParseHex(string? hex, out Windows.UI.Color color)
+    static readonly Random Pick = new();
+
+    /// <summary>
+    /// Shows one real achievement of <paramref name="game"/> exactly as an unlock of it would be announced: the same reading
+    /// (names, pictures, rarity from the store's public stats), the same store for "Match the game's store", the same sound and
+    /// place. One still locked is picked when there is one, like a real new unlock. It only reads: nothing is unlocked or written,
+    /// and the watcher's record of what is unlocked is left alone, so the real unlock still pops up later. False when the game has
+    /// no achievements that can be read.
+    /// </summary>
+    public static async Task<bool> PreviewAsync(Game game)
     {
-        color = default;
-        hex = hex?.Trim().TrimStart('#');
-        if (hex is not { Length: 6 } || !uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var v)) return false;
-        color = Windows.UI.Color.FromArgb(255, (byte)(v >> 16), (byte)(v >> 8), (byte)v);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var set = await SteamAchievements.LoadForAsync(game, cts.Token);
+        if (set is not { Items.Count: > 0 }) return false;
+        var locked = set.Items.Where(a => !a.Unlocked).ToList();
+        var pool = locked.Count > 0 ? locked : set.Items.ToList();
+        var a = pool[Pick.Next(pool.Count)];
+        var store = game.Store is GameStore.Custom && game.EmulatorAppId is not null ? GameStore.Steam : game.Store;
+        double? percent = AppState.Settings.Popup.ShowRarity ? a.GlobalPercent : null;
+        Log.Info($"Achievement preview: {game.Name}, {a.ApiName}");
+        AchievementPopup.ShowReplacing(new Toast(a.Name, a.Description, a.IconUrl, game.Name, percent, store, Completion: a == set.Platinum));
         return true;
     }
 
-    static DoubleAnimation Anim(DependencyObject target, string property, double from, double to, int ms)
+    /// <summary>
+    /// The platinum of <paramref name="game"/>: its own achievement for unlocking all the others, shown as its unlock would be
+    /// (name, picture, rarity, the platinum tier), in its store's look. A preview: nothing changes. False when the game has no
+    /// such achievement or its achievements cannot be read.
+    /// </summary>
+    public static async Task<bool> PreviewPlatinumAsync(Game game)
     {
-        var a = new DoubleAnimation
-        {
-            From = from,
-            To = to,
-            Duration = TimeSpan.FromMilliseconds(ms),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-        Storyboard.SetTarget(a, target);
-        Storyboard.SetTargetProperty(a, property);
-        return a;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var set = await SteamAchievements.LoadForAsync(game, cts.Token);
+        if (set?.Platinum is not { } a) return false;
+        var store = game.Store is GameStore.Custom && game.EmulatorAppId is not null ? GameStore.Steam : game.Store;
+        Log.Info($"Platinum preview: {game.Name}, {a.ApiName}");
+        AchievementPopup.ShowReplacing(new Toast(a.Name, a.Description, a.IconUrl, game.Name, AppState.Settings.Popup.ShowRarity ? a.GlobalPercent : null, store, Completion: true));
+        return true;
     }
 
-    [DllImport("dwmapi.dll")]
-    static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+    // ---------- Steam emulators (Goldberg / GSE) ----------
 
-    [DllImport("user32.dll")]
-    static extern nint GetForegroundWindow();
+    static readonly List<FileSystemWatcher> EmuWatchers = [];
 
-    [DllImport("user32.dll")]
-    static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
+    static void StartEmulators()
+    {
+        try
+        {
+            foreach (var root in SteamEmulator.SaveRoots().Where(Directory.Exists))
+            {
+                var w = new FileSystemWatcher(root, "achievements.json") { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size };
+                void OnEvent(string path)
+                {
+                    // <root>\<appid>\achievements.json
+                    var id = Path.GetFileName(Path.GetDirectoryName(path));
+                    if (id is { Length: > 0 } && id.All(char.IsAsciiDigit)) _ui?.TryEnqueue(() => Debounce("emu:" + id));
+                }
+                w.Changed += (_, e) => OnEvent(e.FullPath);
+                w.Created += (_, e) => OnEvent(e.FullPath);
+                w.Renamed += (_, e) => OnEvent(e.FullPath);
+                w.EnableRaisingEvents = true;
+                EmuWatchers.Add(w);
+            }
+            if (EmuWatchers.Count > 0) Log.Info("Watching Steam emulator achievements");
+        }
+        catch (Exception ex) { Log.Warn($"Could not watch emulator achievements: {ex.Message}"); }
+    }
 
-    [DllImport("user32.dll")]
-    static extern long GetWindowLongPtr(nint hwnd, int index);
+    static async Task CheckEmulatorAsync(string appId)
+    {
+        try
+        {
+            if (!SettingsStore.Current.ReadSteamEmulator) return;
+            var game = AppState.Games.FirstOrDefault(g => g.EmulatorAppId == appId && g.EmulatorSettingsDir is not null);
+            if (game is null) return;
+            var set = await Task.Run(() => SteamEmulator.ReadAchievements(appId, game.EmulatorSettingsDir!));
+            if (set is not null) await DiffAsync("emu:" + appId, set, game, GameStore.Steam, appId);
+            Changed?.Invoke(appId);
+        }
+        catch (Exception ex) { Log.Warn($"Emulator achievement check {appId}: {ex.Message}"); }
+    }
 
-    [DllImport("user32.dll")]
-    static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+    // ---------- GOG ----------
 
-    [DllImport("user32.dll")]
-    static extern bool ReleaseCapture();
+    static DispatcherQueueTimer? _gogTimer;
+    static bool _gogBusy;
 
-    [DllImport("user32.dll")]
-    static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
+    // GOG has no file to watch: while a GOG game runs, its achievements are asked for every 40 seconds (only then, only when signed in).
+    static void StartGog()
+    {
+        if (_ui is null) return;
+        _gogTimer = _ui.CreateTimer();
+        _gogTimer.Interval = TimeSpan.FromSeconds(40);
+        _gogTimer.Tick += (_, _) => _ = PollGogAsync();
+        _gogTimer.Start();
+    }
 
-    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
-    static extern bool PlaySoundW(string sound, nint module, uint flags);
+    static async Task PollGogAsync()
+    {
+        if (_gogBusy || !AppState.Settings.AchievementPopups || !GogAccount.SignedIn) return;
+        _gogBusy = true;
+        try
+        {
+            foreach (var game in AppState.Games.Where(g => GogAchievements.ProductId(g) is not null && GameSessions.IsActive(g.Id)).ToList())
+            {
+                var id = GogAchievements.ProductId(game)!;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                // The first read can come a whole poll after the game started (and GOG's clock may differ a little from this PC's):
+                // an unlock from the last two minutes is still news.
+                if (await GogAchievements.ReadAsync(id, cts.Token) is { } set)
+                {
+                    await DiffAsync("gog:" + id, set, game, GameStore.Gog, null, TimeSpan.FromMinutes(2));
+                    Changed?.Invoke("gog:" + id);
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"GOG achievement poll: {ex.Message}"); }
+        finally { _gogBusy = false; }
+    }
+
+    // ---------- the feed: any tool can announce an unlock ----------
+
+    static FileSystemWatcher? _feed;
+
+    /// <summary>The folder other tools drop a small .json file in to show an unlock (Epic, Xbox or anything else).</summary>
+    public static string FeedDir => Path.Combine(AppInfo.DataRoot, "achievement-feed");
+
+    /// <summary>
+    /// Epic Games and Xbox publish no achievements that can be read from this PC, so they come in through a feed: a tool (a script,
+    /// a plugin, an overlay bridge) writes {"store":"epic","game":"Name","name":"Title","description":"...","icon":"C:\path.png",
+    /// "percent":4.2,"points":50,"platinum":false} to a .json file in <see cref="FeedDir"/>; it is shown with the look of that store, then the file
+    /// is deleted. Only "name" is required.
+    /// </summary>
+    static void StartFeed()
+    {
+        try
+        {
+            Directory.CreateDirectory(FeedDir);
+            // Files left from a time Hybrid Launcher was closed are not news.
+            foreach (var old in Directory.EnumerateFiles(FeedDir, "*.json")) try { File.Delete(old); } catch { }
+            _feed = new FileSystemWatcher(FeedDir, "*.json") { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
+            void OnEvent(string path) => _ui?.TryEnqueue(() => Later.Run(_ui, TimeSpan.FromMilliseconds(350), () => ReadFeedFile(path)));
+            _feed.Created += (_, e) => OnEvent(e.FullPath);
+            _feed.Renamed += (_, e) => OnEvent(e.FullPath);
+            _feed.EnableRaisingEvents = true;
+        }
+        catch (Exception ex) { Log.Warn($"Could not watch the achievement feed: {ex.Message}"); }
+    }
+
+    static void ReadFeedFile(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            string text;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var rd = new StreamReader(fs)) text = rd.ReadToEnd();
+            try { File.Delete(path); } catch { }
+            if (!AppState.Settings.AchievementPopups) return;
+            using var doc = System.Text.Json.JsonDocument.Parse(text);
+            var e = doc.RootElement;
+            string? Str(string n) => e.TryGetProperty(n, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+            if (Str("name") is not { Length: > 0 } name) return;
+            GameStore? store = Str("store")?.ToLowerInvariant() switch { "steam" => GameStore.Steam, "epic" => GameStore.Epic, "gog" => GameStore.Gog, "xbox" => GameStore.Xbox, _ => null };
+            var icon = Str("icon");
+            if (icon is not null && Path.IsPathRooted(icon)) icon = new Uri(icon).AbsoluteUri;
+            else if (icon is not null && !Uri.TryCreate(icon, UriKind.Absolute, out _)) icon = null;
+            double? percent = e.TryGetProperty("percent", out var pc) && pc.ValueKind == System.Text.Json.JsonValueKind.Number ? pc.GetDouble() : null;
+            // A tool may write 50.0 or a huge number: the points are rounded and kept in range, never a reason to lose the unlock.
+            int? points = e.TryGetProperty("points", out var pt) && pt.ValueKind == System.Text.Json.JsonValueKind.Number ? (int)Math.Clamp(Math.Round(pt.GetDouble()), 0, 1_000_000) : null;
+            // "platinum": true (or the older "completed": true) — this is the game's achievement for unlocking all the others.
+            bool Flag(string n) => e.TryGetProperty(n, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.True;
+            AchievementPopup.Show(new Toast(name, Str("description") ?? "", icon, Str("game"), percent, store, points, Completion: Flag("platinum") || Flag("completed")));
+        }
+        catch (Exception ex) { Log.Warn($"Achievement feed file {Path.GetFileName(path)}: {ex.Message}"); }
+    }
 }

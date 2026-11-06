@@ -55,6 +55,10 @@ public sealed partial class GamePage : Page
 
     AchievementSet? _ach;
     readonly List<FrameworkElement> _achTiles = [];
+    /// <summary>Each achievement's tile by its key (the Home button opens one).</summary>
+    readonly Dictionary<string, Border> _achTileByKey = [];
+    /// <summary>An achievement to show once the set is read (the Home button pressed on its pop-up).</summary>
+    string? _achToShow;
     int _achColumns;
     int _achLaidOutColumns = -1;
     bool _loadingAch;
@@ -152,6 +156,7 @@ public sealed partial class GamePage : Page
         UltraPlusLibrary.Changed += OnUltraChanged;
         GameJobs.Changed += OnJobsChanged;
         GameJobs.Progress += OnJobProgress;
+        OptiReleases.Updated += OnReleasesUpdated;
         var ct = _pageCts.Token;
         var game = _game;
         var art = GameInfo.GetAsync(game, ct);
@@ -217,6 +222,7 @@ public sealed partial class GamePage : Page
         UltraPlusLibrary.Changed -= OnUltraChanged;
         GameJobs.Changed -= OnJobsChanged;
         GameJobs.Progress -= OnJobProgress;
+        OptiReleases.Updated -= OnReleasesUpdated;
         SaveArgs();
     }
 
@@ -427,6 +433,9 @@ public sealed partial class GamePage : Page
 
     /// <summary>The OptiScaler.ini editor is on screen (its tab is open, the game is installed).</summary>
     bool IniOpen => IniCard.Visibility == Visibility.Visible;
+
+    /// <summary>The ids of the tabs this game shows (self-test).</summary>
+    internal List<string> SelfTestTabIds() => VisibleTabs().Select(t => t.Id).ToList();
 
     List<GameTab> VisibleTabs() => GameTabs.Ordered().Where(t => Available(t.Id) && !GameTabs.Hidden(t.Id, _settings)).ToList();
 
@@ -1626,7 +1635,7 @@ public sealed partial class GamePage : Page
             PlayTimeText.Text = Playtime.FormatTime(stats.Minutes);
             ToolTipService.SetToolTip(PlayStatsPanel, stats.Source == "Steam"
                 ? L.F("From Steam: {0:0.#} hours", stats.Minutes / 60.0) + (stats.LastPlayed is { } t ? ", " + L.F("last played {0:d MMM yyyy, HH:mm}", t) : "")
-                : L.T("Counted by Hybrid Launcher while the game runs, when you start it with Play here.") + (stats.LastPlayed is { } l ? "\n" + L.F("Last played {0:d MMM yyyy, HH:mm}", l) : ""));
+                : L.T("Counted by Hybrid Launcher while the game runs, when you start it with Play here.") + "\n" + L.T("Kept by Hybrid Launcher even if you uninstall the game, move it or add it again.") + (stats.LastPlayed is { } l ? "\n" + L.F("Last played {0:d MMM yyyy, HH:mm}", l) : ""));
         }
         catch (Exception ex) { Log.Warn($"Play stats for {game.Name}: {ex.Message}"); }
     }
@@ -2216,6 +2225,34 @@ public sealed partial class GamePage : Page
             }
         }
     }
+
+    /// <summary>
+    /// A newer list of a source this page shows, read elsewhere (the background update check that just notified it): it replaces
+    /// the one loaded when the page opened, so the version list matches the notification without a restart or a request.
+    /// </summary>
+    void OnReleasesUpdated(OptiChannel channel, string? repo, List<OptiRelease> list) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (_pageCts.IsCancellationRequested) return;
+        // The page's own load already took it (the event is raised while that load reads the list).
+        var shown = channel switch { OptiChannel.Stable => _stable, OptiChannel.Nightly => _nightly, _ => _fork };
+        if (shown.Count > 0 && shown[0].Tag.Equals(list[0].Tag, StringComparison.OrdinalIgnoreCase) && (channel != OptiChannel.Fork || _forkLoaded is not null && _forkLoaded.Equals(repo, StringComparison.OrdinalIgnoreCase))) return;
+        switch (channel)
+        {
+            case OptiChannel.Stable: _stable = list; break;
+            case OptiChannel.Nightly: _nightly = list; break;
+            case OptiChannel.Fork when repo is not null && repo.Equals(AppState.Settings.SelectedFork, StringComparison.OrdinalIgnoreCase):
+                _fork = list; _forkLoaded = AppState.Settings.SelectedFork; _forkFailed = false; break;
+            default: return;
+        }
+        if (channel == _channel)
+        {
+            // The version picked stays picked ("Latest" moves on to the new one, like a fresh list).
+            var picked = VersionCombo.SelectedIndex > 0 ? VersionCombo.SelectedItem as string : null;
+            FillVersions();
+            if (picked is not null && VersionCombo.Items.IndexOf(picked) is var at and > 0) VersionCombo.SelectedIndex = at;
+        }
+        _ = RefreshUpdateAvailableAsync();
+    });
 
     bool _releasesLoaded;
     bool _fillingVersions;
@@ -3470,9 +3507,13 @@ public sealed partial class GamePage : Page
 
     // ---------- Steam achievements ----------
 
-    /// <summary>The app id the achievements belong to: the Steam game's, or the one a Steam emulator (Goldberg / GSE) runs it as.</summary>
+    /// <summary>
+    /// The id the achievements belong to: the Steam game's, the one a Steam emulator (Goldberg / GSE) runs it as, or for a GOG game
+    /// "gog:&lt;product id&gt;" while signed in to GOG (the same ids <see cref="AchievementWatcher.Changed"/> reports).
+    /// </summary>
     string? AchAppId => _game is { Store: GameStore.Steam, SteamAppId: { } id } ? id
-        : _game?.EmulatorAppId is { } emu && AppState.Settings.ReadSteamEmulator ? emu : null;
+        : _game?.EmulatorAppId is { } emu && AppState.Settings.ReadSteamEmulator ? emu
+        : _game is not null && HybridLauncher.Core.Accounts.GogAccount.SignedIn && HybridLauncher.Core.Accounts.GogAchievements.ProductId(_game) is { } gog ? "gog:" + gog : null;
 
     async Task LoadAchievementsAsync(CancellationToken ct)
     {
@@ -3536,6 +3577,7 @@ public sealed partial class GamePage : Page
         _achStale = true;
         if (_tab == "ach") BuildAchievementTiles();
         else if (AppState.Settings.GameTab == "ach" && _tab == "overview") ShowTab("ach", remember: false);
+        if (_achToShow is { } wanted) ShowAchievement(wanted);
     }
 
     /// <summary>Builds the tiles (icons load from Steam's CDN), only when the tab is shown.</summary>
@@ -3543,13 +3585,70 @@ public sealed partial class GamePage : Page
     {
         _achStale = false;
         _achTiles.Clear();
+        _achTileByKey.Clear();
         _achLaidOutColumns = -1;
         if (_ach is null) return;
         // Unlocked first, newest on top; then locked ones from the most common to the rarest, hidden ones last.
         var ordered = _ach.Items.Where(a => a.Unlocked).OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue)
             .Concat(_ach.Items.Where(a => !a.Unlocked).OrderBy(a => a.Hidden).ThenByDescending(a => a.GlobalPercent ?? -1));
-        foreach (var a in ordered) _achTiles.Add(AchievementTile(a));
+        foreach (var a in ordered)
+        {
+            var tile = AchievementTile(a);
+            _achTiles.Add(tile);
+            if (tile is Border b) _achTileByKey[a.Key] = b;
+        }
         LayoutAchievements();
+    }
+
+    /// <summary>
+    /// The controller's Home button on an achievement's pop-up (as a console opens the trophy just earned): the Achievements tab,
+    /// every achievement listed, scrolled to that one and lit for a moment. Waits for the set when it is still being read.
+    /// </summary>
+    public void ShowAchievement(string key)
+    {
+        _achToShow = key;
+        if (_ach is null || !_ach.Items.Any(a => a.Key == key)) return; // ShowAchievements calls back once the set is read
+        _achToShow = null;
+        ShowTab("ach", remember: false);
+        if (AchFilterBar.Items.FirstOrDefault(i => i.Tag as string == "all") is { } all && AchFilterBar.SelectedItem != all) AchFilterBar.SelectedItem = all;
+        if (_achStale || _achTiles.Count == 0) BuildAchievementTiles();
+        if (!_achTileByKey.TryGetValue(key, out var tile)) return;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (tile.Parent is null) return;
+            ScrollToElement(tile);
+            LightTile(tile);
+        });
+        LastShownAchievement = key;
+    }
+
+    /// <summary>The achievement the Home button opened last (self-test).</summary>
+    internal string? LastShownAchievement { get; private set; }
+
+    /// <summary>The accent edge on a tile for three seconds, then the tile as it was.</summary>
+    void LightTile(Border tile)
+    {
+        var brush = tile.ReadLocalValue(Border.BorderBrushProperty);
+        var thickness = tile.ReadLocalValue(Border.BorderThicknessProperty);
+        var opacity = tile.Opacity;
+        if (Application.Current.Resources.TryGetValue("AccentFillColorDefaultBrush", out var accent)) tile.BorderBrush = accent as Brush;
+        tile.BorderThickness = new Thickness(2);
+        tile.Opacity = 1;
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(3000);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            Restore(tile, Border.BorderBrushProperty, brush);
+            Restore(tile, Border.BorderThicknessProperty, thickness);
+            tile.Opacity = opacity;
+        };
+        timer.Start();
+        static void Restore(DependencyObject o, DependencyProperty p, object local)
+        {
+            if (local == DependencyProperty.UnsetValue) o.ClearValue(p);
+            else o.SetValue(p, local);
+        }
     }
 
     FrameworkElement AchievementTile(Achievement a)
@@ -3590,6 +3689,8 @@ public sealed partial class GamePage : Page
         {
             Text = foot,
             FontSize = 11,
+            // A narrow tile: the date and the rarity go on two lines instead of the rarity being cut mid-word.
+            TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)HybridLauncher.Helpers.ThemeRes.Current[a.Unlocked ? "AccentTextFillColorPrimaryBrush" : "TextFillColorTertiaryBrush"],
         });
 

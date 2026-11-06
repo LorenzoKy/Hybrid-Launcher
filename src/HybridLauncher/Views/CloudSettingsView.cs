@@ -26,7 +26,7 @@ public static class CloudSettingsView
         intro.Children.Add(new TextBlock { Text = L.T("Sync your saves"), Style = Ui.Style("RowHeader") });
         intro.Children.Add(new TextBlock
         {
-            Text = L.T("Before a game starts, newer saves from the cloud come to this PC; after it closes, the saves that changed go to the cloud. Pick OneDrive (one click, through Windows' OneDrive app), sign in to MEGA, or use both: every upload then goes to each. Each game sends its saves, its own settings folder when it has one, and the achievements of a Steam emulator (Goldberg, GSE) when it runs with one. Older copies are kept, and what is here is backed up before anything replaces it."),
+            Text = L.T("Before a game starts, newer saves from the cloud come to this PC; after it closes, the saves that changed go to the cloud. Pick OneDrive (one click, through Windows' OneDrive app), sign in to MEGA, or use both: every upload then goes to each. Each game sends its saves, its own settings folder when it has one, and its local achievements when it keeps them. Older copies are kept, and what is here is backed up before anything replaces it."),
             Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap,
         });
         var toggle = new ToggleSwitch { IsOn = s.Enabled, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };

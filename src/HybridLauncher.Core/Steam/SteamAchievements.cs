@@ -26,6 +26,42 @@ public sealed record AchievementSet(string AppId, IReadOnlyList<Achievement> Ite
 {
     public int UnlockedCount => Items.Count(a => a.Unlocked);
     public int Total => Items.Count;
+    /// <summary>The game's own platinum (the achievement for unlocking all the others), or null when it has none.</summary>
+    public Achievement? Platinum => PlatinumAchievement.Find(Items);
+}
+
+/// <summary>
+/// The platinum is the game's own achievement for unlocking every other one (most games have one: "Tireless — Unlock all
+/// achievements"). Found by what it says, in the store's English text or in the main languages GOG may answer in; nothing is
+/// invented for a game without one.
+/// </summary>
+public static class PlatinumAchievement
+{
+    static readonly System.Text.RegularExpressions.Regex Says = new(
+        @"\b(all|every)\b(\s+(of|the|other|others|remaining|previous|base|main|game|steam|available|\w+'s)){0,4}\s+(achievements?|trophies|trophy)\b" +
+        @"|\b(achievements?|trophies)\b.{0,12}\b100\s?%|\b100\s?%\s+(of\s+(the\s+)?)?(achievements|trophies)\b" +
+        @"|\bplatinum\s+trophy\b" +
+        // Italian, French, Spanish, Portuguese, German, Polish, Russian.
+        @"|\btutti\s+gli\s+(altri\s+)?(achievement|obiettivi|trofei)|\btous\s+les\s+(autres\s+)?(succ[eè]s|troph[ée]es)" +
+        @"|\btodos\s+los\s+(dem[aá]s\s+)?(logros|trofeos)|\btodas\s+as\s+(outras\s+)?conquistas|\btodos\s+os\s+(outros\s+)?trof[eé]us" +
+        @"|\balle\s+(anderen\s+)?(erfolge|errungenschaften|troph[äa]en)|\bwszystkie\s+(pozosta[lł]e\s+)?osi[aą]gni[eę]cia|\bвсе\s+(остальные\s+)?(достижения|трофеи)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>True when <paramref name="a"/> reads as the achievement for unlocking all the others.</summary>
+    public static bool Is(Achievement a) => Says.IsMatch(a.Description) || Says.IsMatch(a.Name);
+
+    /// <summary>
+    /// The platinum of a game's list: the one whose text says it asks for every achievement (its description first, then its
+    /// name). With more than one match (DLC sets), the rarest; null when none says so.
+    /// </summary>
+    public static Achievement? Find(IReadOnlyList<Achievement> items)
+    {
+        if (items.Count < 3) return null;
+        var byText = items.Where(a => Says.IsMatch(a.Description)).ToList();
+        if (byText.Count == 0) byText = items.Where(a => Says.IsMatch(a.Name)).ToList();
+        if (byText.Count == 0) return null;
+        return byText.OrderBy(a => a.GlobalPercent ?? 100).First();
+    }
 }
 
 /// <summary>
@@ -122,6 +158,7 @@ public static class SteamAchievements
     public static async Task<AchievementSet?> LoadForAsync(Game game, CancellationToken ct = default)
     {
         if (game is { Store: GameStore.Steam, SteamAppId: { } id }) return await LoadAsync(id, ct);
+        if (Accounts.GogAchievements.ProductId(game) is { } gogId && await Accounts.GogAchievements.ReadAsync(gogId, ct) is { } gogSet) return gogSet;
         var set = await Task.Run(() => ReadFor(game), ct);
         if (set is null) return null;
         try

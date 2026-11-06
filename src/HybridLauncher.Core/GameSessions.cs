@@ -199,6 +199,7 @@ public static class GameSessions
                 if (game.Store != GameStore.Steam) OnUi(() =>
                 {
                     settings.LastPlayed = DateTime.Now;
+                    PlaytimeLedger.Started(game, DateTime.Now);
                     SettingsStore.Save();
                     PlaytimeChanged?.Invoke(game.Id);
                 });
@@ -401,6 +402,7 @@ public static class GameSessions
                         if (s.Game.Store != GameStore.Steam) OnUi(() =>
                         {
                             s.Settings.LastPlayed = DateTime.Now;
+                            PlaytimeLedger.Started(s.Game, DateTime.Now);
                             SettingsStore.Save();
                             PlaytimeChanged?.Invoke(s.Game.Id);
                         });
@@ -440,6 +442,8 @@ public static class GameSessions
             s.Settings.PlayMinutes += Math.Max(0, whole);
             s.Settings.LastPlayed = DateTime.Now;
             SettingsStore.Save();
+            // Hybrid Launcher's own record too, kept when the game is uninstalled, moved or added again.
+            PlaytimeLedger.Add(s.Game, Math.Max(0, whole), DateTime.Now);
             PlaytimeChanged?.Invoke(s.Game.Id);
         });
     }

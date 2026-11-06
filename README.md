@@ -82,16 +82,26 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md
   follow, Ultra+, Hybrid Launcher itself), held back while a game runs.
 
 **Extras**
-- **Achievements** with rarity, a platinum trophy and a pop-up you design.
+- **Achievement pop-ups** that look like a console's or a store's (PlayStation 5, PlayStation 4, Xbox, Steam, GOG, Epic, all
+  *Like* looks drawn by Hybrid Launcher) or your own: bronze, silver or gold by rarity, the game's own platinum, your own sounds
+  per tier, a preview with a real game. Steam, local and GOG achievements are read.
+- **Controller**: every button can be given another action, and the optional **Home button** (Xbox / PS) brings Hybrid
+  Launcher forward from a game; pressed on an achievement pop-up, it opens that achievement, as a console does.
 - **Quick access** shortcuts per game, **My PC** with your hardware and driver upscaler versions, tray mode (the window steps aside
   while a game runs and comes back when it closes), start with Windows, a welcome tour and a one-click bug report.
 - **Light on your PC**: with another window in front it rests (clips paused, Windows efficiency mode) and wakes up the moment
   you click it; games open in an instant.
+- **Search all settings** from the box beside the Settings title, and **your play time is kept** even when you reinstall or
+  move a game.
 - **Make it yours**: keep only the features you need (*Everything*, *Only OptiScaler*, *Just a launcher*…), and toggle,
   drag or hide tabs, launch bar items and colour themes, including the warm *Cozy* theme.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" width="100%" alt="The first-start picker in Hybrid Launcher: five starting points, a live preview of a game's page, and a switch for each feature" />
+</p>
+
+<p align="center">
+  <img src="site/assets/shots/popups.webp" width="100%" alt="Achievement pop-ups in Hybrid Launcher's looks: its own card, Steam-, GOG- and Epic-like cards, Minimal, PlayStation 5-, PlayStation 4- (white and black) and Xbox-like, and a game's platinum" />
 </p>
 
 Everything is explained in the [user guide](docs/user-guide.md).

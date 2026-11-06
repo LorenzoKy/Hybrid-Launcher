@@ -46,6 +46,12 @@ public static class GogAccount
 
     public static void SignOut() => AccountTokens.Delete(GameStore.Gog);
 
+    /// <summary>The Galaxy user id of the signed-in account (kept with its tokens), or null.</summary>
+    public static string? UserId => AccountTokens.Read(GameStore.Gog)?.GetValueOrDefault("user") is { Length: > 0 } id ? id : null;
+
+    /// <summary>An authenticated GET to any GOG address (the achievements service uses it).</summary>
+    public static Task<string> GetAuthorizedAsync(string url, CancellationToken ct) => GetStringAsync(url, ct);
+
     static async Task TokenRequestAsync(string grant, CancellationToken ct)
     {
         var url = $"https://auth.gog.com/token?client_id={ClientId}&client_secret={ClientSecret}&{grant}";

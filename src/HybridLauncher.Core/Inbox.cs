@@ -37,6 +37,7 @@ public static class Inbox
 
     public static string File => Path.Combine(AppInfo.DataRoot, "notifications.json");
 
+    /// <summary>The entries, newest first (the same objects as kept: pass them back to <see cref="Remove"/> or <see cref="MarkRead"/>).</summary>
     public static IReadOnlyList<InboxEntry> Entries
     {
         get { lock (Gate) return [.. Load()]; }
@@ -77,14 +78,57 @@ public static class Inbox
         Changed?.Invoke();
     }
 
-    public static void Clear()
+    /// <summary>Empties the list; returns what was in it, for an Undo.</summary>
+    public static List<InboxEntry> Clear()
+    {
+        List<InboxEntry> gone;
+        lock (Gate)
+        {
+            var list = Load();
+            if (list.Count == 0) return [];
+            gone = [.. list];
+            list.Clear();
+            Save(list);
+        }
+        Changed?.Invoke();
+        return gone;
+    }
+
+    /// <summary>Puts back entries taken away by <see cref="Clear"/> or <see cref="Remove"/> (newest first, none twice).</summary>
+    public static void Restore(IEnumerable<InboxEntry> entries)
     {
         lock (Gate)
         {
             var list = Load();
-            if (list.Count == 0) return;
-            list.Clear();
+            foreach (var e in entries)
+                if (!list.Contains(e) && (e.Key is null || list.All(x => x.Key != e.Key))) list.Add(e);
+            list.Sort((a, b) => b.Time.CompareTo(a.Time));
+            if (list.Count > Max) list.RemoveRange(Max, list.Count - Max);
             Save(list);
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Takes one entry out of the list.</summary>
+    public static void Remove(InboxEntry entry)
+    {
+        lock (Gate)
+        {
+            var list = Load();
+            if (!list.Remove(entry)) return;
+            Save(list);
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Marks one entry read (its news was opened).</summary>
+    public static void MarkRead(InboxEntry entry)
+    {
+        lock (Gate)
+        {
+            if (entry.Read || !Load().Contains(entry)) return;
+            entry.Read = true;
+            Save(Load());
         }
         Changed?.Invoke();
     }

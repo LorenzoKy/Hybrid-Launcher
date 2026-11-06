@@ -10,7 +10,7 @@ namespace HybridLauncher.Core.Steam;
 public static class SteamEmulator
 {
     /// <summary>The emulator's per-game save folders under %APPDATA% (gbe_fork's first, then the original Goldberg's).</summary>
-    static IEnumerable<string> SaveRoots()
+    public static IEnumerable<string> SaveRoots()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         yield return Path.Combine(appData, "GSE Saves");

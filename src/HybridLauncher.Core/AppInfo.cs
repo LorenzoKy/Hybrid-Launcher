@@ -26,6 +26,9 @@ public static class AppInfo
 
     static string? _dataRoot;
 
+    /// <summary>A separate data folder (HL_DATA): a test instance, which must leave the user's own setup (start with Windows) alone.</summary>
+    public static bool SeparateData => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA"));
+
     /// <summary>%LOCALAPPDATA%\HybridLauncher, or the HL_DATA environment variable (used by tests).</summary>
     public static string DataRoot
     {

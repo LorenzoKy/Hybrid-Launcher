@@ -30,6 +30,15 @@ public static class OptiReleases
 
     public static string ForkPage(string repo) => $"https://github.com/{repo}/releases";
 
+    /// <summary>
+    /// A source's list came back with a newer release than the last one read in this session (the background update check found
+    /// it, say): pages showing that source's versions take the new list as it is, with no request of their own. Raised on the
+    /// thread that read it; the repository is set for a fork.
+    /// </summary>
+    public static event Action<OptiChannel, string?, List<OptiRelease>>? Updated;
+
+    static readonly Dictionary<string, string> NewestRead = new(StringComparer.OrdinalIgnoreCase);
+
     static async Task<List<OptiRelease>> GetAsync(OptiChannel channel, string repo, bool force, CancellationToken ct)
     {
         var url = $"https://api.github.com/repos/{repo.ToLowerInvariant()}/releases?per_page=30";
@@ -73,7 +82,22 @@ public static class OptiReleases
                 Repo = channel == OptiChannel.Fork ? repo : null,
             });
         }
-        return list.OrderByDescending(r => r.Published).ToList();
+        var sorted = list.OrderByDescending(r => r.Published).ToList();
+        if (sorted.Count > 0)
+        {
+            bool newer;
+            lock (NewestRead)
+            {
+                newer = NewestRead.TryGetValue(cache, out var before) && !before.Equals(sorted[0].Tag, StringComparison.OrdinalIgnoreCase);
+                NewestRead[cache] = sorted[0].Tag;
+            }
+            if (newer)
+            {
+                try { Updated?.Invoke(channel, channel == OptiChannel.Fork ? repo : null, sorted); }
+                catch (Exception ex) { Log.Warn($"Releases updated, {repo}: {ex.Message}"); }
+            }
+        }
+        return sorted;
     }
 
     /// <summary>Downloads (or reuses a verified cached copy of) a release archive.</summary>

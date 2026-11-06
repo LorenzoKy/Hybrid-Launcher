@@ -29,9 +29,18 @@ public sealed partial class MainWindow : Window
         // Windows' own caption buttons are hidden (they were 48 px in a 58 px bar, top-aligned, and hard to hit): Hybrid Launcher draws
         // its own, full height (CaptionButtons in the title bar).
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Collapsed;
-        AppWindow.Changed += (_, e) => { if (e.DidPresenterChange || e.DidSizeChange) UpdateMaximizeButton(); };
+        AppWindow.Changed += (_, e) =>
+        {
+            if (e.DidPresenterChange || e.DidSizeChange) UpdateMaximizeButton();
+            if (e.DidSizeChange || e.DidPositionChange) QueueMaximizeCheck();
+        };
+        // A maximized window whose screen changes resolution (a 1440p screen set to 1080p, a game or a TV switching it) can stay
+        // "maximized" at its old size: the page was cut off on the right. Checked again after every display change.
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         CaptionButtons.SizeChanged += (_, _) => UpdateTitleBarRegions();
         StartGamepad();
+        StartHomeButton();
         GuardSearchFocus();
         Helpers.GameUpdater.Start(DispatcherQueue);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
@@ -337,6 +346,8 @@ public sealed partial class MainWindow : Window
             {
                 AppWindow.Show();
                 _hidden = false;
+                // Started in the notification area after an update: the new version's welcome when the window first opens.
+                MaybeShowWhatsNew();
             }
             if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } p) p.Restore();
             Activate();
@@ -421,6 +432,8 @@ public sealed partial class MainWindow : Window
         find.Invoked += (_, a) =>
         {
             a.Handled = true;
+            // On Settings, its own search through every tab.
+            if (ContentFrame.Content is SettingsPage settings) { settings.FocusSearch(); return; }
             if (!Nav.IsPaneOpen) Nav.IsPaneOpen = true;
             _searchWanted = true;
             DispatcherQueue.TryEnqueue(() => { SearchBox.Focus(FocusState.Keyboard); _searchWanted = false; });
@@ -1416,6 +1429,69 @@ public sealed partial class MainWindow : Window
         await Step("window wide", () => AppWindow.Resize(new SizeInt32((int)(1600 * GetDpiScale()), (int)(950 * GetDpiScale()))), 800);
         if (wasMaximized && AppWindow.Presenter is OverlappedPresenter mp) mp.Maximize();
         await Step("window state back", () => { if (wasMaximized && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Maximized }) throw new InvalidOperationException("the window did not go back to maximized"); }, 500);
+        // A maximized window that ends up smaller than its screen (as after a resolution change: 1440p to 1080p) is maximized again.
+        if (wasMaximized)
+        {
+            await Step("maximized window shrunk", () => AppWindow.Resize(new SizeInt32((int)(900 * GetDpiScale()), (int)(700 * GetDpiScale()))), 1500);
+            await Step("maximized window covers the screen again", () =>
+            {
+                var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+                if (AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Maximized } || AppWindow.Size.Width < area.Width - 4)
+                    throw new InvalidOperationException($"still {AppWindow.Size.Width} wide on a {area.Width} work area");
+            }, 300);
+        }
+        // Issue #5: a narrow window (game list folded to its strip) maximized afterwards kept the page as wide as beside the
+        // strip while the list opened beside it: Settings ran past the right edge.
+        await Step("settings before the narrow window", () => ContentFrame.Navigate(typeof(SettingsPage)), 900);
+        await Step("narrow window, list folded", () =>
+        {
+            if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized } np) np.Restore();
+            AppWindow.Resize(new SizeInt32((int)(1000 * GetDpiScale()), (int)(760 * GetDpiScale())));
+        }, 900);
+        await Step("narrow window maximized", () => { if (AppWindow.Presenter is OverlappedPresenter xp) xp.Maximize(); }, 1500);
+        await Step("page fits beside the list", () =>
+        {
+            var (overflow, state) = PageOverflow();
+            Log.Info($"Page beside the list: {state}");
+            if (overflow > 2) throw new InvalidOperationException($"the page runs {overflow:0} px past the window ({state})");
+        }, 100);
+        // Every Settings tab at this size: nothing visible may end past the window's right edge.
+        foreach (var tab in new[] { "appearance", "features", "controller", "achievements", "notifications", "cloud", "storage", "about" })
+        {
+            await Step($"settings tab {tab} fits", () => OpenSettings(tab), 900);
+            await Step($"settings tab {tab} nothing cut", () =>
+            {
+                var cut = CutOnTheRight(ContentFrame);
+                if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
+                // Every tab the same column: as wide as the page up to 1600, centred.
+                if (ContentFrame.Content is SettingsPage sp && sp.SelfTestColumn() is var (w, expected, off) && (Math.Abs(w - expected) > 1 || off > 2))
+                    throw new InvalidOperationException($"column {w:0} wide (should be {expected:0}), {off:0} px off centre");
+            }, 50);
+        }
+        // The other pages and every tab of a game page, at the same size.
+        foreach (var (name, type) in new[] { ("library", typeof(LibraryPage)), ("downloads", typeof(DownloadsPage)), ("my pc", typeof(HardwarePage)) })
+        {
+            await Step($"page {name} fits", () => ContentFrame.Navigate(type), 1500);
+            await Step($"page {name} nothing cut", () =>
+            {
+                var cut = CutOnTheRight(ContentFrame);
+                if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
+            }, 50);
+        }
+        if (AppState.Games.FirstOrDefault() is { } fitGame)
+        {
+            await Step("page game fits", () => OpenGame(fitGame.Id), 2500);
+            foreach (var tab in (ContentFrame.Content as GamePage)?.SelfTestTabIds() ?? [])
+            {
+                await Step($"page game tab {tab} fits", () => (ContentFrame.Content as GamePage)?.SelfTestShow(tab), 1500);
+                await Step($"page game tab {tab} nothing cut", () =>
+                {
+                    var cut = CutOnTheRight(ContentFrame);
+                    if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
+                }, 50);
+            }
+        }
+        if (!wasMaximized && AppWindow.Presenter is OverlappedPresenter wp2) wp2.Restore();
         if (Environment.GetEnvironmentVariable("HL_SAMPLE_DOWNLOADS") == "1") Downloads.AddSamples();
         await Step("downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
         // The focused list item thrown away by a redraw: WinUI used to hand the focus to the search box.
@@ -1453,6 +1529,14 @@ public sealed partial class MainWindow : Window
         await Step("bell: badge gone", () => { if (BellBadge.Visibility != Visibility.Collapsed || Inbox.Unread != 0) throw new InvalidOperationException($"{Inbox.Unread} still unread"); }, 300);
         await Step("bell: clear", () => { Inbox.Clear(); BellFlyout.ShowAt(BellButton); }, 900);
         await Step("bell: empty list closed", () => { BellFlyout.Hide(); if (Inbox.Entries.Count != 0) throw new InvalidOperationException("Clear left entries"); }, 400);
+        // Controller navigation off (Settings → Features): the controller is never read, whatever is connected; back on after.
+        await Step("controller off", () =>
+        {
+            AppState.Settings.GamepadInput = false;
+            GamepadSettingChanged();
+            if (_padTimer?.IsRunning == true) throw new InvalidOperationException("the controller is still read with Controller navigation off");
+        }, 200);
+        await Step("controller on", () => { AppState.Settings.GamepadInput = true; GamepadSettingChanged(); }, 200);
         await Step("pane folded", () => { Nav.IsPaneOpen = false; }, 500);
         await Step("pane open", () => { Nav.IsPaneOpen = true; }, 500);
         foreach (var game in AppState.VisibleGames.ToList())
@@ -1496,15 +1580,146 @@ public sealed partial class MainWindow : Window
         await Step("my PC", () => ContentFrame.Navigate(typeof(HardwarePage)), 2000);
         await Step("settings", () => ContentFrame.Navigate(typeof(SettingsPage)), 1500);
         await Step("settings tabs", () => (ContentFrame.Content as SettingsPage)?.SelfTestTabs(), 800);
+        // Hybrid Launcher's own play time record: hours added to a game come back for the same game added again under another
+        // id or store (by its name or app id), older time kept in a game's settings is taken in, and other games are untouched.
+        await Step("play time record", () =>
+        {
+            var first = new Game { Id = "selftest:ledger-a", Name = "Self-Test Quest™: Redux", Store = GameStore.Custom, InstallDir = @"C:\Games\A" };
+            var again = new Game { Id = "selftest:ledger-b", Name = "Self-test Quest: Redux", Store = GameStore.Epic, InstallDir = @"D:\Other\B" };
+            var other = new Game { Id = "selftest:ledger-c", Name = "Another Test Game", Store = GameStore.Custom, InstallDir = @"C:\Games\C" };
+            long before = PlaytimeLedger.Get(first)?.Minutes ?? 0;
+            PlaytimeLedger.Add(first, 42, DateTime.Now);
+            if (Playtime.Get(again, new GameSettings()).Minutes != before + 42) throw new InvalidOperationException("the same game added again did not find its hours");
+            if (Playtime.Get(other, new GameSettings()).Minutes != 0) throw new InvalidOperationException("another game took the hours");
+            Playtime.Get(other, new GameSettings { PlayMinutes = 7 });
+            PlaytimeLedger.Reload();
+            if (PlaytimeLedger.Get(other)?.Minutes != 7) throw new InvalidOperationException("older time in the settings was not kept");
+            if (!File.Exists(PlaytimeLedger.File)) throw new InvalidOperationException("the record was not saved");
+        }, 100);
+        // The search through every tab: results grouped by tab and section, and one opens its tab at the setting.
+        if (only.Length == 0 || only.Any(o => "settings search".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                if (ContentFrame.Content is SettingsPage sp)
+                    await sp.SelfTestSearch(string.IsNullOrWhiteSpace(shots) ? null : () => SaveShotAsync(Path.Combine(shots, $"{++shot:000}-settings search results.png")));
+                Log.Info("Self-test: settings search");
+            }
+            catch (Exception ex) { failures++; Log.Error("Self-test FAILED: settings search", ex); }
+        }
+        // Settings → Controller, and a button given to another action: the one that had it gets the old button back, then the defaults.
+        await Step("settings controller", () => (ContentFrame.Content as SettingsPage)?.SelfTestController(), 900);
+        await Step("controller buttons swap", () =>
+        {
+            PadActions.Set(PadAction.Press, PadKey.B);
+            bool swapped = PadActions.ActionOf(PadKey.B) == PadAction.Press && PadActions.ActionOf(PadKey.A) == PadAction.Back;
+            PadActions.Reset();
+            if (!swapped) throw new InvalidOperationException("giving B to Press did not give A to Back");
+            if (PadActions.ActionOf(PadKey.A) != PadAction.Press || PadActions.ActionOf(PadKey.View) != PadAction.Search) throw new InvalidOperationException("Reset did not bring the default buttons back");
+        }, 100);
+        await Step("controller sections", () => { StepSection(1); StepSection(-1); }, 900);
+        await Step("settings again", () => ContentFrame.Navigate(typeof(SettingsPage)), 900);
+        // The Home button listening (XInput, and PlayStation controllers over HID) starts and stops cleanly.
+        await Step("home button listening", () =>
+        {
+            var c = AppState.Settings.Controller;
+            bool was = c.HomeButton;
+            c.HomeButton = true;
+            HomeButtonSettingChanged();
+            if (_home is null) throw new InvalidOperationException("the Home button is not listened to");
+            c.HomeButton = was;
+            HomeButtonSettingChanged();
+        }, 300);
+        // The Home button on an achievement's pop-up opens that game's Achievements tab (the achievement is shown once read).
+        // A game whose achievements can be read when there is one (the real achievement is then scrolled to), else any game.
+        var achGame = AchievementWatcher.PreviewGames().FirstOrDefault() ?? AppState.Games.FirstOrDefault();
+        if (achGame is not null)
+        {
+            string achKey = "selftest-home";
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                if (await HybridLauncher.Core.Steam.SteamAchievements.LoadForAsync(achGame, cts.Token) is { Items.Count: > 0 } set) achKey = set.Items[set.Items.Count / 2].Key;
+            }
+            catch (Exception ex) { Log.Warn($"Self-test achievements of {achGame.Name}: {ex.Message}"); }
+            await Step("home button on a pop-up", () =>
+            {
+                AchievementPopup.ShowReplacing(new Toast("Home test", "The Home button opens this one.", null, achGame.Name, 20, GameId: achGame.Id, AchievementKey: achKey));
+            }, 1200);
+            await Step("home button opens the achievement", () =>
+            {
+                HomePressed();
+                if ((ContentFrame.Content as GamePage)?.GameId != achGame.Id) throw new InvalidOperationException("the game of the pop-up did not open");
+                if (AchievementPopup.TakeRecent() is not null) throw new InvalidOperationException("the pop-up's achievement was not taken");
+            }, 2500);
+            if (achKey != "selftest-home")
+                await Step("home button shows that achievement", () =>
+                {
+                    if ((ContentFrame.Content as GamePage)?.LastShownAchievement != achKey) throw new InvalidOperationException($"{achKey} was not shown in the Achievements tab");
+                }, 300);
+            await Step("settings again", () => ContentFrame.Navigate(typeof(SettingsPage)), 900);
+        }
         await Step("settings notifications", () => OpenSettings("notifications"), 1000);
         // The welcome tip (wide, with the Ko-fi card), then closed without marking the tour seen.
         await Step("welcome tip", StartTour, 1500);
         await Step("welcome tip closed", () => { EndTour(markSeen: false); if (_touring) throw new InvalidOperationException("the tour is still running"); }, 600);
-        await Step("pop-up", AchievementPopup.ShowTest, 1500);
+        // Welcome to the new version: the highlights, the changelog link and the support card, then closed.
+        await Step("what's new", () => { _ = ShowWhatsNewAsync(); }, 1200);
+        await Step("what's new closed", () => { if (!SelfTestWhatsNew(close: true)) throw new InvalidOperationException("the new version's welcome did not open"); }, 600);
+        await Step("pop-up", () => AchievementPopup.ShowTest(), 1500);
+        await Step("pop-up see-through", AchievementPopup.CheckSeeThrough, 50);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } popup and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up window.png"), popup);
-        await Step("pop-up again", AchievementPopup.ShowTest, 7000);
+        // Every look, one after another (each replaces the one on screen), a picture of each once it has settled.
+        var savedCorner = AppState.Settings.Popup.Corner;
+        AppState.Settings.Popup.Corner = "Native";
+        foreach (var look in new[] { "PlayStation", "PlayStation4", "PlayStation4Black", "Xbox", "Steam", "Gog", "Epic", "Minimal" })
+        {
+            await Step($"pop-up look {look}", () => AchievementPopup.ShowTest(look), 1500);
+            await Step($"pop-up look {look} where the original shows it", () => AchievementPopup.CheckNativeSpot(look), 50);
+            await Step($"pop-up look {look} see-through", AchievementPopup.CheckSeeThrough, 50);
+            if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } lookWindow and not 0)
+                await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up {look}.png"), lookWindow);
+        }
+        // The platinum of a completed game, in every look: its own emblem and the platinum trophy.
+        foreach (var look in new[] { "Hybrid", "PlayStation", "PlayStation4", "Xbox", "Steam", "Minimal" })
+        {
+            await Step($"pop-up platinum {look}", () => AchievementPopup.ShowTestPlatinum(look), 1500);
+            if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } plat and not 0)
+                await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up platinum {look}.png"), plat);
+        }
+        AppState.Settings.Popup.Corner = savedCorner;
+        await Step("pop-up again", () => AchievementPopup.ShowTest(), 7000);
         await Step("pop-up gone by itself", () => { if (AchievementPopup.CurrentHandle is not null) throw new InvalidOperationException("the pop-up is still on screen after its time"); }, 100);
+        // The way people try it: Settings → Achievements → "Try it", pressed again while one shows, then every look picked in a row.
+        await Step("pop-up settings", () => OpenSettings("achievements"), 1200);
+        // Achievements → Sounds, under the pop-ups: what plays, volume, a .wav per rarity.
+        await Step("pop-up settings sounds", () => (ContentFrame.Content as SettingsPage)?.SelfTestSounds(), 900);
+        await SelfTestSoundsAsync(Step);
+        await Step("pop-up settings try it", () => (ContentFrame.Content as SettingsPage ?? throw new InvalidOperationException("Settings is not open")).SelfTestTryPopup(), 400);
+        await Step("pop-up settings try it again", () => (ContentFrame.Content as SettingsPage)?.SelfTestTryPopup(), 1500);
+        await Step("pop-up settings try it see-through", AchievementPopup.CheckSeeThrough, 50);
+        await Step("pop-up settings looks in a row", () => (ContentFrame.Content as SettingsPage)?.SelfTestLooks(), 1500);
+        await Step("pop-up settings looks see-through", AchievementPopup.CheckSeeThrough, 50);
+        // A real achievement of a game in the library (when one has readable achievements), shown as its unlock would be.
+        bool previewed = false;
+        if (only.Length == 0 || only.Any(o => "pop-up settings real game".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                previewed = await ((ContentFrame.Content as SettingsPage)?.SelfTestPreviewGameAsync() ?? Task.FromResult(false));
+                await Task.Delay(2000);
+                Log.Info($"Self-test: pop-up settings real game ({(previewed ? "shown" : "no game with readable achievements")})");
+            }
+            catch (Exception ex) { failures++; Log.Error("Self-test FAILED: pop-up settings real game", ex); }
+        }
+        if (previewed) await Step("pop-up settings real game see-through", AchievementPopup.CheckSeeThrough, 50);
+        if (previewed && !string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } real and not 0)
+            await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up real game.png"), real);
+        // The game's platinum from the same row (the picked game, or the sample when none can be read).
+        await Step("pop-up settings real game platinum", () => _ = (ContentFrame.Content as SettingsPage)?.SelfTestPreviewPlatinum(), 2500);
+        if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } platPreview and not 0)
+            await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up real game platinum.png"), platPreview);
         await Step("pop-up placing", () => AchievementPopup.Place((_, _) => { }), 1500);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.PlacingHandle is { } placing and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up placing window.png"), placing);
@@ -1821,7 +2036,8 @@ public sealed partial class MainWindow : Window
         try
         {
             AppState.Settings.SettingsTab = tab;
-            if (ContentFrame.Content is not SettingsPage) ContentFrame.Navigate(typeof(SettingsPage));
+            if (ContentFrame.Content is SettingsPage open) open.SelectTab(tab);
+            else ContentFrame.Navigate(typeof(SettingsPage));
             SyncSelection();
         }
         catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
@@ -1930,11 +2146,228 @@ public sealed partial class MainWindow : Window
         return Native.GetDpiForWindow(hwnd) / 96.0;
     }
 
+    /// <summary>
+    /// How far the page reaches past the window's right edge (0 when it fits), and the game list's state for the log: the
+    /// NavigationView's mode, the list's width, the inner SplitView's own mode, and the page's place and width.
+    /// </summary>
+    internal (double Overflow, string State) PageOverflow()
+    {
+        RootGrid.UpdateLayout();
+        double left = ContentFrame.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+        double right = left + ContentFrame.ActualWidth;
+        var split = FindDescendant<SplitView>(Nav);
+        string splitState = split is null ? "no SplitView" : $"split {split.DisplayMode} open={split.IsPaneOpen} pane={split.OpenPaneLength:0}/{split.CompactPaneLength:0}";
+        string state = $"nav {Nav.DisplayMode} open={Nav.IsPaneOpen} pane={Nav.OpenPaneLength:0}, {splitState}, page x={left:0} w={ContentFrame.ActualWidth:0}, window {RootGrid.ActualWidth:0}";
+        return (Math.Max(0, right - RootGrid.ActualWidth), state);
+    }
+
+    /// <summary>
+    /// Self-test: the visible elements under <paramref name="root"/> that end past the window's right edge (or past the right
+    /// edge of a parent that clips them), described by type, name or text and how far they reach. Elements inside something that
+    /// scrolls sideways are left out, and so are the ones off screen vertically.
+    /// </summary>
+    internal List<string> CutOnTheRight(FrameworkElement root)
+    {
+        RootGrid.UpdateLayout();
+        var found = new List<string>();
+        double windowRight = RootGrid.ActualWidth, windowBottom = RootGrid.ActualHeight;
+        void Walk(DependencyObject o, double limit)
+        {
+            if (o is UIElement { Visibility: Visibility.Collapsed } or UIElement { Opacity: 0 }) return;
+            if (o is ScrollViewer { HorizontalScrollMode: ScrollMode.Enabled, HorizontalScrollBarVisibility: not ScrollBarVisibility.Disabled }) return;
+            if (o is FrameworkElement fe && fe.ActualWidth > 0 && fe.ActualHeight > 0)
+            {
+                var p = fe.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, 0));
+                double right = p.X + fe.ActualWidth;
+                bool onScreen = p.Y < windowBottom && p.Y + fe.ActualHeight > 0;
+                if (onScreen && right > limit + 1.5 && fe is not Microsoft.UI.Xaml.Controls.Primitives.Popup)
+                {
+                    string what = fe switch
+                    {
+                        TextBlock t => $"text \"{(t.Text.Length > 30 ? t.Text[..30] + "…" : t.Text)}\"",
+                        ContentControl { Content: string s } => $"{fe.GetType().Name} \"{s}\"",
+                        _ => fe.GetType().Name + (string.IsNullOrEmpty(fe.Name) ? "" : " " + fe.Name),
+                    };
+                    found.Add($"{what} +{right - limit:0}px");
+                    // The chain up to the page, each level's place, width and wanted width: where it got wider than its parent.
+                    var chain = new List<string>();
+                    for (DependencyObject? up = fe; up is FrameworkElement f2 && up != ContentFrame; up = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(up))
+                    {
+                        double x = f2.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+                        chain.Add($"{f2.GetType().Name}{(string.IsNullOrEmpty(f2.Name) ? "" : ":" + f2.Name)} x={x:0} w={f2.ActualWidth:0} want={f2.DesiredSize.Width:0} max={f2.MaxWidth:0}");
+                    }
+                    Log.Info("Cut on the right: " + string.Join(" < ", chain));
+                    // What inside it wants the most room.
+                    void Widest(DependencyObject d, int depth)
+                    {
+                        for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(d) && depth < 6; i++)
+                            if (Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(d, i) is FrameworkElement c && c.DesiredSize.Width > fe.ActualWidth - 60 && c.Visibility == Visibility.Visible)
+                            {
+                                Log.Info($"  {new string(' ', depth * 2)}{c.GetType().Name}{(string.IsNullOrEmpty(c.Name) ? "" : ":" + c.Name)} w={c.ActualWidth:0} want={c.DesiredSize.Width:0}{(c is TextBlock tb ? " \"" + tb.Text[..Math.Min(40, tb.Text.Length)] + "\"" : "")}");
+                                Widest(c, depth + 1);
+                            }
+                    }
+                    Widest(fe, 0);
+                    return; // its children are cut with it
+                }
+                // A parent narrower than the window clips what is inside it at its own edge (when it clips: a Border with
+                // rounded corners, a ScrollViewer, a Grid row).
+                if (fe is ScrollViewer or ScrollContentPresenter) limit = Math.Min(limit, right);
+            }
+            for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(o); i++)
+                Walk(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(o, i), limit);
+        }
+        Walk(root, windowRight);
+        return found;
+    }
+
+    static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T t) return t;
+            if (FindDescendant<T>(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    void OnDisplaySettingsChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => QueueMaximizeCheck(600));
+
+    bool _maximizeCheckQueued;
+    DateTime _lastRemaximize;
+
+    /// <summary>
+    /// After a size, place or display change: a window that says it is maximized but does not cover its screen's work area (it
+    /// kept its size from another resolution, with the content laid out for it) is maximized again, which also lays the page out
+    /// anew. Once per second at most, so it can never loop.
+    /// </summary>
+    void QueueMaximizeCheck(int delayMs = 250)
+    {
+        if (_maximizeCheckQueued || _closed) return;
+        _maximizeCheckQueued = true;
+        Later.Run(DispatcherQueue, TimeSpan.FromMilliseconds(delayMs), () =>
+        {
+            _maximizeCheckQueued = false;
+            try
+            {
+                if (_closed || _hidden || AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Maximized } p) return;
+                var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+                var pos = AppWindow.Position;
+                var size = AppWindow.Size;
+                // A maximized window reaches a few pixels past the work area on each side (its hidden frame); more than that is wrong.
+                int slack = (int)Math.Ceiling(16 * GetDpiScale());
+                bool fits = Math.Abs(size.Width - area.Width) <= slack && Math.Abs(size.Height - area.Height) <= slack
+                    && Math.Abs(pos.X - area.X) <= slack && Math.Abs(pos.Y - area.Y) <= slack;
+                if (fits || DateTime.Now - _lastRemaximize < TimeSpan.FromSeconds(1)) return;
+                _lastRemaximize = DateTime.Now;
+                Log.Info($"Window maximized at {size.Width}x{size.Height} on a {area.Width}x{area.Height} work area: maximized again");
+                p.Restore();
+                CenterOnScreen();
+                p.Maximize();
+            }
+            catch (Exception ex) { Log.Warn($"Maximize check: {ex.Message}"); }
+        });
+    }
+
     void CenterOnScreen()
     {
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
         var size = AppWindow.Size;
         int w = Math.Min(size.Width, area.Width), h = Math.Min(size.Height, area.Height);
         AppWindow.MoveAndResize(new RectInt32(area.X + (area.Width - w) / 2, area.Y + (area.Height - h) / 2, w, h));
+    }
+
+    /// <summary>
+    /// Self-test of the pop-up sounds, everywhere they come from: Windows' sound, None, and with HL_SELFTEST_SOUNDS (a folder with
+    /// ps5-bronze/silver/gold/platinum.wav and ps4-trophy.wav) your own files per tier, the one for every achievement when a tier
+    /// has none or its file is gone, volume 0, and the sound real pop-ups play for each tier and for the platinum. Played quietly;
+    /// the settings are put back after.
+    /// </summary>
+    async Task SelfTestSoundsAsync(Func<string, Action, int, Task> step)
+    {
+        var o = AppState.Settings.Popup;
+        var saved = (o.Sound, o.SoundFile, Tiers: new Dictionary<string, string>(o.TierSounds, StringComparer.OrdinalIgnoreCase), o.Volume);
+        var savedPresets = o.SoundPresets;
+        void Expect(string? want, string what)
+        {
+            var got = AchievementPopup.LastSound;
+            if (!string.Equals(got, want, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"{what}: played {got ?? "nothing"}, expected {want ?? "nothing"}");
+        }
+        try
+        {
+            o.Volume = 0.2;
+            await step("sounds: Windows", () =>
+            {
+                o.Sound = "Windows";
+                AchievementPopup.PlaySample("Gold");
+                if (AchievementPopup.LastSound is null) throw new InvalidOperationException("the Windows sound did not play");
+            }, 1200);
+            await step("sounds: none", () => { o.Sound = "None"; AchievementPopup.PlaySample("Gold"); Expect(null, "None"); }, 200);
+            var dir = Environment.GetEnvironmentVariable("HL_SELFTEST_SOUNDS");
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) { Log.Info("Self-test: no HL_SELFTEST_SOUNDS folder, own sounds not tried"); return; }
+            string F(string name) => Path.Combine(dir, name);
+            var tiers = new[] { "Bronze", "Silver", "Gold", "Platinum" };
+            o.Sound = "File";
+            o.SoundFile = F("ps4-trophy.wav");
+            o.TierSounds.Clear();
+            foreach (var t in tiers) o.TierSounds[t] = F($"ps5-{t.ToLowerInvariant()}.wav");
+            foreach (var t in tiers)
+                await step($"sounds: {t}", () =>
+                {
+                    var want = F($"ps5-{t.ToLowerInvariant()}.wav");
+                    if (!File.Exists(want)) throw new InvalidOperationException($"{want} is missing");
+                    if (!AchievementPopup.ScalesVolume(want)) throw new InvalidOperationException($"{Path.GetFileName(want)} is not 16-bit PCM: the volume cannot scale it");
+                    AchievementPopup.PlaySample(t);
+                    Expect(want, t);
+                }, 1800);
+            await step("sounds: every achievement", () =>
+            {
+                o.TierSounds.Remove("Silver");
+                AchievementPopup.PlaySample("Silver");
+                Expect(F("ps4-trophy.wav"), "Silver without its own");
+            }, 1300);
+            await step("sounds: file gone", () =>
+            {
+                o.TierSounds["Gold"] = F("not-there.wav");
+                AchievementPopup.PlaySample("Gold");
+                Expect(F("ps4-trophy.wav"), "Gold with its file gone");
+                o.TierSounds["Gold"] = F("ps5-gold.wav");
+                o.TierSounds["Silver"] = F("ps5-silver.wav");
+            }, 1300);
+            // A folder as a preset: the files go to their tiers by name, the other one to every achievement.
+            await step("sounds: folder preset", () =>
+            {
+                var p = Views.AchievementSoundsView.FromFolder(dir);
+                foreach (var t in tiers)
+                    if (!string.Equals(p.GetValueOrDefault(t), F($"ps5-{t.ToLowerInvariant()}.wav"), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"the folder preset put {p.GetValueOrDefault(t) ?? "nothing"} on {t}");
+                if (!string.Equals(p.GetValueOrDefault("All"), F("ps4-trophy.wav"), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("the folder preset did not put the other file on every achievement");
+                o.TierSounds.Clear();
+                o.SoundFile = null;
+                Views.AchievementSoundsView.Apply(o, p);
+                AchievementPopup.PlaySample("Platinum");
+                Expect(F("ps5-platinum.wav"), "Platinum from the folder preset");
+            }, 1800);
+            await step("sounds: volume 0", () => { o.Volume = 0; AchievementPopup.PlaySample("Gold"); Expect(null, "volume 0"); o.Volume = 0.2; }, 200);
+            // The sound real pop-ups play: the tier from the rarity, and the platinum of a completed game.
+            foreach (var (percent, tier) in new (double?, string)[] { (55, "bronze"), (null, "bronze"), (20, "silver"), (6, "gold"), (0.5, "gold") })
+            {
+                string what = percent is { } p ? p + "%" : "no rarity";
+                await step($"sounds: pop-up at {what}", () =>
+                {
+                    AchievementPopup.LastSound = "";
+                    AchievementPopup.ShowReplacing(new Toast("Sound test", "A pop-up's own sound.", null, "Game: The game", percent));
+                }, 1900);
+                await step($"sounds: pop-up at {what} played {tier}", () => Expect(F($"ps5-{tier}.wav"), $"a pop-up at {what}"), 50);
+            }
+            await step("sounds: pop-up platinum", () => { AchievementPopup.LastSound = ""; AchievementPopup.ShowTestPlatinum(); }, 2200);
+            await step("sounds: pop-up platinum played platinum", () => Expect(F("ps5-platinum.wav"), "the platinum pop-up"), 50);
+        }
+        finally
+        {
+            (o.Sound, o.SoundFile, o.Volume) = (saved.Sound, saved.SoundFile, saved.Volume);
+            o.TierSounds = saved.Tiers;
+            o.SoundPresets = savedPresets;
+        }
     }
 }

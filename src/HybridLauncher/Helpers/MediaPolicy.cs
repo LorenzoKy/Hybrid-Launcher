@@ -132,6 +132,17 @@ public static class MediaPolicy
     }
 
     static bool _efficient;
+    static int _awake;
+
+    /// <summary>
+    /// An achievement pop-up is on screen: full speed and normal priority until it is gone. In efficiency mode, over a running
+    /// game, its frame clock and window moves would stutter.
+    /// </summary>
+    public static void KeepAwake(bool on) => Post(() =>
+    {
+        _awake = Math.Max(0, _awake + (on ? 1 : -1));
+        UpdateEfficiency();
+    });
 
     /// <summary>
     /// Windows' efficiency mode (EcoQoS and a lower priority, as Task Manager's leaf shows) while nobody works with the window or a
@@ -139,7 +150,7 @@ public static class MediaPolicy
     /// </summary>
     static void UpdateEfficiency()
     {
-        bool want = (_windowHidden || InBackground || (GameRunning && _background)) && Downloads.ActiveCount == 0;
+        bool want = (_windowHidden || InBackground || (GameRunning && _background)) && Downloads.ActiveCount == 0 && _awake == 0;
         if (want == _efficient) return;
         _efficient = want;
         Efficiency.Set(want);

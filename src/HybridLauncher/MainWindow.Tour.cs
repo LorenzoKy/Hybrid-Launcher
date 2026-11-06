@@ -273,6 +273,16 @@ public sealed partial class MainWindow
         body.Children.Add(new TextBlock { Text = step.Title, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
         body.Children.Add(new TextBlock { Text = step.Text, FontSize = 15, LineHeight = 22, TextWrapping = TextWrapping.Wrap, Opacity = 0.9 });
 
+        body.Children.Add(SupportCard("Welcome"));
+        return body;
+    }
+
+    /// <summary>
+    /// The card asking for support, with the Ko-fi button: in the welcome step and in "Welcome to the new version".
+    /// <paramref name="where"/> names it in the log.
+    /// </summary>
+    FrameworkElement SupportCard(string where)
+    {
         var tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x5E, 0x5B));
         var card = new Grid { ColumnSpacing = 14, Padding = new Thickness(14, 12, 14, 12), Margin = new Thickness(0, 6, 0, 0), CornerRadius = new CornerRadius(10),
                               Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1E, tint.R, tint.G, tint.B)) };
@@ -299,15 +309,14 @@ public sealed partial class MainWindow
         ToolTipService.SetToolTip(kofi, "ko-fi.com/lorenzoky");
         kofi.Click += (_, _) =>
         {
-            Log.Info("Welcome: Ko-fi opened");
+            Log.Info($"{where}: Ko-fi opened");
             try { GameLauncher.OpenUri(KofiUrl); }
             catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
         };
         text.Children.Add(kofi);
         Grid.SetColumn(text, 1);
         card.Children.Add(text);
-        body.Children.Add(card);
-        return body;
+        return card;
     }
 
     static FrameworkElement TourHero() => new Border
@@ -348,6 +357,8 @@ public sealed partial class MainWindow
         if (markSeen && !AppState.Settings.TourSeen)
         {
             AppState.Settings.TourSeen = true;
+            // A first start: this version is the one the welcome was about, no "new version" window for it.
+            AppState.Settings.LastVersionSeen = AppUpdates.Current.ToString(3);
             SettingsStore.Save();
         }
     }
@@ -355,7 +366,8 @@ public sealed partial class MainWindow
     /// <summary>At the first start, once the window has settled: the feature picker, then the tour (not in the self-test, not from the tray).</summary>
     void MaybeStartTour()
     {
-        if (AppState.Settings.TourSeen || _hidden || Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase)) return;
+        if (AppState.Settings.TourSeen) { MaybeShowWhatsNew(); return; }
+        if (_hidden || Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase)) return;
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromSeconds(1.5);
         timer.IsRepeating = false;

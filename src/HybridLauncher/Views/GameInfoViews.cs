@@ -2268,7 +2268,9 @@ public sealed partial class PcgwView : UserControl
     static FrameworkElement Table(PcgwBlock block)
     {
         int cols = Math.Max(block.Columns.Count, block.Rows.Count > 0 ? block.Rows.Max(r => r.Count) : 0);
-        var grid = new Grid { ColumnSpacing = 14, MinWidth = cols * 70 };
+        // The 8 px each side are the table's own (not the scroller's padding): the shaded rows reach into them with their rounded
+        // ends, and the scroller would clip anything past its content.
+        var grid = new Grid { ColumnSpacing = 14, MinWidth = cols * 70 + 16, Padding = new Thickness(8, 0, 8, 0) };
         // Short columns (an OS, a date, a yes / no) as wide as their text; the long ones share the rest by how long they run.
         // Every short column stretching made the wide gaps between a name and its value.
         var longest = Enumerable.Range(0, cols).Select(c => Math.Max(c < block.Columns.Count ? block.Columns[c].Length : 0,
@@ -2315,7 +2317,7 @@ public sealed partial class PcgwView : UserControl
         // Wide tables scroll sideways on a narrow window instead of squeezing every column.
         panel.Children.Add(new ScrollViewer
         {
-            Content = grid, Padding = new Thickness(8, 0, 8, 0),
+            Content = grid,
             HorizontalScrollMode = ScrollMode.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
         });

@@ -157,6 +157,9 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 .tile:hover .shot.bleed { transform: translateX(0) scale(1.01); }
 .shot.side { left: 12%; right: -30%; top: 40px; height: 300px; transform: rotate(-3deg); }
 .tile:hover .shot.side { transform: rotate(-1deg) translateY(-4px); }
+/* A whole picture, not cropped (the pop-up looks). */
+.shot.fit { left: 6%; right: 6%; top: 30px; height: auto; aspect-ratio: 1165 / 869; transform: rotate(-2deg); }
+.tile:hover .shot.fit { transform: rotate(0deg) translateY(-4px); }
 .chip { position: absolute; z-index: 1; display: flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: 10px; font: 600 13.5px/1 "Segoe UI", sans-serif;
   background: rgba(14, 13, 15, .82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0,0,0,.5), inset 0 0 0 1px rgba(246,244,241,.1); }
 .chip .ico { width: 16px; height: 16px; color: var(--red-soft); }

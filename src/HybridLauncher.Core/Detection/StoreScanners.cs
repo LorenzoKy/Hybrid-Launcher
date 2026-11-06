@@ -199,6 +199,12 @@ public static class EpicScanner
         var manifestsDir = dataPath is not null
             ? Path.Combine(dataPath, "Manifests")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Epic\EpicGamesLauncher\Data\Manifests");
+        return ScanManifests(manifestsDir);
+    }
+
+    /// <summary>The games in a folder of Epic's .item manifests (the launcher's, or a test's).</summary>
+    public static IEnumerable<Game> ScanManifests(string manifestsDir)
+    {
         if (!Directory.Exists(manifestsDir)) yield break;
 
         string[] items;
@@ -216,7 +222,8 @@ public static class EpicScanner
                 if (r.TryGetProperty("bIsIncompleteInstall", out var inc) && inc.ValueKind == JsonValueKind.True) continue;
                 var appName = S("AppName");
                 var mainApp = S("MainGameAppName");
-                if (appName is null || (mainApp is not null && !mainApp.Equals(appName, StringComparison.OrdinalIgnoreCase))) continue; // DLC
+                // A DLC names its main game; an empty MainGameAppName (many full games have "") is not a DLC (1.3.0 skipped those games).
+                if (appName is null || (!string.IsNullOrWhiteSpace(mainApp) && !mainApp.Equals(appName, StringComparison.OrdinalIgnoreCase))) continue;
 
                 if (r.TryGetProperty("AppCategories", out var cats) && cats.ValueKind == JsonValueKind.Array
                     && !cats.EnumerateArray().Any(c => c.GetString() is "games")) continue;

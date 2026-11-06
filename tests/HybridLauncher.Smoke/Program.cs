@@ -679,6 +679,30 @@ switch (cmd)
         Check(ReShade.OptiLoadsReShade(dir) == false && !gs.IniOverrides.ContainsKey(ReShade.IniKey), "removed: LoadReshade off");
         break;
     }
+    case "epic":
+    {
+        // Epic manifests: a game with an empty MainGameAppName (1.3.0 skipped it as DLC), one naming itself, and a DLC.
+        var root = Path.Combine(Path.GetTempPath(), "hl-smoke-epic");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var manifests = Directory.CreateDirectory(Path.Combine(root, "Manifests")).FullName;
+        void Item(string file, string app, string main)
+        {
+            var dir = Directory.CreateDirectory(Path.Combine(root, app)).FullName;
+            File.WriteAllText(Path.Combine(manifests, file + ".item"), System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["AppName"] = app, ["MainGameAppName"] = main, ["DisplayName"] = app, ["InstallLocation"] = dir,
+                ["LaunchExecutable"] = "game.exe", ["AppCategories"] = new[] { "public", "games", "applications" },
+            }));
+        }
+        Item("a", "EmptyMain", "");
+        Item("b", "SelfMain", "SelfMain");
+        Item("c", "SomeDlc", "SelfMain");
+        var found = EpicScanner.ScanManifests(manifests).Select(g => g.Name).OrderBy(n => n).ToList();
+        Console.WriteLine("Epic: " + string.Join(", ", found));
+        Directory.Delete(root, true);
+        Check(found.SequenceEqual(new[] { "EmptyMain", "SelfMain" }), "games with an empty or their own MainGameAppName found, the DLC left out");
+        break;
+    }
     case "scan":
     {
         var games = await GameScanner.ScanAsync(new AppSettings());

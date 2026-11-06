@@ -253,22 +253,55 @@ public static class Startup
     /// <summary>Windows starts Hybrid Launcher at sign-in: registered and not turned off in Windows.</summary>
     public static bool IsOn => Registered && !OffInWindows;
 
+    /// <summary>The exe the Run value starts (unquoted), or null.</summary>
+    static string? RegisteredExe
+    {
+        get
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+            if ((key?.GetValue(ValueName) ?? key?.GetValue(PreviousValueName)) is not string cmd) return null;
+            cmd = cmd.Trim();
+            if (cmd.StartsWith('"')) { int end = cmd.IndexOf('"', 1); return end > 1 ? cmd[1..end] : null; }
+            int space = cmd.IndexOf(" --", StringComparison.Ordinal);
+            return space > 0 ? cmd[..space] : cmd;
+        }
+    }
+
     /// <summary>
-    /// At start, with the setting on: the entry is written again when it is under the earlier name, points at another exe (the
-    /// folder was moved, or a new version unpacked elsewhere) or lacks its mark. The setting turns off when the entry was
-    /// removed or turned off in Windows, so the toggle never says On for an app Windows will not start.
+    /// At start: the setting follows what Windows will really do, and the entry is written again only when it is this copy's own
+    /// (under the earlier name, without its mark) or the exe it names is gone (the folder was moved). Another copy that still
+    /// exists keeps it: a build run from elsewhere (an unpacked release, a test build) used to take the entry over, and Windows
+    /// then started that build at sign-in. A separate data folder (tests) never touches it.
     /// </summary>
     public static void CarryOver(AppSettings settings)
     {
         try
         {
             if (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase)) Log.Info("Started with Windows (in the notification area)");
-            if (!settings.StartWithWindows) return;
+            if (AppInfo.SeparateData) return;
+            var exe = RegisteredExe;
+            bool mine = exe is not null && string.Equals(Path.GetFullPath(exe), Environment.ProcessPath, StringComparison.OrdinalIgnoreCase);
+            if (!settings.StartWithWindows)
+            {
+                // Windows starts this very copy although the setting says Off (written by another build): the toggle shows it.
+                if (mine && !OffInWindows)
+                {
+                    Log.Info("Start with Windows: Windows starts this copy, the setting follows (On)");
+                    settings.StartWithWindows = true;
+                    SettingsStore.Save();
+                }
+                return;
+            }
             if (!Registered || OffInWindows)
             {
                 Log.Warn($"Start with Windows: {(Registered ? "turned off in Windows' Startup apps" : "the entry was removed")}, the setting follows");
                 settings.StartWithWindows = false;
                 SettingsStore.Save();
+                return;
+            }
+            if (!mine && exe is not null && File.Exists(exe))
+            {
+                Log.Info($"Start with Windows: left to the copy in \"{Path.GetDirectoryName(exe)}\"");
                 return;
             }
             using var key = Registry.CurrentUser.OpenSubKey(RunKey);
@@ -284,6 +317,7 @@ public static class Startup
 
     public static void Set(bool on)
     {
+        if (AppInfo.SeparateData) { Log.Info($"Start with Windows {(on ? "on" : "off")}: not written (separate data folder)"); return; }
         using var key = Registry.CurrentUser.CreateSubKey(RunKey, true);
         using var approved = Registry.CurrentUser.CreateSubKey(ApprovedKey, true);
         key.DeleteValue(PreviousValueName, false);
