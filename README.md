@@ -5,7 +5,7 @@
 <h1 align="center">Hybrid Launcher</h1>
 
 <p align="center">
-  <b>The Hybrid Launcher: manage your games,<br />manage your mods, enhance the experience.</b><br />
+  <b>A traditional game launcher and a mod manager fused into one.</b><br />
   Steam · Epic Games · GOG · Xbox / Game Pass · your own folders
 </p>
 

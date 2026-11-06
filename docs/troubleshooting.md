@@ -2,12 +2,12 @@
 
 Every error in Hybrid Launcher shows up in red at the bottom of the window. Under the message there is a
 **Possible causes** line and a **Troubleshooting** link that opens the matching section of this page. Start there; if the
-problem stays, [report it](#still-stuck) with the log.
+problem stays, [report it](#reporting-a-problem) with the log.
 
 Jump to: [Cloud saves](#cloud-saves) · [Start with Windows](#start-with-windows) ·
 [A game does not start](#a-game-does-not-start) · [Mods, OptiScaler and ReShade](#mods-optiscaler-and-reshade) ·
 [Downloads, sign-in and updates](#downloads-sign-in-and-updates) · [HDR and display](#hdr-and-display) ·
-[Common Windows errors](#common-windows-errors) · [Still stuck?](#still-stuck)
+[Common Windows errors](#common-windows-errors) · [Reporting a problem](#reporting-a-problem)
 
 ## Cloud saves
 
@@ -91,7 +91,7 @@ The *Possible causes* line under an error comes from what Windows answered. The 
 | *The operation has timed out*, *No such host is known* | No internet, or the service is down. Try again in a few minutes. |
 | *The requested operation requires elevation* | The folder needs administrator rights. Move it to a folder of yours. |
 
-## Still stuck?
+## Reporting a problem
 
 Use **Settings → About → Report on GitHub**: it fills in the version, your system and the end of the log (user name, PC name
 and e-mails taken out). Logs are in `%LOCALAPPDATA%\HybridLauncher\logs`, one per session of the app. Say what you did, what

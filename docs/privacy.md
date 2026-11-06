@@ -1,6 +1,6 @@
 # Privacy and data
 
-## What is stored, and where
+## Where data is stored
 
 Everything the app writes outside the game folders you change lives in `%LOCALAPPDATA%\HybridLauncher`:
 

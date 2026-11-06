@@ -119,7 +119,7 @@ between games faster. If you already have 1.2, the app offers this update by its
   automatically* and *Notify me of new versions* cover every game; the app looks for new versions at start and every three
   hours. It is new and tried on few games so far: if something looks wrong, the tab's *Uninstall* puts the folder back as it
   was, and a report helps.
-- **What's installed, at a glance.** The banner's top-left corner lists the mods in the game folder with their version
+- **Installed mods on the banner.** The banner's top-left corner lists the mods in the game folder with their version
   (OptiScaler and where the build came from, ReShade, Ultra+, RenoDX, Luma); a click opens the mod's tab. Turn it off in
   Settings → Appearance → *Game page*, or for one game in its gear → *Customization*.
 - **Update available.** A blue button at the top of the OptiScaler tab when the channel or fork your game uses has a newer
@@ -336,7 +336,7 @@ games by itself.
 
 ---
 
-### 🎮 Your games, in one place
+### 🎮 Your games
 
 - **One library** for Steam, Epic Games, GOG, Xbox / Game Pass and any game or folder you add yourself. Covers, play time,
   achievements, pins, search and filters, grouped by store or all together.
@@ -350,7 +350,7 @@ games by itself.
 - **Cloud saves** on OneDrive, MEGA, a folder of your choice, or several at once, with a history to go back to.
   → [Cloud saves](docs/cloud-saves.md)
 
-### ⚡ Mods, made easy
+### ⚡ Mods
 
 - **OptiScaler.** Pick Stable, Nightly or your own custom build; new versions are fetched from GitHub by themselves, and
   every version you install is saved and listed, so you can switch back in one click. A **quick panel** holds the settings
