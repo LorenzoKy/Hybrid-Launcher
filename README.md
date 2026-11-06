@@ -187,19 +187,25 @@ or endorses it**; each belongs to its authors under its own license, and its pro
 | Software or service | Owner | How the app uses it |
 |---|---|---|
 | [OptiScaler](https://github.com/optiscaler/OptiScaler), [OptiPatcher](https://github.com/optiscaler/OptiPatcher) | The OptiScaler team | Downloaded from GitHub and installed through OptiScaler's own setup script, unchanged |
+| OptiScaler forks: [OptiScaler Venom](https://github.com/LorenzoKy/Optiscaler-Venom), [F5 DLSS NR Multipass](https://github.com/janblade/OptiScaler-F5-DLSSNR-Multipass), [DLSS NR Multipass MFG](https://github.com/y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG), [NR PreSR MFG](https://github.com/ShyVortex/OptiScaler-NR-PreSR-MFG), [FSR Ray Regeneration](https://github.com/ZachHembree/OptiScaler) and any you add | LorenzoKy, janblade, y4my4my4m, ShyVortex, ZachHembree and their authors | Downloaded from their GitHub releases and installed through their own setup script, unchanged |
 | [ReShade](https://reshade.me) | crosire | Official installers downloaded from reshade.me and run unchanged |
 | [RenoDX](https://github.com/clshortfuse/renodx) | clshortfuse and the mod authors | Mods downloaded from their releases or picked up from your Downloads folder |
-| Luma | Its mod authors | Mods downloaded from their releases |
-| [PCGamingWiki](https://www.pcgamingwiki.com), [HowLongToBeat](https://howlongtobeat.com), store pages | Their owners | Game information shown on the game pages |
-| [Nexus Mods](https://www.nexusmods.com) | Nexus Mods | Links only; its logo is Nexus Mods' trademark |
-| Steam, Epic Games, GOG, Xbox / Game Pass | Valve, Epic Games, CD PROJEKT, Microsoft | Libraries read from this PC; sign-in and downloads through their public services, only when you sign in |
-| OneDrive, MEGA | Microsoft, MEGA Limited | Cloud saves, only when you turn them on |
+| [Luma](https://github.com/Filoppi/Luma-Framework) | Filoppi and the mod authors | Mods downloaded from their releases |
+| [Ultra+](https://theultraplace.com/) | The Ultra Place | Versions, add-ons and settings downloaded from The Ultra Place *(experimental support)* |
+| NVIDIA DLSS files (`nvngx_dlssnr.dll` and others) | NVIDIA | Never shipped: you pick your own copy, which is copied into the games that need it |
+| [PCGamingWiki](https://www.pcgamingwiki.com), [HowLongToBeat](https://howlongtobeat.com), [Metacritic](https://www.metacritic.com), store pages | Their owners | Game information shown on the game pages |
+| [SteamDB](https://steamdb.info), [Nexus Mods](https://www.nexusmods.com), the OptiScaler wiki | Their owners | Links only; their logos are their owners' trademarks |
+| Steam, Epic Games, GOG, Xbox / Game Pass | Valve, Epic Games, CD PROJEKT, Microsoft | Libraries and achievements read from this PC and their public services; sign-in and downloads only when you sign in |
+| PlayStation, Xbox, Steam, GOG and Epic Games "Like" pop-up looks | Hybrid Launcher | Hybrid Launcher's own drawings inspired by those consoles and stores, with its own logo and trophies; no sounds or artwork of theirs are included |
+| OneDrive, MEGA, Google Drive | Microsoft, MEGA Limited, Google | Cloud saves, only when you turn them on (Google Drive through its folder on your PC) |
+| GitHub | GitHub, Inc. | Releases of the app and of the mods; optional sign-in to lift GitHub's request limit |
+| Ko-fi | Ko-fi Labs | Link for support only |
 | SteamKit2 (LGPL), MegaApiClient (MIT), Oxanium font (SIL OFL) and other libraries | Their authors | Built into the app under their licenses |
 
 </details>
 
-Not affiliated with Valve, Epic Games, GOG, Microsoft, AMD, NVIDIA, Intel or any project above; all trademarks belong to
-their owners. Signing in to a store with a third-party app may be against its terms in some cases: the choice is yours.
+Not affiliated with Valve, Epic Games, GOG, Microsoft, Sony Interactive Entertainment, AMD, NVIDIA, Intel or any project
+above, and not endorsed by them; all trademarks belong to their owners. Signing in to a store with a third-party app may be against its terms in some cases: the choice is yours.
 
 ## License
 

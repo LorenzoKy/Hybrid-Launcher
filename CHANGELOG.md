@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.3.2 — 2026-11-06 · Mainly a hotfix for 1.3.1
+
+**Hybrid Launcher 1.3.2** is mainly a hotfix for [1.3.1](#131--2026-11-06--achievement-pop-ups-controller-and-settings-search):
+the fixes below, plus fuller credits. Everything new in 1.3.1 is listed in its section. If you have 1.3.0 or 1.3.1, the app
+offers this update by itself a few seconds after it starts.
+
+### 🐛 Fixes
+
+- **Settings → Achievements → Sounds:** the *Every achievement* sound's play button played the gold sound when gold had a
+  file of its own. It plays its own file now (or Windows' sound when none is set). The sounds of real pop-ups were not
+  affected.
+
+### 🎨 Changes
+
+- **Credits:** Settings → About, the README and the site now name every project and service Hybrid Launcher works with:
+  the OptiScaler forks and their authors, Luma, Ultra+, PCGamingWiki, HowLongToBeat, Metacritic, SteamDB, Google Drive and
+  GitHub, NVIDIA's DLSS files (never shipped), and that the PlayStation, Xbox, Steam, GOG and Epic Games *Like* pop-up looks
+  are Hybrid Launcher's own drawings, not affiliated with those companies.
+
 ## 1.3.1 — 2026-11-06 · Achievement pop-ups, controller and settings search
 
 **Hybrid Launcher 1.3.1** redraws the achievement pop-up from scratch, with looks like the consoles' and stores', the game's

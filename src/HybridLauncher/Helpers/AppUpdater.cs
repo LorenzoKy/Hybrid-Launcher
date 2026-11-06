@@ -24,7 +24,7 @@ static class AppUpdater
     {
         if (Environment.GetCommandLineArgs().Contains(AppUpdates.UpdatedSwitch, StringComparer.OrdinalIgnoreCase))
         {
-            App.Window?.ShowSuccess(L.F("Updated to {0} {1}.", AppInfo.Name, AppUpdates.Current.ToString(3)));
+            App.Window?.ShowSuccess(L.F("Updated to {0} {1}.", AppInfo.Name, AppUpdates.FriendlyVersion));
             _ = Task.Run(async () => { await Task.Delay(5000); AppUpdates.CleanUp(); });
         }
         if (!AppState.Settings.CheckAppUpdates) return;
@@ -68,7 +68,7 @@ static class AppUpdater
         body.Children.Add(new TextBlock
         {
             Text = L.F("{0} {1} is out (you have {2}). Update now? The app closes for a moment and opens again by itself; your games, settings and accounts stay as they are.",
-                AppInfo.Name, release.Version.ToString(3), AppUpdates.Current.ToString(3)),
+                AppInfo.Name, release.Version.ToString(3), AppUpdates.FriendlyVersion),
             TextWrapping = TextWrapping.Wrap,
         });
         body.Children.Add(new ScrollViewer { Content = notes, MaxHeight = 260 });

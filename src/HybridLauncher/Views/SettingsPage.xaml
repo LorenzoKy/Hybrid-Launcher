@@ -725,16 +725,22 @@
             <Border Style="{StaticResource RowStyle}">
                 <StackPanel VerticalAlignment="Center" Spacing="4">
                     <TextBlock x:Name="AboutText" Style="{StaticResource RowHeader}" />
-                    <TextBlock Style="{StaticResource RowDescription}"
-                               Text="OptiScaler, OptiPatcher and their setup script belong to the OptiScaler team; Hybrid Launcher downloads them from GitHub and runs them unchanged." />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="OptiScaler, OptiPatcher and their setup script belong to the OptiScaler team; Hybrid Launcher downloads them from GitHub and runs them unchanged. OptiScaler forks belong to their own authors and install through their own setup script." />
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <HyperlinkButton Content="OptiScaler on GitHub" NavigateUri="https://github.com/optiscaler/OptiScaler" Padding="0" />
                         <HyperlinkButton Content="OptiPatcher" NavigateUri="https://github.com/optiscaler/OptiPatcher" Padding="0" />
                         <HyperlinkButton Content="ReShade" NavigateUri="https://reshade.me" Padding="0" />
                         <HyperlinkButton Content="RenoDX" NavigateUri="https://github.com/clshortfuse/renodx" Padding="0" />
+                        <HyperlinkButton Content="Luma" NavigateUri="https://github.com/Filoppi/Luma-Framework" Padding="0" />
+                        <HyperlinkButton Content="Ultra+" NavigateUri="https://theultraplace.com/" Padding="0" />
                     </StackPanel>
-                    <TextBlock Style="{StaticResource RowDescription}"
-                               Text="ReShade installers come from reshade.me and run unchanged; RenoDX mods come from their authors' GitHub pages or, for Nexus Mods files, from your own download." />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="ReShade installers come from reshade.me and run unchanged; RenoDX mods come from their authors' GitHub pages or, for Nexus Mods files, from your own download; Luma comes from Filoppi's Luma Framework releases; Ultra+ comes from The Ultra Place. NVIDIA's DLSS files are never shipped: you pick your own copy." />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="Game information comes from PCGamingWiki, HowLongToBeat, Metacritic and the stores' public pages; SteamDB, Nexus Mods and the OptiScaler wiki are links only." />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="Not affiliated with or endorsed by any of them, or by Valve, Epic Games, GOG, Microsoft, Sony Interactive Entertainment, AMD, NVIDIA or Intel. The PlayStation, Xbox, Steam, GOG and Epic Games &quot;Like&quot; pop-up looks are Hybrid Launcher's own drawings inspired by them, with its own logo and trophies. All trademarks belong to their owners." />
                 </StackPanel>
             </Border>
             </StackPanel>

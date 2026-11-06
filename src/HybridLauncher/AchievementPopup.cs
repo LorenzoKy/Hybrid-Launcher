@@ -959,13 +959,17 @@ public static class AchievementPopup
     /// The pop-up's sound: with "File", your .wav for the achievement's rarity tier (bronze, silver, gold, platinum), else your .wav
     /// for every achievement; otherwise (or when the file is gone) the Windows notification sound. No sounds ship with the app.
     /// </summary>
+    /// <param name="tier">Bronze, Silver, Gold or Platinum; <see cref="EveryTier"/> for the sound of every achievement (the
+    /// fallback file alone, never a tier's).</param>
     static void PlaySound(PopupSettings o, string tier)
     {
         try
         {
             LastSound = null;
             if (o.Sound == "None") return;
-            string? file = o.Sound == "File" ? SoundFor(o, tier) : null;
+            string? file = o.Sound != "File" ? null
+                : tier == EveryTier ? (o.SoundFile is { Length: > 0 } all && File.Exists(all) ? all : null)
+                : SoundFor(o, tier);
             file ??= WindowsNotificationSound();
             LastSound = file ?? "Notification.Default";
             if (file is not null) PlayAt(file, Math.Clamp(o.Volume, 0, 1));
@@ -984,6 +988,9 @@ public static class AchievementPopup
 
     /// <summary>Settings → Achievements → Sounds: the sound an achievement of <paramref name="tier"/> plays, at the chosen volume.</summary>
     public static void PlaySample(string tier = "Gold") => PlaySound(AppState.Settings.Popup, tier);
+
+    /// <summary>Not a tier: the "Every achievement" sound in Settings → Sounds (it used to play gold's file when gold had one).</summary>
+    public const string EveryTier = "Every";
 
     /// <summary>The file of Windows' notification sound (the current sound scheme), so it can be played at the chosen volume.</summary>
     static string? WindowsNotificationSound()

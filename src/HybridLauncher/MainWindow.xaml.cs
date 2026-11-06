@@ -2321,6 +2321,12 @@ public sealed partial class MainWindow : Window
                     AchievementPopup.PlaySample(t);
                     Expect(want, t);
                 }, 1800);
+            // Settings → Sounds → Every achievement → play: its own file even when gold has one (it played gold's up to 1.3.1).
+            await step("sounds: every achievement preview", () =>
+            {
+                AchievementPopup.PlaySample(AchievementPopup.EveryTier);
+                Expect(F("ps4-trophy.wav"), "the Every achievement preview");
+            }, 1300);
             await step("sounds: every achievement", () =>
             {
                 o.TierSounds.Remove("Silver");

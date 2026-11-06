@@ -53,7 +53,7 @@ public sealed partial class SettingsPage : Page
         LoadControls();
 
         DataText.Text = AppInfo.DataRoot;
-        AboutText.Text = $"{AppInfo.Name} {AppUpdates.DisplayVersion}" + (Elevation.IsAdmin ? "  " + L.T("(running as administrator)") : "");
+        AboutText.Text = $"{AppInfo.Name} {AppUpdates.FriendlyVersion}" + (Elevation.IsAdmin ? "  " + L.T("(running as administrator)") : "");
         Fill();
         FillTabs();
         ShowFeatures();
@@ -588,7 +588,7 @@ public sealed partial class SettingsPage : Page
         }
         else
         {
-            UpdateStatusText.Text = L.F("You have {0}. New versions come from GitHub and install with one click.", AppUpdates.Current.ToString(3));
+            UpdateStatusText.Text = L.F("You have {0}. New versions come from GitHub and install with one click.", AppUpdates.FriendlyVersion);
             UpdateButton.Content = L.T("Check for updates");
             UpdateButton.ClearValue(StyleProperty);
         }
@@ -608,7 +608,7 @@ public sealed partial class SettingsPage : Page
             var found = await AppUpdater.CheckAsync(quiet: false);
             ShowUpdateState();
             if (found is not null) await AppUpdater.OfferAsync(XamlRoot, found);
-            else UpdateStatusText.Text = L.F("You have the newest version ({0}).", AppUpdates.Current.ToString(3));
+            else UpdateStatusText.Text = L.F("You have the newest version ({0}).", AppUpdates.FriendlyVersion);
         }
         finally { UpdateButton.IsEnabled = true; }
     }

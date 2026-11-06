@@ -44,7 +44,14 @@ public static class AppUpdates
     }
 
     /// <summary>A release candidate (or other pre-release): the final release of the same number is still an update for it.</summary>
-    public static bool IsPrerelease => DisplayVersion.Contains('-');
+    public static bool IsPrerelease => System.Text.RegularExpressions.Regex.IsMatch(DisplayVersion, @"-(rc|alpha|beta|preview)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The version as people read it: "1.3.1 Hotfix 1" for a hotfix build (named "1.3.1-Hotfix-1", numbered 1.3.2 for the
+    /// updater), otherwise <see cref="DisplayVersion"/>. A hotfix is not a pre-release (<see cref="IsPrerelease"/>): only rc,
+    /// alpha, beta and preview builds are, so a hotfix never offers its own release to itself.
+    /// </summary>
+    public static string FriendlyVersion => DisplayVersion.Replace("-Hotfix-", " Hotfix ", StringComparison.OrdinalIgnoreCase);
 
     static string Arch => RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
 

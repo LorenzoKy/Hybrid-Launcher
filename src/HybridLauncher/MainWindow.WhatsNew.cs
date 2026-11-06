@@ -26,6 +26,19 @@ public sealed partial class MainWindow
         ],
     };
 
+    /// <summary>
+    /// Hotfixes: the version number (what the updater compares) → the version it fixes, and its own fixes. From that version
+    /// only the fixes show; from an older one the fixed version's highlights come first.
+    /// </summary>
+    static readonly Dictionary<string, (string Of, (string Glyph, string Text)[] Fixes)> Hotfixes = new()
+    {
+        ["1.3.2"] = ("1.3.1",
+        [
+            ("", "Settings → Sounds: the Every achievement sound plays its own file again, not gold's."),
+            ("", "Settings → About, the README and the site credit every project Hybrid Launcher works with."),
+        ]),
+    };
+
     bool _whatsNewQueued;
     ContentDialog? _whatsNew;
 
@@ -56,8 +69,17 @@ public sealed partial class MainWindow
             Text = L.T("Here is what's new in this version."),
             FontSize = 15, LineHeight = 22, TextWrapping = TextWrapping.Wrap, Opacity = 0.9,
         });
-        if (Highlights.TryGetValue(version, out var items))
+        // A hotfix: its fixes, after the fixed version's highlights when this is the first time on that version.
+        var shown = new List<(string Glyph, string Text)>();
+        if (Hotfixes.TryGetValue(version, out var hotfix))
         {
+            if (AppState.Settings.LastVersionSeen != hotfix.Of && Highlights.TryGetValue(hotfix.Of, out var main)) shown.AddRange(main);
+            shown.AddRange(hotfix.Fixes);
+        }
+        else if (Highlights.TryGetValue(version, out var own)) shown.AddRange(own);
+        if (shown.Count > 0)
+        {
+            var items = shown;
             var list = new StackPanel { Spacing = 10 };
             var tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0xE0, 0x14, 0x2B));
             foreach (var (glyph, text) in items)
@@ -90,7 +112,7 @@ public sealed partial class MainWindow
         {
             XamlRoot = root,
             RequestedTheme = RootGrid.ActualTheme,
-            Title = L.F("Welcome to {0} {1}", AppInfo.Name, version),
+            Title = L.F("Welcome to {0} {1}", AppInfo.Name, AppUpdates.FriendlyVersion),
             Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
             CloseButtonText = L.T("Let's go"),
             DefaultButton = ContentDialogButton.Close,

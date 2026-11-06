@@ -73,7 +73,7 @@ public static class AchievementSoundsView
         host.Children.Add(PresetRow(host, o, () => Save(again: true)));
 
         host.Children.Add(FileRow(L.T("Every achievement"), L.T("Plays for a rarity that has no sound of its own."), o.SoundFile, L.T("Not set: the Windows sound plays."),
-            play: () => AchievementPopup.PlaySample("Gold"),
+            play: () => AchievementPopup.PlaySample(AchievementPopup.EveryTier),
             set: path => { o.SoundFile = path; Save(again: true); }, dim));
         foreach (var (tier, name, range) in Tiers)
         {
