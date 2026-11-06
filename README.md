@@ -178,33 +178,11 @@ Thank you.
 
 ## Third-party software
 
-**I make and own only Hybrid Launcher.** Everything it downloads, runs, reads or links to (mods, tools, stores, services,
-fonts and libraries) belongs to its own authors and owners, under their own licenses and terms. None of them is affiliated
-with this project or endorses it, and all trademarks belong to their owners. The console- and store-like achievement looks
-are Hybrid Launcher's own drawings, not affiliated with the companies behind those consoles and stores.
-
-<details>
-<summary><b>Full list: who makes what</b></summary>
-
-| Software or service | Owner | How the app uses it |
-|---|---|---|
-| [OptiScaler](https://github.com/optiscaler/OptiScaler), [OptiPatcher](https://github.com/optiscaler/OptiPatcher) | The OptiScaler team | Downloaded from GitHub and installed through OptiScaler's own setup script, unchanged |
-| OptiScaler forks: [OptiScaler Venom](https://github.com/LorenzoKy/Optiscaler-Venom), [F5 DLSS NR Multipass](https://github.com/janblade/OptiScaler-F5-DLSSNR-Multipass), [DLSS NR Multipass MFG](https://github.com/y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG), [NR PreSR MFG](https://github.com/ShyVortex/OptiScaler-NR-PreSR-MFG), [FSR Ray Regeneration](https://github.com/ZachHembree/OptiScaler) and any you add | LorenzoKy, janblade, y4my4my4m, ShyVortex, ZachHembree and their authors | Downloaded from their GitHub releases and installed through their own setup script, unchanged |
-| [ReShade](https://reshade.me) | crosire | Official installers downloaded from reshade.me and run unchanged |
-| [RenoDX](https://github.com/clshortfuse/renodx) | clshortfuse and the mod authors | Mods downloaded from their releases or picked up from your Downloads folder |
-| [Luma](https://github.com/Filoppi/Luma-Framework) | Filoppi and the mod authors | Mods downloaded from their releases |
-| [Ultra+](https://theultraplace.com/) | The Ultra Place | Versions, add-ons and settings downloaded from The Ultra Place *(experimental support)* |
-| NVIDIA DLSS files (`nvngx_dlssnr.dll` and others) | NVIDIA | Never shipped: you pick your own copy, which is copied into the games that need it |
-| [PCGamingWiki](https://www.pcgamingwiki.com), [HowLongToBeat](https://howlongtobeat.com), [Metacritic](https://www.metacritic.com), store pages | Their owners | Game information shown on the game pages |
-| [SteamDB](https://steamdb.info), [Nexus Mods](https://www.nexusmods.com), the OptiScaler wiki | Their owners | Links only; their logos are their owners' trademarks |
-| Steam, Epic Games, GOG, Xbox / Game Pass | Valve, Epic Games, CD PROJEKT, Microsoft | Libraries and achievements read from this PC and their public services; sign-in and downloads only when you sign in |
-| PlayStation, Xbox, Steam, GOG and Epic Games "Like" pop-up looks | Hybrid Launcher | Hybrid Launcher's own drawings inspired by those consoles and stores, with its own logo and trophies; no sounds or artwork of theirs are included |
-| OneDrive, MEGA, Google Drive | Microsoft, MEGA Limited, Google | Cloud saves, only when you turn them on (Google Drive through its folder on your PC) |
-| GitHub | GitHub, Inc. | Releases of the app and of the mods; optional sign-in to lift GitHub's request limit |
-| Ko-fi | Ko-fi Labs | Link for support only |
-| SteamKit2 (LGPL), MegaApiClient (MIT), Oxanium font (SIL OFL) and other libraries | Their authors | Built into the app under their licenses |
-
-</details>
+**I make and own only Hybrid Launcher.** Everything it downloads, installs, runs, reads or links to (mods, tools, games,
+stores, services, fonts and libraries) belongs to its own authors and owners, under their own licenses and terms, and each
+one's problems belong to its own project. None of them is affiliated with Hybrid Launcher or endorses it, and all trademarks
+belong to their owners. Looks inspired by consoles or stores are Hybrid Launcher's own drawings and are not affiliated with
+the companies behind them.
 
 Signing in to a store with a third-party app may be against its terms in some cases: the choice is yours.
 
