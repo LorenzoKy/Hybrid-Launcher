@@ -178,11 +178,13 @@ Thank you.
 
 ## Third-party software
 
-Hybrid Launcher downloads, runs or links to software made by other people. **None of them is affiliated with this project
-or endorses it**; each belongs to its authors under its own license, and its problems belong to its own project.
+**I make and own only Hybrid Launcher.** Everything it downloads, runs, reads or links to (mods, tools, stores, services,
+fonts and libraries) belongs to its own authors and owners, under their own licenses and terms. None of them is affiliated
+with this project or endorses it, and all trademarks belong to their owners. The console- and store-like achievement looks
+are Hybrid Launcher's own drawings, not affiliated with the companies behind those consoles and stores.
 
 <details>
-<summary><b>Who makes what</b></summary>
+<summary><b>Full list: who makes what</b></summary>
 
 | Software or service | Owner | How the app uses it |
 |---|---|---|
@@ -204,8 +206,7 @@ or endorses it**; each belongs to its authors under its own license, and its pro
 
 </details>
 
-Not affiliated with Valve, Epic Games, GOG, Microsoft, Sony Interactive Entertainment, AMD, NVIDIA, Intel or any project
-above, and not endorsed by them; all trademarks belong to their owners. Signing in to a store with a third-party app may be against its terms in some cases: the choice is yours.
+Signing in to a store with a third-party app may be against its terms in some cases: the choice is yours.
 
 ## License
 
