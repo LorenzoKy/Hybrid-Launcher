@@ -17,8 +17,9 @@ just earned; lets you search every setting; keeps your play time; and finds Epic
   PS4 top left, Xbox bottom centre…). Top centre and Bottom centre can be picked too.
 - **Preview with a real game.** Settings → Achievements shows one of a game's real achievements exactly like an unlock would
   look. Nothing is unlocked or written.
-- **More sources.** Local achievements (Settings → Achievements → *Sources*, on by default) are read, GOG achievements are read while a GOG game runs (signed in),
-  and other tools can show an unlock through the app's feed folder (Epic, Xbox or anything else).
+- **More sources.** GOG achievements are read while a GOG game runs (signed in), and other tools can show an unlock through
+  the app's feed folder (Epic, Xbox or anything else). Local achievements have their own switch in Settings → Achievements →
+  *Sources* (on by default).
 - **Achievements tab in Settings**, with its own *Restore defaults*.
 - **Platinum.** The game's own achievement for unlocking all the others (most games have one, like *Tireless — Unlock all
   achievements*) shows as the platinum: its own name and picture, Hybrid Launcher's platinum trophy in platinum and diamond
@@ -62,25 +63,18 @@ just earned; lets you search every setting; keeps your play time; and finds Epic
 - **Settings cut off on the right at 1080p** ([#5](https://github.com/LorenzoKy/Hybrid-Launcher/issues/5)). In a maximized
   1080p window some Settings tabs (About the most, Notifications and Storage a little) ran past the right edge: the page's
   column was placed by the width its content wanted, then stretched to its full width from there. It now always takes the
-  page's width (up to its maximum), centred. Every page and tab is checked at 1080p by the self-test now. A maximized window
-  left at its old size after a resolution change also fits the screen again by itself. Thanks to bovanik on Discord and
-  Kindbad on GitHub for the reports.
-- The Hybrid Launcher pop-up (and the Steam, GOG and Epic looks) has a fixed size like the other looks: it no longer grows
-  with a long description, which could push it past its own edge or the edge of the screen.
-- PlayStation 4 looks: the trophy sits a little lower, clear of the letters that reach below the line (p, g, y).
-- A game's *Achievements* tab: the date and rarity under each achievement no longer end mid-word on a narrow tile, they go on
-  two lines. PCGamingWiki tables keep the rounded ends of their shaded rows.
+  page's width (up to its maximum), centred. A maximized window left at its old size after a resolution change also fits
+  the screen again by itself. Thanks to bovanik on Discord and Kindbad on GitHub for the reports.
+- The achievement pop-up has a fixed size: it no longer grows with a long description, which could push it past the edge of
+  the screen.
 - The achievement's picture shows from the first frame: pictures are fetched when a game starts, and a pop-up opens with
   its picture already loaded instead of downloading it while on screen.
-- Sharper pop-ups: the trophies and the Hybrid Launcher mark are drawn at their real size (they were drawn small and
-  stretched), and the PlayStation looks sit on whole pixels.
-- Pop-ups that slide in from the bottom of the screen (Steam, Xbox) could show tearing: the window stays still now and the
-  pop-up moves inside it.
+- A game's *Achievements* tab: the date and rarity under each achievement no longer end mid-word on a narrow tile, they go on
+  two lines. PCGamingWiki tables keep the rounded ends of their shaded rows.
 - The version list of a game's OptiScaler tab showed a new build only after a restart, even after the notification about it.
   It now updates as soon as the new build is found, with no extra requests.
 - A test build or a second copy of Hybrid Launcher could take over *Start with Windows*, so Windows started that copy at
   sign-in instead of yours. Only the copy that owns the entry rewrites it now, and the switch shows what Windows will do.
-- The pop-up no longer leaves a dark box or trail while it moves or fades, and it no longer crashes the app when it opens.
 
 ## 1.3.0 — 2026-11-04 · Forks, Ultra+ (experimental) and update notifications
 
