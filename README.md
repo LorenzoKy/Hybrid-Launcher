@@ -85,6 +85,9 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md
 - **Achievement pop-ups** that look like a console's or a store's (PlayStation 5, PlayStation 4, Xbox, Steam, GOG, Epic, all
   *Like* looks drawn by Hybrid Launcher) or your own: bronze, silver or gold by rarity, the game's own platinum, your own sounds
   per tier, a preview with a real game. Steam, local and GOG achievements are read.
+- **Local achievements**: games that keep their achievements in save files on this PC show them on the game page and
+  unlock them with the same pop-ups as Steam and GOG. Cloud saves carry them along with the saves. On by default, in
+  Settings → Achievements → *Sources*.
 - **Controller**: every button can be given another action, and the optional **Home button** (Xbox / PS) brings Hybrid
   Launcher forward from a game; pressed on an achievement pop-up, it opens that achievement, as a console does.
 - **Quick access** shortcuts per game, **My PC** with your hardware and driver upscaler versions, tray mode (the window steps aside
