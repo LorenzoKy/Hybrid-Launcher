@@ -76,6 +76,8 @@ just earned; lets you search every setting; keeps your play time; and finds Epic
 - A test build or a second copy of Hybrid Launcher could take over *Start with Windows*, so Windows started that copy at
   sign-in instead of yours. Only the copy that owns the entry rewrites it now, and the switch shows what Windows will do.
 
+💬 **[Join the Discord](https://discord.com/invite/yjXsQehpaR) for more**: news, previews of what comes next, and help.
+
 ## 1.3.0 — 2026-11-04 · Forks, Ultra+ (experimental) and update notifications
 
 **Hybrid Launcher 1.3.0** installs OptiScaler forks and unofficial builds, manages Ultra+ for Unreal Engine games (experimental), shows at a
