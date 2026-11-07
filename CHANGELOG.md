@@ -208,7 +208,8 @@ few seconds after it starts.
 - **Remove the custom folder.** Settings → Cloud saves → *A folder of your choice* has a *Remove* button: the folder stops
   being used and is forgotten (the saves already in it stay there).
 - **Errors say what to check.** Every red message now has a *Possible causes* line under it (no connection, a file in use, a
-  disconnected drive, a full disk…).
+  disconnected drive, a full disk…) and a *Troubleshooting* link to the matching section of the new
+  [troubleshooting guide](docs/troubleshooting.md).
 - **Quieter cloud saves.** No more green message after every upload: the game's Cloud button says *Synced*. A message shows
   only when something went wrong, in red, and says which cloud missed the saves (for example *in OneDrive but not in MEGA
   yet*) and why.
