@@ -1266,7 +1266,6 @@ switch (cmd)
             Check(Troubleshoot.Cause(new TimeoutException()) is { } t && t.Contains("internet"), "a timeout points at the connection");
             Check(Troubleshoot.Cause(new IOException("x", unchecked((int)0x80070020))) is { } u && u.Contains("using the file"), "a sharing violation points at a program holding the file");
             Check(Troubleshoot.Cause("Access to the path 'saves' is denied.") is { } d && d.Contains("in use or protected"), "access denied, from the text alone");
-            Check(Troubleshoot.Link("Cloud saves", "x").EndsWith("#cloud-saves") && Troubleshoot.Link("The game did not start", "x").EndsWith("#a-game-does-not-start"), "errors link to their troubleshooting section");
             // The folder takes the new name over an earlier one.
             var old = Directory.CreateDirectory(Path.Combine(root, "c", "Hybrid Game Launcher Saves", key)).FullName;
             File.WriteAllText(Path.Combine(old, "manifest.json"), "{}");

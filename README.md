@@ -26,7 +26,7 @@
 
 <div align="center">
 
-**🧭 Jump to:** [🎮 What it is](#what-is-hybrid-launcher) · [📦 Quick start](#quick-start) · [✨ Features](#features) · [❓ FAQ](#faq) · [📚 Docs](#documentation) · [🐞 Report a bug](#reporting-bugs) · [☕ Support](#support-the-project) · [📜 License](#license) · [⚠️ Disclaimer](#disclaimer)
+**🧭 Jump to:** [🎮 What it is](#what-is-hybrid-launcher) · [📦 Quick start](#quick-start) · [✨ Features](#features) · [❓ FAQ](#faq) · [🔒 Privacy](#privacy) · [🐞 Report a bug](#reporting-bugs) · [☕ Support](#support-the-project) · [📜 License](#license) · [⚠️ Disclaimer](#disclaimer)
 
 </div>
 
@@ -53,7 +53,7 @@ in one window, for several stores at once.
 3. **Run** `HybridLauncher.exe`, choose the features you want, then pick a game and install a mod from its tabs.
 
 Windows 11 (or an up-to-date Windows 10), 64-bit. Nothing to install: the runtime ships in the `app` folder, settings live
-in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md) after asking once.
+in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once.
 
 ## Features
 
@@ -107,8 +107,6 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app [updates itself](docs/updates.md
   <img src="site/assets/shots/popups.webp" width="100%" alt="Achievement pop-ups in Hybrid Launcher's looks: its own card, Steam-, GOG- and Epic-like cards, Minimal, PlayStation 5-, PlayStation 4- (white and black) and Xbox-like, and a game's platinum" />
 </p>
 
-Everything is explained in the [user guide](docs/user-guide.md).
-
 ## FAQ
 
 <details>
@@ -133,30 +131,25 @@ They can, in games and services that forbid them. Never use mods in online or co
 <details>
 <summary><b>Can I build it, change it or fork it?</b></summary>
 
-Yes, it is GPL v3: see the [license](#license) and [docs/development.md](docs/development.md).
+Yes, it is GPL v3: see the [license](#license).
 </details>
-
-More in the [FAQ](docs/faq.md).
 
 ## Troubleshooting
 
-Every error in the app is shown in red with a **Possible causes** line under it and a **Troubleshooting** link to the
-right section of the [troubleshooting guide](docs/troubleshooting.md). The usual ones:
+Every error in the app is shown in red with a **Possible causes** line under it. The usual ones:
 
 | Problem | First thing to check |
 |---|---|
-| Cloud saves: *in OneDrive but not in MEGA yet* | One cloud missed this copy (offline, or MEGA's sign-in ended); it catches up at the next sync. [More](docs/troubleshooting.md#cloud-saves) |
-| Cloud button never says *Synced* | Press **Sync now** from the game's Cloud button; sign in to MEGA again if it asks. [More](docs/troubleshooting.md#cloud-saves) |
-| *Start with Windows* does nothing | It starts in the notification area (look under the arrow by the clock); check it is on in Windows' **Settings → Apps → Startup**. [More](docs/troubleshooting.md#start-with-windows) |
-| *Access denied* / *file in use* | Close the game and its launcher; let OneDrive or the antivirus finish with the folder. [More](docs/troubleshooting.md#common-windows-errors) |
-| OptiScaler does not show up in the game | Try another dll name (dxgi, winmm, version…) in the setup options. [More](docs/troubleshooting.md#mods-optiscaler-and-reshade) |
-| A game does not start | Is it still running? Is the right exe picked (gear beside Play → *Change game exe*)? [More](docs/troubleshooting.md#a-game-does-not-start) |
+| Cloud saves: *in OneDrive but not in MEGA yet* | One cloud missed this copy (offline, or MEGA's sign-in ended); it catches up at the next sync. |
+| Cloud button never says *Synced* | Press **Sync now** from the game's Cloud button; sign in to MEGA again if it asks. |
+| *Start with Windows* does nothing | It starts in the notification area (look under the arrow by the clock); check it is on in Windows' **Settings → Apps → Startup**. |
+| *Access denied* / *file in use* | Close the game and its launcher; let OneDrive or the antivirus finish with the folder. |
+| OptiScaler does not show up in the game | Try another dll name (dxgi, winmm, version…) in the setup options. |
+| A game does not start | Is it still running? Is the right exe picked (gear beside Play → *Change game exe*)? |
 
-## Documentation
+## Privacy
 
-[Getting started](docs/getting-started.md) · [User guide](docs/user-guide.md) · [Cloud saves](docs/cloud-saves.md) ·
-[Updates](docs/updates.md) · [Privacy and data](docs/privacy.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md) ·
-[Changelog](CHANGELOG.md) · [For developers](docs/development.md)
+What the app stores and sends: [Privacy and data](docs/privacy.md).
 
 ## Reporting bugs
 
@@ -170,13 +163,13 @@ the log (with your user name, PC name and e-mails taken out) and nothing is sent
 `%LOCALAPPDATA%\HybridLauncher\logs`.
 
 Collaborations and business enquiries: [lorenzoillumino@gmail.com](mailto:lorenzoillumino@gmail.com) or **LorenzoKy** on
-Discord ([more](SUPPORT.md)).
+Discord.
 
 ## Support the project
 
 Hybrid Launcher is **free**. For now it is funded **only out of my own pocket, and those funds are limited**: there is
 **no guarantee it will keep going**. Your support could make that possible: [Ko-fi](https://ko-fi.com/lorenzoky) or the
-**Sponsor** button of this repository. Contributors and maintainers are welcome too ([CONTRIBUTING.md](CONTRIBUTING.md)).
+**Sponsor** button of this repository. Contributors and maintainers are welcome too.
 Thank you.
 
 ## Third-party software

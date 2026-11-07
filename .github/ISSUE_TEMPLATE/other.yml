@@ -1,11 +1,6 @@
 name: Something else
 description: Feedback, a question about the project, or anything that is not a bug or a feature idea.
 body:
-  - type: markdown
-    attributes:
-      value: |
-        For "how do I…" questions, the [user guide](https://github.com/LorenzoKy/Hybrid-Launcher/blob/main/docs/user-guide.md)
-        often has the answer already.
   - type: textarea
     id: message
     attributes:

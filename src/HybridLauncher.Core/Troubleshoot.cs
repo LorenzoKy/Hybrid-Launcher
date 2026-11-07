@@ -5,13 +5,11 @@ using System.Net.Sockets;
 namespace HybridLauncher.Core;
 
 /// <summary>
-/// What an error most likely means, for the line under an error message ("Possible causes: …"), and the section of
-/// docs/troubleshooting.md that explains it further. Read from the exception's type, its HRESULT and its (English) text.
+/// What an error most likely means, for the line under an error message ("Possible causes: …"). Read from the exception's
+/// type, its HRESULT and its (English) text.
 /// </summary>
 public static class Troubleshoot
 {
-    public const string Guide = $"https://github.com/{AppInfo.Repository}/blob/main/docs/troubleshooting.md";
-
     /// <summary>The likely cause of <paramref name="ex"/> (or of one inside it), or null when nothing useful can be said.</summary>
     public static string? Cause(Exception ex)
     {
@@ -48,22 +46,6 @@ public static class Troubleshoot
         if (Has("could not find a part of the path", "could not find file", "does not exist")) return Missing;
         if (Has("rate limit", "too many requests")) return L.T("Possible causes: the service limits how often it can be asked (GitHub allows 60 checks an hour). Wait a while and try again.");
         return null;
-    }
-
-    /// <summary>The section of the troubleshooting guide for an error with this title and text.</summary>
-    public static string Link(string title, string message)
-    {
-        var text = title + " " + message;
-        bool Has(params string[] words) => words.Any(w => text.Contains(w, StringComparison.OrdinalIgnoreCase));
-        var anchor =
-            Has("cloud", "OneDrive", "MEGA", "Google Drive", "saves") ? "cloud-saves" :
-            Has("start with Windows") ? "start-with-windows" :
-            Has("did not start", "game exe", "launcher", "is running", "still running") ? "a-game-does-not-start" :
-            Has("OptiScaler", "ReShade", "Luma", "RenoDX", "dll", "mod", "preset", "plugin", "build", "install") ? "mods-optiscaler-and-reshade" :
-            Has("sign in", "download", "update") ? "downloads-sign-in-and-updates" :
-            Has("HDR", "brightness", "display", "colour", "color") ? "hdr-and-display" :
-            "";
-        return anchor.Length == 0 ? Guide : Guide + "#" + anchor;
     }
 
     static string Offline => L.T("Possible causes: no internet connection, or the service is slow or down. Check your connection and try again in a few minutes.");
