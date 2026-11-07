@@ -1889,7 +1889,6 @@ static class Italian
         ["Possible causes: the game, its launcher or a cloud app is still using the file. Close them and try again."] = "Possibili cause: il gioco, il suo launcher o un'app cloud stanno ancora usando il file. Chiudili e riprova.",
         ["Possible causes: the service limits how often it can be asked (GitHub allows 60 checks an hour). Wait a while and try again."] = "Possibili cause: il servizio limita le richieste (GitHub ne consente 60 all'ora). Aspetta un po' e riprova.",
         ["The saves of {0} are in {1} but not in {2} yet: {3} They go there at the next sync."] = "I salvataggi di {0} sono su {1} ma non ancora su {2}: {3} Ci arrivano alla prossima sincronizzazione.",
-        ["Troubleshooting"] = "Risoluzione dei problemi",
         ["not in {0} yet: {1}"] = "non ancora su {0}: {1}",
         ["Cloud saves go to {0} ({1}) now."] = "I salvataggi ora vanno su {0} ({1}).",
         ["Cloud saves go to {0} now."] = "I salvataggi ora vanno su {0}.",

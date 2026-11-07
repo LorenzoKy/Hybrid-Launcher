@@ -8,8 +8,7 @@ body:
       value: |
         Ideas are welcome. Updates come when there is free time, so a request that is concrete (what you want to do and
         how you picture it) is much easier to pick up than a general wish. One idea per issue, and a quick search of the
-        existing issues and the [user guide](https://github.com/LorenzoKy/Hybrid-Launcher/blob/main/docs/user-guide.md)
-        first, in case it is already there.
+        existing issues first, in case it is already there.
   - type: textarea
     id: idea
     attributes:

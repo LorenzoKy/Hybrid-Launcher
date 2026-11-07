@@ -2080,13 +2080,13 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// An error in red, with the likely cause on a line of its own (read from <paramref name="error"/> when there is one, else from
-    /// the text) and a Troubleshooting link to the guide's section for it.
+    /// the text).
     /// </summary>
     public void ShowError(string title, string message, Exception? error = null)
     {
         var cause = error is null ? Troubleshoot.Cause(message) : Troubleshoot.Cause(error);
         var text = cause is null || message.Contains(cause, StringComparison.Ordinal) ? message : message + "\n" + cause;
-        Toast(InfoBarSeverity.Error, title, text, TimeSpan.FromSeconds(cause is null ? 12 : 16), Troubleshoot.Link(title, message));
+        Toast(InfoBarSeverity.Error, title, text, TimeSpan.FromSeconds(cause is null ? 12 : 16));
     }
 
     public void ShowInfo(string message) => Toast(InfoBarSeverity.Informational, "", message, TimeSpan.FromSeconds(5));
@@ -2113,14 +2113,14 @@ public sealed partial class MainWindow : Window
 
     bool _offeredGitHub;
 
-    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration, string? help = null, ButtonBase? action = null)
+    void Toast(InfoBarSeverity severity, string title, string message, TimeSpan duration, ButtonBase? action = null)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             ToastBar.Severity = severity;
             ToastBar.Title = title;
             ToastBar.Message = message;
-            ToastBar.ActionButton = action ?? (help is null ? null : new HyperlinkButton { Content = L.T("Troubleshooting"), NavigateUri = new Uri(help) });
+            ToastBar.ActionButton = action;
             ToastBar.IsOpen = true;
             ToastHost.Visibility = Visibility.Visible;
             _toastTimer?.Stop();
