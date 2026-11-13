@@ -2,185 +2,101 @@
 
 ## 2.0.0 — 2026-11-13 · Dashboard, Mods tab and DLSS 5 (experimental)
 
-**Hybrid Launcher 2.0** is the biggest update so far, and everything below is new since 1.3.2. A game's page now opens on a
-**Dashboard** with its news and patch notes read in the app; the **Mods tab** shows every mod in the game folder, what loads
-it and what keeps it from working; **DLSS 5** neural rendering can be set up step by step on Radeon and NVIDIA cards (early
-and experimental); **DXVK, DXVK-gplasync and VKD3D-Proton** install in a click; Ubisoft Connect, EA app and Rockstar games are
-found; an **Auto tab** (experimental) sets up several mods together in one click; Xbox achievements, an unlock history,
-game pages that open at once and smooth scrolling come with a long list of reworks. OptiScaler is still the main focus. If you have 1.3.0 or later, the app offers this update by itself a few seconds after it starts.
+**Hybrid Launcher 2.0** is the biggest update so far! DLSS5, Auto tab, reworked Achievements managing and much more!
+Everything below is new since 1.3.2:
 
 ### ✨ New: the game page
 
-- **Dashboard.** A game's page now opens on the Dashboard, which takes the place of the Game tab. The main column holds the
-  trailer and screenshots, the Spotlight (the post Steam's library features for the game, or its newest major update,
-  with an outline of its notes), the game's news and updates, the
-  description, the wikis' notes, system requirements and Steam reviews. The news list opens on its three newest posts, the
-  Spotlight's included, and unfolds five at a time. The side cards show your activity (sessions,
-  unlocks, official posts), achievements (the latest unlock and your rarest, drawn large), the mods in the game's folder,
-  how long it takes to beat, controllers, details, Steam's review score and Metacritic, and languages. Each part folds;
-  the gear on the tab bar picks which parts show and their order. On a narrow window the side cards move under the main
-  column.
-- **News and patch notes inside the app.** Clicking a post opens it in Hybrid Launcher instead of the browser, in large,
-  well-spaced text: its sections as buttons that jump to them, every change as a list (nested lists stay indented),
-  pictures and videos, the build it shipped with and whether your copy has it. *Open on Steam* is one click away.
-- **Version history** of a Steam game, laid out like SteamDB's builds table: updates per year, a bar per month, and the
-  build installed on your PC.
-- **Custom cover** per game: Game settings → Library → Cover, any picture (2:3 fits best).
-- **Tab bar in two groups.** The Dashboard is a house icon at the head of the game's own tabs (Auto, Quick access, Notes);
-  the OptiScaler, Mods and info tabs follow after a thin line. Tabs can still be dragged into your own order, inside their
-  group.
+- **Dashboard.** A game's page now opens on the Dashboard (in place of the Game tab): trailer and screenshots, the
+  latest update with its notes, news, description, wiki notes, requirements and reviews, plus side cards for your
+  activity, achievements, mods, how long to beat, controllers, scores and languages. Every card folds, and the gear
+  picks which ones show and their order.
+- **News and patch notes inside the app**, in large, readable text with pictures, videos and the build each one shipped
+  with. *Open on Steam* is one click away.
+- **Version history** of a Steam game, like SteamDB's builds table, with the build installed on your PC.
+- **Custom cover** per game: Game settings → Library → Cover.
+- **Tab bar in two groups**: the Dashboard and the game's own tabs, then OptiScaler, Mods and the info tabs.
 
 ### ✨ New: mods
 
-- **Mods tab.** ReShade & Mods is now the Mods tab. It opens on a table of every mod in the game folder: its version, what
-  loads it (Windows in place of its own dll, OptiScaler, ReShade), whether Hybrid Launcher put it there and whether it
-  works. Each line opens its section or uninstalls the mod, and a click on it lists its files. Below come the sections of
-  each mod: ReShade, RenoDX, Luma, DLSS 5, DXVK and VKD3D-Proton.
-- **What is installed as what.** Each mod lists its files beside the game exe: which dll is which mod (dxgi.dll is
-  OptiScaler, d3d11.dll is DXVK…) with its version, what loads each one (OptiScaler for ReShade64.dll and its plugins,
-  ReShade for RenoDX and Luma add-ons), whether it actually loads, and whether Hybrid Launcher put it there. The upscaler
-  libraries the game ships, with their real versions, are listed under the table.
-- **Mod check.** The game's banner shows a warning when something keeps a mod from loading: OptiScaler, RenoDX, Luma or
-  DXVK files a game update or a file check removed or replaced, OptiScaler in the folder twice, ReShade loaded twice (as
-  its own dll and through OptiScaler), OptiScaler set to load a ReShade that is not there, RenoDX or Luma beside the normal
-  ReShade build (which skips add-ons) or with no ReShade at all, and DXVK without its own dxgi.dll. Each problem has a
-  button that fixes it or opens the right section; *Ignore* hides one until it changes.
-- **The page follows the folder.** Put a mod in or take one out by hand and the banner, the Mods table and the Dashboard
-  update by themselves.
-- **DLSS 5 (early, experimental).** A section of the Mods tab sets up DLSS 5 neural rendering, with the steps in order and
-  a button for each: what your graphics card and driver can run and which way is recommended, NVIDIA's model file (picked
-  once from your own copy, never downloaded or shipped), and the two community mods that run it:
-  - **mochizuki0323's DLSSNR-AMD** for Radeon RX 9000 (RX 7000 experimental). Hybrid Launcher downloads the package, runs
-    its own installer once to make the networks' weights from your model file, and puts it in a game either as a plugin of
-    OptiScaler or, in any 64-bit game without OptiScaler, through ReShade (DirectX 9 to 12 and Vulkan). Network, working
-    scale, HUD fix and its other settings are on the page; the game's own files are kept aside and put back on take-out.
-  - **janblade's F5 Multipass**, a fork of OptiScaler: NVIDIA NGX on RTX cards with the optional F5Low frame generation, or
-    its vendor-neutral DirectX 12 port on other cards.
-
-  A Logs page opens what each one writes when DLSS 5 does not start. These are young community projects and this support
-  is experimental: expect games where it does not work yet. Requests and contributions are welcome (see
-  [Reporting bugs](https://github.com/LorenzoKy/Hybrid-Launcher#reporting-bugs)).
-- **Auto tab (experimental).** It reads the game (64 or 32-bit, graphics API, your graphics card, HDR) and proposes the mods
-  that fit it: OptiScaler, DLSS 5, ReShade, RenoDX or Luma, Ultra+, DXVK or VKD3D-Proton. Tick what you want, pick each
-  mod's build in its card (OptiScaler's source and version, DLSS 5's method, ReShade standard or add-on), and *Install* puts
-  them in the right order with settings that work together: ReShade as ReShade64.dll loaded by OptiScaler, ReShade's add-on
-  build when RenoDX needs it, RenoDX or Luma but not both. *Add a build* imports an OptiScaler build from a folder, an archive
-  or a fork's GitHub address, as on the OptiScaler tab. A generic RenoDX or Luma mod (one made for every game of an engine,
-  not for this one) is marked *Generic* and is never ticked for you. Mods already in the game can be ticked to put another
-  build in their place or to uninstall them, and the plan follows the game folder as it changes. The tab is new and can pick
-  wrong for some games: installing each mod from its own tab is still the recommended way, and the RenoDX and Luma matches
-  are worth checking in their own sections first.
-- **DXVK, DXVK-gplasync and VKD3D-Proton.** Two sections of the Mods tab put these Vulkan translation layers in a game:
-  DXVK (or DXVK-gplasync) for Direct3D 8 to 11, VKD3D-Proton for Direct3D 12. Pick the release, and the right dlls for the
-  game's Direct3D version and bitness go next to its exe. Async, HDR and a frame cap are switches that write dxvk.conf.
-  Files of OptiScaler or ReShade are never replaced, and uninstall puts back every file the layer replaced.
-- **OptiScaler's file name changed without reinstalling.** Click the file name under the installed OptiScaler (dxgi.dll,
-  winmm.dll, version.dll…), or pick another one in Setup options: the file is renamed on the spot, a game file it had taken
-  the place of goes back, and any other OptiScaler copy under another name is taken out.
-- **Plugins & DLLs** have their own section in the OptiScaler tab, right under Install: ASI plugins and custom upscaler or
-  frame generation DLLs.
-- **OptiScaler settings in plain words.** Each setting says what it does in a sentence (the ini comment stays in the
-  tooltip), choices read like *Auto · FSR 2.2*, and the ini keys show only in *All sections* and in search.
-- **Old nightly builds** can be removed from Saved versions in one click: the newest three and any build a game uses stay.
+- **Mods tab** (was ReShade & Mods): a table of every mod in the game folder, with its version, what loads it, whether
+  it works and whether Hybrid Launcher put it there, then a section per mod (ReShade, RenoDX, Luma, DLSS 5, DXVK,
+  VKD3D-Proton).
+- **Mod check.** A warning on the game's banner when something keeps a mod from loading (a game update removed it,
+  ReShade loads twice, RenoDX without ReShade's add-on build, DXVK without its dxgi.dll…), with a button that fixes it.
+- **The page follows the folder**: a mod added or removed by hand shows at once.
+- **DLSS 5 (early, experimental)**, set up step by step: mochizuki0323's **DLSSNR-AMD** for Radeon RX 9000 (RX 7000
+  experimental), through OptiScaler or ReShade, and janblade's **F5 Multipass** for NVIDIA (or its vendor-neutral
+  DirectX 12 port). NVIDIA's model file is picked once from your own copy, never downloaded or shipped. Young community
+  projects: expect games where it does not work yet.
+- **Auto tab (experimental).** Reads the game and your PC, proposes the mods that fit, and installs the ones you tick
+  together, in the right order and with settings that work together. Generic RenoDX or Luma mods are flagged and never
+  ticked for you. Installing each mod from its own tab is still the recommended way.
+- **DXVK, DXVK-gplasync and VKD3D-Proton** in a click, with async, HDR and a frame cap as switches; uninstall puts the
+  game's files back.
+- **OptiScaler's file name** (dxgi.dll, winmm.dll…) changed without reinstalling.
+- **Plugins & DLLs** get their own section in the OptiScaler tab, and OptiScaler's settings are described in plain
+  words.
+- **Old nightly builds** removed from Saved versions in one click.
 
 ### ✨ New: library and stores
 
-- **Ubisoft Connect, EA app and Rockstar Games Launcher.** Their games are found and listed under their own group, started
-  through their launcher (Ubisoft and Rockstar) or their own exe (EA), and uninstalled through the launcher's own entry.
-  Settings → Game detection has a switch for each. Copies bought on Steam or Epic stay with Steam or Epic.
-- **A new Library layout.** On top, the whole library in one line (games, hours played, achievements); then the game you
-  played last on its own banner with its logo, when you played, hours and achievements (click anywhere on it to open the
-  game, or Play), and beside it the **latest achievements** you unlocked in any game, each opening its game on that
-  achievement. The covers follow under their own bar with the size slider and the filters. Last played first is the new
-  default order. *Auto* size makes the covers as big as they can be with every one of them in the window at once (big
-  libraries keep the usual size).
-- **Play and Stop on the covers.** A Play button comes up in the middle of the cover under the pointer (Stop while the game
-  runs), drawn as a raised button that lights up under the pointer and sized to the cover, and the whole cover grows a little
-  over its neighbours instead of zooming inside its frame.
-- **Tags on the covers**: play time, the mods installed (Opti, RS, RDX, U+), upscalers and achievements on each cover, or
-  the bare cover art (Settings or the Library's Filters).
-- **Drag and drop** a game's .exe onto the window to add it as a game, or a folder to add it as a games folder.
-- **Recent games in the taskbar.** Right-click Hybrid Launcher's taskbar button to start one of your last games.
+- **Ubisoft Connect, EA app and Rockstar Games Launcher** games are found, started and uninstalled through their
+  launcher.
+- **New Library layout**: your whole library in one line, the last played game on a large banner, your latest
+  achievements beside it, then the covers. *Auto* size fits every cover in the window.
+- **Play and Stop on the covers**, and covers that pop a little under the pointer.
+- **Tags on the covers**: play time, mods, upscalers and achievements, or the bare art.
+- **Drag and drop** a game's .exe or a games folder onto the window.
+- **Recent games in the taskbar** (right-click Hybrid Launcher's taskbar button).
 
 ### ✨ New: achievements
 
-- **Xbox and PC Game Pass achievements**, read from the Xbox app on this PC with no sign-in, or live with your Microsoft
-  account (signed in on Microsoft's own page): while an Xbox game runs its unlocks pop up like Steam's.
-- **Local achievements from every known place** on this PC, in the formats games keep them in, plus any folder you add.
-  Settings → Achievements → Sources shows every source as a tile with its own switch (Steam and GOG can now be turned off
-  too) and lists every folder read.
-- **On unlock:** a screenshot of the screen the game is on (with or without the pop-up), a short double rumble on the
-  controller, and progress pop-ups for achievements with steps (kill 100 enemies…).
-- **Unlock history:** every unlock Hybrid Launcher shows, with its date, game and screenshot, exported as CSV or JSON.
-- **Search** in a game's Achievements tab.
-- **PlayStation pop-up backgrounds.** Settings → Achievements → *PlayStation background*: *Original* (the default), *Light*,
-  *Dark*, *Trophy's metal* or *Colour picked above*.
+- **Xbox and PC Game Pass achievements**, with pop-ups like Steam's while the game runs.
+- **Local achievements from every known place** on this PC, plus folders you add. Settings → Achievements → Sources has
+  a switch per source (Steam and GOG included).
+- **On unlock**: an optional screenshot, a short controller rumble, and progress pop-ups for achievements with steps.
+- **Unlock history** with date, game and screenshot, exported as CSV or JSON.
+- **Search** in a game's Achievements tab, and **PlayStation pop-up backgrounds** (Original, Light, Dark, Trophy's metal
+  or your colour).
+
+### ⚡ Faster and smoother
+
+- **Game pages open at once**: the last ones you opened stay ready, and the next likely ones are prepared while the
+  window is idle.
+- **Smooth mouse-wheel scrolling** everywhere, and everything the app moves by itself runs in step with your display's
+  refresh rate (60, 120, 144 Hz or more).
+- **Quicker answers**: no more delay on the first click or scroll after a pause, and achievement pop-ups no longer come
+  up late or stutter while a game runs.
+- **Ready after the first start**: game art, store data, wikis and news are fetched in the background, so pages open
+  from the disk.
 
 ### ✨ New: look and feel
 
-- **Game pages open at once.** The pages of the last eight games you opened stay ready, as you left them: going back to one
-  shows it in the next frame instead of building it again. While you are not using the window, the games next to the open one
-  in the list and the ones you played last get their pages ready too, Mods tab included, so most games open at once even
-  the first time. The library no longer rebuilds its covers each time you come back to it, and the OptiScaler and Mods
-  tabs show with the click, their sections following one per frame. A minute after the window goes to the notification area, that
-  memory is given back.
-- **Smooth mouse-wheel scrolling.** The game page, the library, Downloads, My PC, Settings and the game list glide on the
-  mouse wheel instead of jumping: notches turned one after another blend into one movement, and the movement runs in
-  Windows' compositor, so it does not stop while a page is still loading. The distance per notch follows Windows' *lines to
-  scroll* setting; a touchpad, the scroll bar and the keyboard scroll as before.
-- **Vsync, always on.** Everything Hybrid Launcher moves by itself (the wheel scrolling, the controller's right stick, the
-  achievement pop-ups) moves once per refresh of your display, equally smooth at 60, 120, 144 Hz or more.
-- **Interface size** from 50 to 200% on top of Windows' display scale (below 100% is experimental), and **scroll bars**
-  shown (thinner in a small window) or hidden: Settings → Appearance.
-- **Shading** (Settings → Appearance): cards lit from above, a glow under the open tab, a sheen on the launch bar and
-  covers that lift. Off gives flat surfaces.
-- **A darker default look** with a painted window background and flat icons.
-- **Settings reorganised.** A side column at the window's left edge holds the title, the search through every tab and the
-  tabs as a list, with the open tab's sections under it; the open tab has its own heading and is centred in the window.
-- **Better settings search.** It also finds a setting with a typo, by common other words (*dark* finds the colour theme,
-  *gamepad* the controller settings) and, in Italian, by its English name. The words you typed are highlighted in the
-  results; the down arrow moves into them and Escape clears the search.
-- **Back to the top.** While a game's tab bar is pinned to the top of the page, a button with an arrow on its left goes back
-  up to the banner.
-- **Tool tabs centred.** The OptiScaler, Mods and Ultra+ tabs are centred on most of the window's width and grow with it, up
-  to a limit on very wide screens, instead of a row's name at one edge and its switch at the other. OptiScaler's install card is one block instead of
-  three numbered steps, and DLSS 5 shows what this game has first, then one card with each part's state and a single button
-  that does what is left.
-- **No tooltips over the folded game list.** With the list folded to its icons, resting on one no longer covers the page.
-- **Features page** (first start and Settings → Features) in two columns, with a truer preview of a game's page.
-- **Game page cache** (Settings): how much disk space covers, screenshots and store data may take, and a button to empty it.
-- **Ready after the first start.** The first time Hybrid Launcher starts, it fetches what every game's page shows (art,
-  store data, wikis, achievements, news) in the background, so pages open from the disk afterwards. Opening the Mods tab
-  draws its sections one after the other instead of all at once.
+- **Interface size** from 50 to 200%, **scroll bars** shown or hidden, and **Shading** (light from above, glows, lifted
+  covers): Settings → Appearance.
+- **A darker default look** with flat icons.
+- **Settings reorganised**: tabs and search in a side column. Search also finds settings with a typo or by other common
+  words.
+- **Back to the top** button while the tab bar is pinned.
+- **Tool tabs centred** (OptiScaler, Mods, Ultra+), with simpler install cards.
+- **Game page cache** size and a button to empty it (Settings).
+- **Features page** in two columns, with a truer preview.
+- **No tooltips over the folded game list.**
 
 ### 🐛 Fixes
 
-- **Achievement pop-ups late or halting while a game runs.** With a game in front Hybrid Launcher runs in Windows'
-  efficiency mode, and the pop-up came up to a few seconds late with its first frames stepping. It now leaves efficiency
-  mode as soon as an unlock is seen, keeps its frames at the display's rate and reads the picture and rarity ahead of time.
-- **Slow answer after a pause.** After a moment with nothing moving, the first turn of the wheel or a click on a game took
-  up to 0.2 seconds or more to show. While the mouse is over the window, it now answers at the next frame, and a game's
-  page shows in about 60 to 130 ms.
-- **Play button:** *Starting…*, *Download*, *Downloading*, *Stop* and *Closing…* are now set exactly like *Play*; longer
-  words were drawn smaller and looked squeezed. The button is wider and less tall-looking, with the icon and a larger word
-  together in its middle, and its corners are clean.
-- **Settings' search box took the focus** whenever a tab or a row was redrawn, and looked clicked. It now takes it only from
-  you (a click, Tab, the controller, Ctrl+F).
-- **Back from a game.** The game's exit is seen within a second, the window comes back in front (unless you are using
-  another app), and Steam games get the right *last played* date straight away.
+- **Play button**: every state (*Starting…*, *Download*, *Stop*…) now has Play's size and no longer looks squeezed.
+- **Settings' search box** no longer takes the focus by itself.
+- **Back from a game**: the window comes back in front and Steam's *last played* date is right straight away.
 
 ### 🎨 Changes
 
-- **Nvidia spoofing starts off for games OptiPatcher supports** (OptiScaler tab and Auto tab), until you set it yourself:
-  OptiPatcher already opens the upscaler options in those games.
-- **Setup options easier to read.** The OptiScaler tab's Setup options show their title and summary larger and brighter,
-  and a gold star beside OptiPatcher when it supports the game, which is why spoofing starts off there.
-- **A mod warning on the banner names every problem.** With more than one, its tooltip lists them all; a click still opens
-  the Mods tab's list with a fix for each.
-- **OptiScaler development builds** are named by their version line and build day, for example *v10 dev-nightly · 10 Nov*,
-  instead of the placeholder number they carry (10.0.0-dev). A build dropped over an install by hand is shown with its own
-  version.
-- **Settings → About:** the credits are one short note, the same as the README's.
+- **Nvidia spoofing starts off** for games OptiPatcher supports, until you set it yourself.
+- **Setup options easier to read**, with a gold star beside OptiPatcher when it supports the game.
+- **The mod warning on the banner names every problem.**
+- **OptiScaler development builds** are named by version line and day, e.g. *v10 dev-nightly · 10 Nov*.
+- **Settings → About**: the credits are one short note.
 
 ## 1.3.2 — 2026-11-06 · Mainly a hotfix for 1.3.1
 
