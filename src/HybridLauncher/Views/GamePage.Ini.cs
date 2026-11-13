@@ -18,7 +18,7 @@ namespace HybridLauncher.Views;
 /// it: a switch, a slider, segmented choices, a list or a text box, with its plain name, the ini key, the description
 /// from the file and a back-to-Auto button. Only the value changes in OptiScaler.ini.
 /// </summary>
-public sealed partial class GamePage
+public partial class GamePage
 {
     /// <summary>The essentials, by topic: a topic shows the keys this OptiScaler version has, and is left out when it has none.</summary>
     static readonly (string Title, string Glyph, string Hint, string[] Keys)[] EssentialGroups =
@@ -115,6 +115,43 @@ public sealed partial class GamePage
         ["OptiFG/InterpolationCount"] = "Frame generation ratio",
         ["DLSSG/InterpolationCount"] = "Frame generation ratio (DLSSG)",
         ["XeFG/InterpolationCount"] = "Frame generation ratio (XeFG)",
+    };
+
+    /// <summary>
+    /// Plain descriptions for the settings people change most, shown under them instead of the file's comment (which stays in
+    /// the tooltip): OptiScaler's own comments are written for its developers and often run a list of values into the sentence.
+    /// </summary>
+    static readonly Dictionary<string, string> PlainHints = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Upscalers/Dx12Upscaler"] = "The upscaler OptiScaler uses in DirectX 12 games.",
+        ["Upscalers/Dx11Upscaler"] = "The upscaler OptiScaler uses in DirectX 11 games. The ones marked “on DX12” run through a DirectX 12 bridge.",
+        ["Upscalers/VulkanUpscaler"] = "The upscaler OptiScaler uses in Vulkan games. The ones marked “on DX12” run through a DirectX 12 bridge.",
+        ["FSR/Fsr4Update"] = "Uses FSR 4 instead of FSR 3.1 when the graphics card supports it.",
+        ["OutputScaling/Enabled"] = "Renders above the screen's resolution and scales down, for a sharper picture at some cost.",
+        ["OutputScaling/Multiplier"] = "How far above the screen's resolution output scaling renders.",
+        ["UpscaleRatio/UpscaleRatioOverrideEnabled"] = "Uses the upscale ratio below instead of the game's quality preset.",
+        ["UpscaleRatio/UpscaleRatioOverrideValue"] = "Screen resolution divided by render resolution: 1.5 is Quality, 2 is Performance.",
+        ["FrameGen/Enabled"] = "Turns on OptiScaler's frame generation.",
+        ["FrameGen/FGInput"] = "Where frame generation takes its data from: the game's own frame generation, or the upscaler.",
+        ["FrameGen/FGOutput"] = "What makes the generated frames. FSR and XeSS frame generation need their dll next to OptiScaler.",
+        ["FrameGen/DrawUIOverFG"] = "Draws the game's UI over the generated frames. Needs a game that hands the UI over apart.",
+        ["Framerate/FramerateLimit"] = "Caps the frame rate (through Reflex when the game has it). 0 means no limit.",
+        ["Sharpness/OverrideSharpness"] = "Ignores the game's sharpness setting and uses the strength below.",
+        ["Sharpness/Sharpness"] = "How much OptiScaler sharpens the picture.",
+        ["CAS/Enabled"] = "AMD's RCAS sharpening, applied by OptiScaler after upscaling.",
+        ["CAS/MotionSharpnessEnabled"] = "Sharpens more while the camera moves, where upscaling blurs most.",
+        ["Spoofing/Dxgi"] = "Makes the game see an Nvidia card, so it offers DLSS on AMD and Intel.",
+        ["Spoofing/Vulkan"] = "The same for Vulkan games.",
+        ["Spoofing/StreamlineSpoofing"] = "Spoofs the card for Nvidia Streamline only, even with the switches above off.",
+        ["Spoofing/SpoofedGPUName"] = "The card name the game sees while spoofing.",
+        ["DLSSG/ForceDMFG"] = "Changes the frame generation ratio on the fly to reach a target frame rate. Needs an RTX 50 card or OptiScaler's own frame generation.",
+        ["DLSSG/InterpolationCount"] = "How many frames are generated for each real one.",
+        ["OptiFG/InterpolationCount"] = "How many frames are generated for each real one.",
+        ["XeFG/InterpolationCount"] = "How many frames are generated for each real one.",
+        ["Plugins/LoadAsiPlugins"] = "Loads the .asi files of the plugins folder (see Plugins & DLLs).",
+        ["Plugins/LoadReshade"] = "Loads ReShade through OptiScaler, so both work in the same game.",
+        ["Menu/ShowFps"] = "Shows OptiScaler's FPS counter in game.",
+        ["Menu/Scale"] = "The size of OptiScaler's in-game menu.",
     };
 
     /// <summary>Plain names for the values of the upscaler and frame generation choices.</summary>
@@ -538,7 +575,19 @@ public sealed partial class GamePage
     {
         // Cards in reading order, row by row, every card of a row as tall as the row: an even grid, not a jagged wall.
         var panel = new MasonryPanel(_iniWidth < 900 ? 10_000 : 440, 12) { Stable = stable, Rows = !stable };
-        foreach (var c in cards) panel.Children.Add(c);
+        // The first row now, the others two cards per turn of the UI thread (2.0.0-rc.9): every card of the view laid out at
+        // once was 90-110 ms of missed frames each time the OptiScaler tab or a view of its settings opened.
+        var queue = new Queue<FrameworkElement>(cards);
+        for (int i = 0; i < 2 && queue.Count > 0; i++) panel.Children.Add(queue.Dequeue());
+        void Next()
+        {
+            if (queue.Count == 0 || !ReferenceEquals(IniRows.Child, panel)) return;
+            using (UiPerf.Scope("GamePage.IniCards"))
+                for (int i = 0; i < 2 && queue.Count > 0; i++) panel.Children.Add(queue.Dequeue());
+            if (queue.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+            else _sectionsDirty = true;
+        }
+        if (queue.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
         return panel;
     }
 
@@ -618,7 +667,7 @@ public sealed partial class GamePage
         expander.Expanding += (_, _) =>
         {
             if (body.Children.Count > 0) return;
-            foreach (var e in entries) body.Children.Add(Editor(e));
+            foreach (var e in entries) body.Children.Add(Editor(e, showKey: true));
         };
         return expander;
     }
@@ -656,20 +705,25 @@ public sealed partial class GamePage
     /// a switch for true / false, a slider for numbers with a range, segmented buttons for a few choices, a list for many,
     /// a text box otherwise. Auto shows OptiScaler's default, dimmed; a changed setting gets an accent bar and a back-to-Auto button.
     /// </summary>
-    FrameworkElement Editor(IniEntry e, bool showSection = false, Action? written = null)
+    FrameworkElement Editor(IniEntry e, bool showSection = false, Action? written = null, bool showKey = false)
     {
         var res = HybridLauncher.Helpers.ThemeRes.Current;
         var bar = new Border { Width = 3, CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 8, 0, 8), Background = (Brush)res["AccentFillColorDefaultBrush"] };
         var reset = new Button { Content = new FontIcon { Glyph = "", FontSize = 12 }, Padding = new Thickness(7, 6, 7, 6), MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
-        var defaultNote = e.DefaultText is null ? "" : " " + L.F("(default: {0})", Shorten(e.DefaultText));
+        var defaultNote = e.DefaultText is null ? "" : " " + L.F("(default: {0})", Shorten(Plain(e.DefaultText)));
+        // "Auto · FSR 2.2": what Auto means for this setting, in plain words.
+        var autoLabel = e.DefaultText is { Length: > 0 } dt && !IsAuto(dt) ? $"Auto · {Shorten(Plain(dt))}" : "Auto";
         ToolTipService.SetToolTip(reset, L.T("Back to Auto") + defaultNote);
 
         // Name line: name, then (right) the reset button and the compact control or value.
         var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 0 };
         name.Children.Add(new TextBlock { Text = FriendlyName(e), FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap });
-        name.Children.Add(new TextBlock
+        // The ini key under the name only where people look for keys (All sections, search); elsewhere it is in the tooltip.
+        bool keyLine = showKey || showSection;
+        if (keyLine || (ForkBuild && !e.Official)) name.Children.Add(new TextBlock
         {
-            Text = (showSection || _dupKeys.Contains(e.Key) ? $"[{e.Section}] {e.Key}" : e.Key) + (ForkBuild && !e.Official ? "  ·  " + L.T("this build only") : ""),
+            Text = (keyLine ? (showSection || _dupKeys.Contains(e.Key) ? $"[{e.Section}] {e.Key}" : e.Key) : "")
+                + (ForkBuild && !e.Official ? (keyLine ? "  ·  " : "") + L.T("this build only") : ""),
             FontSize = 11,
             FontFamily = new FontFamily("Cascadia Mono, Consolas"),
             Foreground = (Brush)res["TextFillColorTertiaryBrush"],
@@ -811,7 +865,11 @@ public sealed partial class GamePage
                 var combo = new ComboBox { MinWidth = 200, MaxWidth = 300, VerticalAlignment = VerticalAlignment.Center };
                 bool loading = false;
                 foreach (var (v, label) in values)
-                    combo.Items.Add(new ComboBoxItem { Content = v == "auto" ? "Auto" + defaultNote : label == v ? v : $"{label}  ({v})", Tag = v });
+                {
+                    var item = new ComboBoxItem { Content = v == "auto" ? autoLabel : label, Tag = v };
+                    if (v != "auto" && label != v) ToolTipService.SetToolTip(item, v);
+                    combo.Items.Add(item);
+                }
                 sync = () =>
                 {
                     loading = true;
@@ -825,7 +883,8 @@ public sealed partial class GamePage
         }
         else
         {
-            var box = new TextBox { MinWidth = 200, MaxWidth = 300, PlaceholderText = "Auto" + defaultNote, VerticalAlignment = VerticalAlignment.Center };
+            var box = new TextBox { MinWidth = 200, MaxWidth = 300, PlaceholderText = autoLabel, VerticalAlignment = VerticalAlignment.Center };
+            if (e.DefaultText is { Length: > 28 }) ToolTipService.SetToolTip(box, e.DefaultText);
             sync = () => { if (box.FocusState == FocusState.Unfocused) box.Text = IsAuto(e.Value) ? "" : e.Value; };
             void Commit() => Write(string.IsNullOrWhiteSpace(box.Text) ? "auto" : box.Text.Trim());
             box.LostFocus += (_, _) => Commit();
@@ -855,11 +914,13 @@ public sealed partial class GamePage
             Grid.SetColumnSpan(below, 2);
             grid.Children.Add(below);
         }
-        var description = Description(e);
+        var fileNote = Description(e);
+        var description = PlainHints.TryGetValue(e.Path, out var plain) ? L.T(plain) : fileNote;
         if (description.Length > 0)
         {
             var d = new TextBlock { Text = description, Style = (Style)res["RowDescription"], MaxLines = 2, TextTrimming = TextTrimming.WordEllipsis };
-            ToolTipService.SetToolTip(d, new ToolTip { Content = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, MaxWidth = 520 } });
+            var tip = description == fileNote || fileNote.Length == 0 ? description : description + "\n\n" + L.T("From OptiScaler.ini:") + " " + fileNote;
+            ToolTipService.SetToolTip(d, new ToolTip { Content = new TextBlock { Text = tip, TextWrapping = TextWrapping.Wrap, MaxWidth = 520 } });
             Grid.SetRow(d, row);
             Grid.SetColumn(d, 1);
             Grid.SetColumnSpan(d, 2);
@@ -991,8 +1052,13 @@ public sealed partial class GamePage
         var lines = (e.Comment.Length > 0 ? e.Comment : e.SharedComment).Split('\n').Select(l => l.Trim())
             .Where(l => l.Length > 0 && !l.StartsWith("true or false", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(l, @"^Default\s*\(auto\)", RegexOptions.IgnoreCase))
             .Where(l => !(e.Kind == IniValueKind.Choice && (l.Contains(" - Default", StringComparison.OrdinalIgnoreCase) || IniDocument.OptionList([l], needsDefaultAfter: false) is not null)));
-        return string.Join(" ", lines);
+        // Runs of spaces (the file lines things up for a text editor) and a leading "Selected X dlssg -" read as one sentence.
+        var text = Regex.Replace(string.Join(" ", lines), @"\s{2,}", " ").Trim();
+        return Regex.Replace(text, @"^Selected [A-Za-z /]+ [a-z0-9_]+ - ", "");
     }
+
+    /// <summary>A value in plain words when it has one ("fsr22" → "FSR 2.2", "nofg" → "Off").</summary>
+    static string Plain(string value) => ValueNames.TryGetValue(value.Trim(), out var n) ? L.T(n) : value.Trim();
 
     void UpdateChangedPill()
     {

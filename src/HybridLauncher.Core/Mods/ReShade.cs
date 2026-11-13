@@ -33,7 +33,7 @@ public static class ReShade
     public const string IniKey = "Plugins/LoadReshade";
 
     /// <summary>The names the ReShade installer gives its dll (by graphics API), plus the one OptiScaler loads.</summary>
-    static readonly string[] DllNames = ["dxgi.dll", "d3d11.dll", "d3d12.dll", "d3d9.dll", "d3d10.dll", "opengl32.dll", "dinput8.dll", "winmm.dll", "version.dll", OptiDllName, "ReShade32.dll"];
+    public static readonly string[] DllNames = ["dxgi.dll", "d3d11.dll", "d3d12.dll", "d3d9.dll", "d3d10.dll", "opengl32.dll", "dinput8.dll", "winmm.dll", "version.dll", OptiDllName, "ReShade32.dll"];
 
     public static string Dir => Ensure(System.IO.Path.Combine(AppInfo.DataRoot, "ReShade"));
 
@@ -133,6 +133,23 @@ public static class ReShade
             if (File.Exists(path) && IsReShade(path)) return new DetectedReShade(path, DllVersion(path));
         }
         return null;
+    }
+
+    /// <summary>
+    /// The ReShade that really starts with the game: one Windows loads as a proxy dll, else ReShade64.dll when OptiScaler is
+    /// here and loads it (LoadReshade on). A ReShade64.dll nobody loads does not count.
+    /// </summary>
+    public static DetectedReShade? Loaded(string dir)
+    {
+        foreach (var name in DllNames)
+        {
+            if (name.Equals(OptiDllName, StringComparison.OrdinalIgnoreCase) || name.Equals("ReShade32.dll", StringComparison.OrdinalIgnoreCase)) continue;
+            var path = System.IO.Path.Combine(dir, name);
+            if (File.Exists(path) && IsReShade(path)) return new DetectedReShade(path, DllVersion(path));
+        }
+        var through = System.IO.Path.Combine(dir, OptiDllName);
+        return File.Exists(through) && IsReShade(through) && OptiLoadsReShade(dir) == true && Opti.OptiDetector.Detect(dir) is not null
+            ? new DetectedReShade(through, DllVersion(through)) : null;
     }
 
     public static bool IsReShade(string path)
@@ -272,10 +289,122 @@ public static class ReShade
         settings.IniOverrides.Remove(IniKey);
         settings.ReShade.RenamedFrom = null;
         settings.ReShade.RestoredFromBackup = false;
+        settings.ReShade.Placed = null;
         Log.Info($"ReShade removed from {dir}: {string.Join(", ", removed)}");
         return removed.Count == 0
             ? L.T("There was no ReShade dll in the game folder.")
             : L.F("Removed {0}. ReShade.ini, presets and shaders are kept for a later install.", string.Join(", ", removed));
+    }
+
+    // ---------- direct install (the Auto tab): no installer window ----------
+
+    /// <summary>
+    /// ReShade64.dll or ReShade32.dll out of an official installer: the setup exe carries them in a zip appended to its end
+    /// (found from the zip's end record, so the exe in front of it does not matter).
+    /// </summary>
+    public static byte[] ExtractDll(string installer, bool is64)
+    {
+        var data = File.ReadAllBytes(installer);
+        int end = -1;
+        for (int i = data.Length - 22; i >= Math.Max(0, data.Length - 66_000); i--)
+            if (data[i] == 0x50 && data[i + 1] == 0x4B && data[i + 2] == 5 && data[i + 3] == 6) { end = i; break; }
+        if (end < 0) throw new InvalidOperationException(L.T("The ReShade installer holds no archive Hybrid Launcher can read."));
+        uint cdSize = BitConverter.ToUInt32(data, end + 12), cdOffset = BitConverter.ToUInt32(data, end + 16);
+        long start = end - cdSize - cdOffset;
+        if (start < 0) throw new InvalidOperationException(L.T("The ReShade installer holds no archive Hybrid Launcher can read."));
+        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(data, (int)start, data.Length - (int)start), System.IO.Compression.ZipArchiveMode.Read);
+        var name = is64 ? "ReShade64.dll" : "ReShade32.dll";
+        var entry = zip.Entries.FirstOrDefault(e => e.FullName.Equals(name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException(L.F("{0} is missing from the ReShade installer.", name));
+        using var s = entry.Open();
+        using var ms = new MemoryStream();
+        s.CopyTo(ms);
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Puts ReShade in a game folder without its installer: the newest release (with full add-on support when
+    /// <paramref name="addon"/>), its dll as <paramref name="dllName"/>, any other ReShade dll in the folder taken out (one ReShade
+    /// per game), a ReShade.ini with the recommended settings when there is none, and the standard effects when the folder has
+    /// no shaders yet. <paramref name="pick"/> is a version picked by hand (else the newest). Returns the version put in.
+    /// </summary>
+    public static async Task<string> InstallDirectAsync(string dir, string dllName, bool addon, bool is64, IProgress<double>? progress, CancellationToken ct, string? pick = null)
+    {
+        List<string> versions = pick is not null ? [pick] : await GetVersionsAsync(ct: ct);
+        // Offline: the newest installer already saved.
+        var version = versions.FirstOrDefault() ?? Saved().FirstOrDefault(s => s.Release.Addon == addon).Release?.Version
+            ?? throw new InvalidOperationException(L.T("Could not list ReShade releases. Check the connection and try again."));
+        var installer = await DownloadAsync(new ReShadeRelease(version, addon), new Progress<double>(p => progress?.Report(p * 0.5)), ct);
+        var bytes = await Task.Run(() => ExtractDll(installer, is64), ct);
+        ct.ThrowIfCancellationRequested();
+
+        foreach (var name in DllNames)
+        {
+            if (name.Equals(dllName, StringComparison.OrdinalIgnoreCase)) continue;
+            var path = System.IO.Path.Combine(dir, name);
+            if (File.Exists(path) && IsReShade(path)) File.Delete(path);
+        }
+        await File.WriteAllBytesAsync(System.IO.Path.Combine(dir, dllName), bytes, ct);
+        WriteRecommendedIni(dir);
+        progress?.Report(0.6);
+        try { await InstallStandardEffectsAsync(dir, new Progress<double>(p => progress?.Report(0.6 + p * 0.4)), ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log.Warn($"ReShade standard effects: {ex.Message}"); }
+        progress?.Report(1);
+        Log.Info($"ReShade {version}{(addon ? " (add-on)" : "")} put in {dir} as {dllName}");
+        return version;
+    }
+
+    /// <summary>
+    /// ReShade.ini as Hybrid Launcher recommends it, only when the game has none (a user's own file is never touched): effects
+    /// and textures from reshade-shaders, the preset beside the exe, performance mode on, the tutorial skipped, overlay on Home.
+    /// </summary>
+    public static bool WriteRecommendedIni(string dir)
+    {
+        var ini = System.IO.Path.Combine(dir, "ReShade.ini");
+        if (File.Exists(ini)) return false;
+        File.WriteAllText(ini, string.Join("\r\n",
+            "[GENERAL]",
+            @"EffectSearchPaths=.\reshade-shaders\Shaders\**",
+            @"TextureSearchPaths=.\reshade-shaders\Textures\**",
+            @"PresetPath=.\ReShadePreset.ini",
+            "PerformanceMode=1",
+            "",
+            "[INPUT]",
+            "KeyOverlay=36,0,0,0",
+            "",
+            "[OVERLAY]",
+            "TutorialProgress=4",
+            ""));
+        return true;
+    }
+
+    public const string StandardEffectsUrl = "https://github.com/crosire/reshade-shaders/archive/refs/heads/slim.zip";
+
+    /// <summary>The standard effects (crosire/reshade-shaders, the set ReShade's installer offers first) into reshade-shaders, when it has no shaders yet.</summary>
+    public static async Task InstallStandardEffectsAsync(string dir, IProgress<double>? progress, CancellationToken ct)
+    {
+        var shaders = System.IO.Path.Combine(dir, "reshade-shaders", "Shaders");
+        if (Directory.Exists(shaders) && Directory.EnumerateFiles(shaders, "*.fx*", SearchOption.AllDirectories).Any()) { progress?.Report(1); return; }
+        var zip = System.IO.Path.Combine(AppInfo.DownloadsDir, "reshade-shaders-slim.zip");
+        if (!File.Exists(zip) || DateTime.UtcNow - File.GetLastWriteTimeUtc(zip) > TimeSpan.FromDays(14) || new FileInfo(zip).Length < 10_000)
+            await Http.DownloadFileAsync(StandardEffectsUrl, zip, 0, progress, ct);
+        await Task.Run(() =>
+        {
+            using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
+            var root = System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, "reshade-shaders"));
+            foreach (var e in archive.Entries)
+            {
+                // reshade-shaders-slim/Shaders/… and …/Textures/… only.
+                var parts = e.FullName.Split('/', 2);
+                if (parts.Length < 2 || e.Name.Length == 0) continue;
+                if (!parts[1].StartsWith("Shaders/", StringComparison.OrdinalIgnoreCase) && !parts[1].StartsWith("Textures/", StringComparison.OrdinalIgnoreCase)) continue;
+                var dest = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, parts[1].Replace('/', '\\')));
+                if (!dest.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) continue;
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dest)!);
+                if (!File.Exists(dest)) System.IO.Compression.ZipFileExtensions.ExtractToFile(e, dest);
+            }
+        }, ct);
+        progress?.Report(1);
     }
 
     static string Ensure(string dir)

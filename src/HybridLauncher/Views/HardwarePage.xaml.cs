@@ -29,6 +29,7 @@ public sealed partial class HardwarePage : Page
     {
         InitializeComponent();
         Loc.Apply(this);
+        Helpers.CompositorWheel.Attach(PageScroller);
         Root.SizeChanged += (_, e) =>
         {
             var cols = e.NewSize.Width >= 1300 ? 3 : e.NewSize.Width >= 820 ? 2 : 1;
@@ -39,6 +40,7 @@ public sealed partial class HardwarePage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
+        using var __perf = UiPerf.Scope("HardwarePage.NavigatedTo");
         base.OnNavigatedTo(e);
         _ = LoadAsync();
     }

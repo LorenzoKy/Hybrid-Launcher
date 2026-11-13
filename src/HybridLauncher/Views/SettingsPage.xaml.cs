@@ -12,32 +12,79 @@ public sealed partial class SettingsPage : Page
 {
     bool _loading;
 
-    /// <summary>The page's column: as wide as the page, up to 1600, centred. An exact width, never MaxWidth with Stretch (issue #5).</summary>
-    void PageScroller_SizeChanged(object sender, SizeChangedEventArgs e)
+    /// <summary>The widest the open tab is drawn (2.0: a reading width; at 1600 a row's name and its switch were a screen apart).</summary>
+    const double ColumnMax = 1320;
+
+    /// <summary>
+    /// The side column stands at the window's left edge; the open tab, at most <see cref="ColumnMax"/> wide, is centred in the
+    /// window (2.0-rc.3), or as near to that as the side column lets it. Exact widths, never MaxWidth with Stretch (issue #5);
+    /// everything on whole device pixels, so text stays sharp.
+    /// </summary>
+    void FitColumn(double room)
     {
-        // Every tab the same width, centred. (Width starts as NaN, and NaN compares false with everything: the "already that
-        // width" test must be the one that fails for it, or the width is never set and each tab took its own content's width.)
-        double width = Math.Floor(Math.Min(1600, e.NewSize.Width));
-        if (width > 0 && !(Math.Abs(PageColumn.Width - width) < 1)) PageColumn.Width = width;
+        var (side, offset, width) = Columns(room);
+        if (width <= 0) return;
+        if (Math.Abs(SideColumn.Width - side) > 0.01) SideColumn.Width = side;
+        if (SideColumn.Margin.Left != 0) SideColumn.Margin = new Thickness(0);
+        if (Math.Abs(PageColumn.Margin.Left - offset) > 0.01) PageColumn.Margin = new Thickness(offset, 0, 0, 0);
+        // (Width starts as NaN, and NaN compares false with everything: the test must be the one that fails for it.)
+        if (!(Math.Abs(PageColumn.Width - width) < 0.01)) PageColumn.Width = width;
     }
 
-    /// <summary>Self-test: the column's width and how far it is from centred in the page (both should be right on every tab).</summary>
-    internal (double Width, double Expected, double OffCentre) SelfTestColumn()
+    /// <summary>The side column's width, the open tab's distance from the side column, and its width, for the page as it is now.</summary>
+    (double Side, double Offset, double Width) Columns(double room)
+    {
+        double total = ActualWidth;
+        if (total <= 0 || room <= 0) return (296, 0, 0);
+        double scale = (XamlRoot?.RasterizationScale is > 0 and var r ? r : 1) * Helpers.UiScale.Factor;
+        double Whole(double v) => Math.Floor(v * scale) / scale;
+        // A small window: the side column gives the open tab some of its room.
+        double side = total < 1000 ? 232 : 296;
+        // The room is the viewport's, not the ScrollView's: a scroll bar with room of its own cut the column on the right.
+        double bar = Math.Max(0, PageScroller.ActualWidth - room);
+        double free = total - side - bar;
+        double width = Whole(Math.Min(ColumnMax, free));
+        // Centred in the whole window; pushed right of the side column when there is not that much room.
+        double offset = Whole(Math.Clamp((total - width) / 2 - side, 0, Math.Max(0, free - width)));
+        return (side, offset, width);
+    }
+
+    /// <summary>Self-test: the column's width and how far it is from where it should stand (both should be right on every tab).</summary>
+    internal (double Width, double Expected, double OffCentre, double SubPixel) SelfTestColumn()
     {
         UpdateLayout();
+        double room = PageScroller.ViewportWidth > 0 ? Math.Min(PageScroller.ActualWidth, PageScroller.ViewportWidth) : PageScroller.ActualWidth;
+        var (_, offset, expected) = Columns(room);
         double left = PageColumn.TransformToVisual(PageScroller).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
-        double right = PageScroller.ActualWidth - left - PageColumn.ActualWidth;
-        return (PageColumn.ActualWidth, Math.Floor(Math.Min(1600, PageScroller.ActualWidth)), Math.Abs(left - right));
+        // How far the column's left edge is from a whole device pixel in the window (0 = sharp text; 0.5 = blurred).
+        double scale = (XamlRoot?.RasterizationScale is > 0 and var r ? r : 1) * Helpers.UiScale.Factor;
+        double x = PageColumn.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0)).X * scale;
+        double sub = Math.Abs(x - Math.Round(x));
+        // The column must be shown whole: a scroller laid out narrower than its content clips the right side.
+        if (left + PageColumn.ActualWidth > room + 1) sub = Math.Max(sub, 1 + left + PageColumn.ActualWidth - room);
+        return (PageColumn.ActualWidth, expected, Math.Abs(SideColumn.Margin.Left) + Math.Abs(left - offset), sub);
     }
+
+    /// <summary>Self-test: the page's scroller (scroll smoothness).</summary>
+    internal ScrollView SelfTestScroller => PageScroller;
+    /// <summary>Self-test (perf): the tabs, to click.</summary>
+    internal IEnumerable<FrameworkElement> SelfTestTabItems => SettingsTabs.Items;
 
     public SettingsPage()
     {
+        using var __perf = UiPerf.Scope("SettingsPage.ctor");
         InitializeComponent();
         Loc.Apply(this);
+        CompositorWheel.Attach(PageScroller);
+        CompositorWheel.OnViewportWidth(PageScroller, FitColumn);
         // The app's own trophy on the Achievements tab, in the tab's amber.
         var trophy = Icons.Make(Icons.TrophyGlyph, 15);
         if (Application.Current.Resources.TryGetValue("TintAmberBrush", out var amber)) trophy.Foreground = amber as Microsoft.UI.Xaml.Media.Brush;
         AchievementsTabItem.Icon = trophy;
+        BuildNav();
+        GuardSearchFocus();
+        SizeChanged += (_, _) => FitColumn(PageScroller.ViewportWidth > 0 ? Math.Min(PageScroller.ActualWidth, PageScroller.ViewportWidth) : PageScroller.ActualWidth);
+        AchievementExtrasView.SourcesChanged += OnAchievementSourcesChanged;
         // Read by index: the labels follow the UI language.
         foreach (var v in TabIconChoices) TabIconsCombo.Items.Add(L.T(v.Label));
         foreach (var (_, name) in L.Choices) LanguageCombo.Items.Add(name == "Automatic (Windows)" ? L.T(name) : name);
@@ -49,6 +96,7 @@ public sealed partial class SettingsPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
+        using var __perf = UiPerf.Scope("SettingsPage.NavigatedTo");
         base.OnNavigatedTo(e);
         LoadControls();
 
@@ -68,6 +116,11 @@ public sealed partial class SettingsPage : Page
         _loading = true;
         LanguageCombo.SelectedIndex = Math.Max(0, Array.FindIndex(L.Choices, c => c.Key == S.Language));
         MaterialToggle.IsOn = S.Material;
+        ShadingToggle.IsOn = S.Shading;
+        if (InterfaceSizeCombo.Items.Count == 0)
+            foreach (var step in Helpers.UiScale.Steps) InterfaceSizeCombo.Items.Add(new ComboBoxItem { Content = $"{step}%", Tag = step });
+        InterfaceSizeCombo.SelectedIndex = Math.Max(0, Array.IndexOf(Helpers.UiScale.Steps, Helpers.UiScale.Steps.MinBy(v => Math.Abs(v - S.InterfaceSize))));
+        ScrollBarsToggle.IsOn = !S.HideScrollBars;
         AutoUpdateToggle.IsOn = S.AutoUpdateGames;
         AppUpdateToggle.IsOn = S.CheckAppUpdates;
         ShortcutToggle.IsOn = S.ShortcutOnInstall;
@@ -75,7 +128,8 @@ public sealed partial class SettingsPage : Page
         HltbToggle.IsOn = S.ShowHltb;
         foreach (var mode in ModBackups.Modes) ModBackupsCombo.Items.Add(ModBackups.ModeName(mode));
         ModBackupsCombo.SelectedIndex = Math.Max(0, Array.IndexOf(ModBackups.Modes, S.ModBackups));
-        CoverTagsToggle.IsOn = S.ShowCoverTags;
+        CoverOverlaysToggle.IsOn = S.ShowCoverOverlays;
+        FillCoverTagKinds();
         MetacriticToggle.IsOn = S.ShowMetacritic;
         PaletteCombo.Items.Clear();
         foreach (var p in Palettes.All) PaletteCombo.Items.Add(PaletteItem(p));
@@ -84,6 +138,9 @@ public sealed partial class SettingsPage : Page
         EpicCheck.IsChecked = S.ScanEpic;
         GogCheck.IsChecked = S.ScanGog;
         XboxCheck.IsChecked = S.ScanXbox;
+        UbisoftCheck.IsChecked = S.ScanUbisoft;
+        EaCheck.IsChecked = S.ScanEa;
+        RockstarCheck.IsChecked = S.ScanRockstar;
         TabIconsCombo.SelectedIndex = Math.Max(0, Array.FindIndex(TabIconChoices, c => c.Key == S.TabIcons));
         FillIconsAndParts();
         HardwareToggle.IsOn = S.HardwareAcceleration;
@@ -96,7 +153,6 @@ public sealed partial class SettingsPage : Page
         StartupToggle.IsOn = S.StartWithWindows;
         StartOpenToggle.IsOn = S.StartOpensWindow;
         PopupToggle.IsOn = S.AchievementPopups;
-        LocalAchievementsToggle.IsOn = S.ReadSteamEmulator;
         var o = S.Popup;
         Select(CornerCombo, o.Corner);
         Select(ScreenCombo, o.Screen);
@@ -104,8 +160,8 @@ public sealed partial class SettingsPage : Page
         Select(StyleCombo, o.Style);
         Select(LookCombo, o.Look);
         if (AchievementPopup.TryParseHex(o.CustomColor, out var custom)) CustomColorPicker.Color = custom;
-        if (AchievementPopup.TryParseHex(o.Background, out var back)) PopupBackPicker.Color = back;
-        else PopupBackPicker.Color = Windows.UI.Color.FromArgb(255, 0x14, 0x12, 0x1A);
+        if (ColoursLookCombo.SelectedIndex < 0) ColoursLookCombo.SelectedIndex = 0;
+        LoadLookColours();
         PlaceX.Value = Math.Round(Math.Clamp(o.X, 0, 1) * 100, 1);
         PlaceY.Value = Math.Round(Math.Clamp(o.Y, 0, 1) * 100, 1);
         OpacitySlider.Value = Math.Round(Math.Clamp(o.Opacity, 0.6, 1) * 100);
@@ -166,11 +222,16 @@ public sealed partial class SettingsPage : Page
                     }
                     S.ShowHltb = d.ShowHltb;
                     S.ShowMetacritic = d.ShowMetacritic;
-                    bool rescan = S.ScanSteam != d.ScanSteam || S.ScanEpic != d.ScanEpic || S.ScanGog != d.ScanGog || S.ScanXbox != d.ScanXbox;
+                    bool rescan = S.ScanSteam != d.ScanSteam || S.ScanEpic != d.ScanEpic || S.ScanGog != d.ScanGog || S.ScanXbox != d.ScanXbox
+                                  || S.ScanUbisoft != d.ScanUbisoft || S.ScanEa != d.ScanEa || S.ScanRockstar != d.ScanRockstar;
                     (S.ScanSteam, S.ScanEpic, S.ScanGog, S.ScanXbox) = (d.ScanSteam, d.ScanEpic, d.ScanGog, d.ScanXbox);
+                    (S.ScanUbisoft, S.ScanEa, S.ScanRockstar) = (d.ScanUbisoft, d.ScanEa, d.ScanRockstar);
                     S.TabOrder.Clear();
                     S.HiddenTabs.Clear();
-                    foreach (var g in S.Games.Values) g.HiddenTabs.Clear();
+                    foreach (var g in S.Games.Values) { g.HiddenTabs.Clear(); g.View = null; }
+                    S.GameView = d.GameView;
+                    S.DashboardOrder.Clear();
+                    S.DashboardHidden.Clear();
                     if (rescan) _ = AppState.RescanAsync();
                     break;
                 case "controller":
@@ -190,11 +251,17 @@ public sealed partial class SettingsPage : Page
                     S.Language = d.Language;
                     S.Palette = d.Palette;
                     S.Material = d.Material;
+                    S.Shading = d.Shading;
                     S.TabIcons = d.TabIcons;
                     S.CustomAccent = d.CustomAccent;
                     S.CustomTint = d.CustomTint;
                     S.CustomBackground = d.CustomBackground;
                     S.CustomBackdrop = d.CustomBackdrop;
+                    S.InterfaceSize = d.InterfaceSize;
+                    S.HideScrollBars = d.HideScrollBars;
+                    Helpers.UiScale.Set(S.InterfaceSize);
+                    Helpers.ScrollBars.UpdateStyles();
+                    Helpers.ScrollBars.Apply(App.Window?.Content);
                     App.Window?.ApplyTheme(S.Theme);
                     var wanted = L.AutoLanguage;
                     RestartBar.IsOpen = wanted != L.Language;
@@ -202,7 +269,7 @@ public sealed partial class SettingsPage : Page
             }
             SettingsStore.Save();
             LoadControls();
-            if (_openTab == "achievements") AchievementSoundsView.Fill(AchievementSoundsPanel);
+            if (_openTab == "achievements") { AchievementSoundsView.Fill(AchievementSoundsPanel); AchievementExtrasView.Fill(AchievementExtrasPanel); }
             if (_openTab == "controller") ControllerSettingsView.Fill(ControllerPanel);
             Fill();
             FillTabs();
@@ -217,6 +284,7 @@ public sealed partial class SettingsPage : Page
         // A tab picked while searching (the controller's LB / RB): the search gives way to it.
         if (_searching) { SettingsSearch.Text = ""; ShowSearch(""); }
         ShowSettingsTab(tab);
+        UpdateNav();
         if (S.SettingsTab != tab)
         {
             S.SettingsTab = tab;
@@ -224,10 +292,180 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    /// <summary>
+    /// The tabs as a vertical list on the left: one row per item of <c>SettingsTabs</c> (its icon on a tile of its colour,
+    /// its name), the open one on a pill with a bar at its left edge and its sections listed under it (see
+    /// <see cref="FillNavSections"/>). A click selects the item, so everything that follows a tab change still runs from
+    /// <see cref="SettingsTabs_SelectionChanged"/>.
+    /// </summary>
+    void BuildNav()
+    {
+        SettingsNav.Children.Clear();
+        foreach (var item in SettingsTabs.Items)
+        {
+            string tab = item.Tag as string ?? "";
+            TabInfo.TryGetValue(tab, out var info);
+            var tint = info.Tint is not null && Application.Current.Resources.TryGetValue($"Tint{info.Tint}Brush", out var t) ? t as Microsoft.UI.Xaml.Media.Brush : null;
+            var wash = info.Tint is not null && Application.Current.Resources.TryGetValue($"Tint{info.Tint}WashBrush", out var w) ? w as Microsoft.UI.Xaml.Media.Brush : null;
+            IconElement icon = Icons.Make(info.Glyph ?? "\uE713", 16);
+            if (tint is not null) icon.Foreground = tint;
+            icon.HorizontalAlignment = HorizontalAlignment.Center;
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            var tile = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(8), Background = wash, Child = icon, VerticalAlignment = VerticalAlignment.Center };
+            var bar = new Border { Width = 3, Height = 18, CornerRadius = new CornerRadius(2), Background = Ui.Brush("AccentFillColorDefaultBrush"), VerticalAlignment = VerticalAlignment.Center, Opacity = 0 };
+            var row = new Grid { ColumnSpacing = 10 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(bar);
+            Grid.SetColumn(tile, 1);
+            row.Children.Add(tile);
+            var text = new TextBlock { Text = item.Text, FontSize = 15, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetColumn(text, 2);
+            row.Children.Add(text);
+            var button = new Button
+            {
+                Content = row,
+                Tag = item,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(4, 7, 12, 7),
+                CornerRadius = new CornerRadius(9),
+                BorderThickness = new Thickness(0),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, item.Text);
+            var chosen = item;
+            button.Click += (_, _) =>
+            {
+                // The open tab clicked while searching: the search gives way to it (SelectionChanged does not fire).
+                if (SettingsTabs.SelectedItem == chosen && _searching) { SettingsSearch.Text = ""; ShowSearch(""); }
+                else if (SettingsTabs.SelectedItem == chosen) PageScroller.ScrollTo(0, 0);
+                SettingsTabs.SelectedItem = chosen;
+            };
+            SettingsNav.Children.Add(button);
+        }
+        UpdateNav();
+    }
+
+    void UpdateNav()
+    {
+        foreach (var b in SettingsNav.Children.OfType<Button>())
+        {
+            bool on = !_searching && b.Tag == (object?)SettingsTabs.SelectedItem;
+            b.Background = on ? Ui.Brush("SubtleFillColorSecondaryBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            if (b.Content is Grid g)
+            {
+                if (g.Children[0] is Border bar) bar.Opacity = on ? 1 : 0;
+                if (g.Children[2] is TextBlock t) t.FontWeight = on ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
+            }
+        }
+        if (_navSections is not null) _navSections.Visibility = _searching ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    StackPanel? _navSections;
+
+    /// <summary>
+    /// The open tab's sections (its group headings) as a short list under it in the side column: a press scrolls the tab to
+    /// that section. In place of the row of pills over the tab (2.0): the way around a long tab is where the tabs are.
+    /// </summary>
+    void FillNavSections(Panel panel)
+    {
+        if (_navSections is not null) SettingsNav.Children.Remove(_navSections);
+        _navSections = null;
+        var headers = Headers(panel).Select(h => h.Text).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        var open = SettingsNav.Children.OfType<Button>().FirstOrDefault(b => b.Tag == (object?)SettingsTabs.SelectedItem);
+        if (headers.Count <= 1 || open is null) return;
+        var list = new StackPanel { Margin = new Thickness(49, 0, 0, 6) };
+        foreach (var text in headers)
+        {
+            var b = new Button
+            {
+                Content = new TextBlock { Text = Sentence(text), FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Ui.Brush("TextFillColorSecondaryBrush") },
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(10, 4, 8, 5),
+                CornerRadius = new CornerRadius(7),
+                BorderThickness = new Thickness(0),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, Sentence(text));
+            // Found again on click: a tab built in code makes its headings anew when something changes.
+            b.Click += (_, _) => Headers(panel).FirstOrDefault(h => h.Text == text)?.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = -12, AnimationDesired = true });
+            list.Children.Add(b);
+        }
+        _navSections = list;
+        SettingsNav.Children.Insert(SettingsNav.Children.IndexOf(open) + 1, list);
+        list.Visibility = _searching ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // ---------- the search box takes the focus only from the user ----------
+
+    long _searchPressTick = -10_000, _searchKeyTick = -10_000;
+    bool _searchWanted;
+
+    bool SearchHasFocus()
+    {
+        if (XamlRoot is null) return false;
+        for (var node = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) as DependencyObject; node is not null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+            if (ReferenceEquals(node, SettingsSearch)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The first control of the page is its search box, so WinUI hands it the focus whenever the focused control goes away (a
+    /// row rebuilt, a tab's panel hidden, the game list redrawn): it then looked clicked, with its caret in it (2.0, the same
+    /// guard as the game list's search box). It keeps the focus only when the user put it there: a press on it, Tab or the
+    /// controller moving onto it, Ctrl+F. Anything else goes to the open tab's row in the list.
+    /// </summary>
+    void GuardSearchFocus()
+    {
+        AddHandler(PreviewKeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, _) => _searchKeyTick = Environment.TickCount64), true);
+        SettingsSearch.AddHandler(PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _searchPressTick = Environment.TickCount64), true);
+        SettingsSearch.GettingFocus += (_, e) =>
+        {
+            long now = Environment.TickCount64;
+            bool byUser = e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Mouse or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Touch or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Pen
+                    && now - _searchPressTick < 800
+                || (e.InputDevice is Microsoft.UI.Xaml.Input.FocusInputDeviceKind.Keyboard or Microsoft.UI.Xaml.Input.FocusInputDeviceKind.GameController
+                    && e.Direction != Microsoft.UI.Xaml.Input.FocusNavigationDirection.None && now - _searchKeyTick < 800);
+            if (byUser || _searchWanted || SearchHasFocus()) return;
+            Log.Info($"Settings search box focus: {e.InputDevice}, {e.Direction}, moved away");
+            // Sent to the open tab's row before the box ever has it (no caret blinking in it for a frame); when WinUI does not
+            // allow the redirect, moved right after, not inside this event (see MainWindow.GuardSearchFocus).
+            if (OpenTabButton() is { } open && e.TrySetNewFocusedElement(open)) return;
+            DispatcherQueue.TryEnqueue(() => KeepFocusOffSearch(force: true));
+        };
+    }
+
+    /// <summary>
+    /// The focus leaves the search box unless the user put it there. Called after the page rebuilt something under the focus;
+    /// <paramref name="force"/> when the caller already knows the move was not the user's.
+    /// </summary>
+    internal void KeepFocusOffSearch(bool force = false)
+    {
+        if (!SearchHasFocus()) return;
+        long now = Environment.TickCount64;
+        if (!force && (SettingsSearch.Text.Length > 0 || now - _searchPressTick < 800 || _searchWanted)) return;
+        OpenTabButton()?.Focus(FocusState.Programmatic);
+    }
+
+    Button? OpenTabButton() => SettingsNav.Children.OfType<Button>().FirstOrDefault(b => b.Tag == (object?)SettingsTabs.SelectedItem) ?? SettingsNav.Children.OfType<Button>().FirstOrDefault();
+
+    /// <summary>Restore defaults shown or not; hidden it keeps its room, so the header (and the search box) never moves.</summary>
+    void ShowRestoreDefaults(bool on)
+    {
+        RestoreDefaultsButton.Visibility = Visibility.Visible;
+        RestoreDefaultsButton.Opacity = on ? 1 : 0;
+        RestoreDefaultsButton.IsHitTestVisible = on;
+        RestoreDefaultsButton.IsTabStop = on;
+    }
+
     void ShowSettingsTab(string tab)
     {
+        using var __perf = UiPerf.Scope("SettingsPage.ShowTab");
         _openTab = tab;
-        RestoreDefaultsButton.Visibility = tab is "about" or "cloud" or "notifications" ? Visibility.Collapsed : Visibility.Visible;
+        ShowRestoreDefaults(tab is not ("about" or "cloud" or "notifications"));
         AppearancePanel.Visibility = tab == "appearance" ? Visibility.Visible : Visibility.Collapsed;
         FeaturesPanel.Visibility = tab == "features" ? Visibility.Visible : Visibility.Collapsed;
         AchievementsPanel.Visibility = tab == "achievements" ? Visibility.Visible : Visibility.Collapsed;
@@ -237,6 +475,7 @@ public sealed partial class SettingsPage : Page
             PreviewPlatinumIcon.Content = Icons.Trophy(16, platinum: true);
             FillPreviewGames();
             AchievementSoundsView.Fill(AchievementSoundsPanel);
+            AchievementExtrasView.Fill(AchievementExtrasPanel);
         }
         ControllerPanel.Visibility = tab == "controller" ? Visibility.Visible : Visibility.Collapsed;
         if (tab == "controller") ControllerSettingsView.Fill(ControllerPanel);
@@ -248,6 +487,8 @@ public sealed partial class SettingsPage : Page
         if (tab == "features") GitHubSignInView.Fill(GitHubPanel);
         AboutPanel.Visibility = tab == "about" ? Visibility.Visible : Visibility.Collapsed;
         UpdateTabIntro(tab);
+        // A control of the tab just hidden had the focus: WinUI drops it on the search box, with no event.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => KeepFocusOffSearch());
     }
 
     /// <summary>Each tab: its icon, colour and what it holds (the first line under the tabs).</summary>
@@ -264,45 +505,22 @@ public sealed partial class SettingsPage : Page
     };
 
     /// <summary>
-    /// The line under the tabs: the tab's icon on its colour, what it holds, and a button for each of its sections (its group
-    /// headings) that scrolls to it, so a long tab is a press away from any part of it, with a mouse or a controller.
+    /// The open tab's heading: its icon on its colour, its name and what it holds. Its sections (its group headings) are
+    /// listed under the tab in the side column, each a press away with a mouse or a controller.
     /// </summary>
     void UpdateTabIntro(string tab)
     {
         if (!TabInfo.TryGetValue(tab, out var info)) { TabIntro.Visibility = Visibility.Collapsed; return; }
         TabIntro.Visibility = Visibility.Visible;
-        var tint = Resources.TryGetValue($"Tint{info.Tint}Brush", out var t) ? t as Microsoft.UI.Xaml.Media.Brush : Application.Current.Resources.TryGetValue($"Tint{info.Tint}Brush", out var at) ? at as Microsoft.UI.Xaml.Media.Brush : null;
+        var tint = Application.Current.Resources.TryGetValue($"Tint{info.Tint}Brush", out var at) ? at as Microsoft.UI.Xaml.Media.Brush : null;
         var wash = Application.Current.Resources.TryGetValue($"Tint{info.Tint}WashBrush", out var w) ? w as Microsoft.UI.Xaml.Media.Brush : null;
-        TabIntroTile.Background = wash;
-        var icon = Icons.Make(info.Glyph, 20);
-        icon.Foreground = tint;
+        var icon = Icons.Make(info.Glyph, 22);
+        if (tint is not null) icon.Foreground = tint;
         TabIntroIcon.Content = icon;
+        TabIntroTile.Background = wash;
+        TabIntroTitle.Text = TabName(tab);
         TabIntroText.Text = L.T(info.Text);
-
-        TabSections.Children.Clear();
-        var panel = tab switch
-        {
-            "appearance" => AppearancePanel, "features" => FeaturesPanel, "controller" => ControllerPanel, "achievements" => AchievementsPanel,
-            "notifications" => NotificationsPanel, "cloud" => CloudPanel, "storage" => StoragePanel, _ => (Panel)AboutPanel,
-        };
-        var headers = Headers(panel).Select(h => h.Text).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        TabSectionsScroller.Visibility = headers.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        if (headers.Count <= 1) return;
-        foreach (var text in headers)
-        {
-            var b = new Button
-            {
-                Content = Sentence(text),
-                Padding = new Thickness(12, 4, 12, 5),
-                CornerRadius = new CornerRadius(14),
-                Background = wash,
-                BorderThickness = new Thickness(0),
-                FontSize = 13,
-            };
-            // Found again on click: a tab built in code makes its headings anew when something changes.
-            b.Click += (_, _) => Headers(panel).FirstOrDefault(h => h.Text == text)?.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = -12, AnimationDesired = true });
-            TabSections.Children.Add(b);
-        }
+        FillNavSections(PanelOf(tab));
     }
 
     /// <summary>The group headings of a tab, in order, wherever they sit in it.</summary>
@@ -434,6 +652,7 @@ public sealed partial class SettingsPage : Page
         }
         if (S.HiddenGames.Count == 0) HiddenList.Children.Add(Muted(L.T("None")));
 
+        FillPageCache();
         CacheText.Text = L.F("Downloaded releases (the newest 3 per channel are kept, in {0}) and the custom builds you imported.", AppInfo.DownloadsDir);
 
         CustomBuildsText.Text = CustomBuilds.Dir(S) + "\n" + L.T("Each sub-folder (or .zip / .7z) holding an OptiScaler DLL is a build you can install from a game's Custom box.");
@@ -640,11 +859,57 @@ public sealed partial class SettingsPage : Page
         App.Window?.ApplyTheme(S.Theme);
     }
 
-    void CoverTags_Toggled(object sender, RoutedEventArgs e)
+    void Shading_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading || S.Shading == ShadingToggle.IsOn) return;
+        S.Shading = ShadingToggle.IsOn;
+        SettingsStore.Save();
+        App.Window?.ApplyTheme(S.Theme);
+    }
+
+    void InterfaceSize_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || InterfaceSizeCombo.SelectedItem is not ComboBoxItem { Tag: int size } || size == S.InterfaceSize) return;
+        S.InterfaceSize = size;
+        SettingsStore.Save();
+        Helpers.UiScale.Set(size);
+    }
+
+    void ScrollBars_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        S.ShowCoverTags = CoverTagsToggle.IsOn;
+        S.HideScrollBars = !ScrollBarsToggle.IsOn;
         SettingsStore.Save();
+        Helpers.ScrollBars.UpdateStyles();
+        Helpers.ScrollBars.Apply(App.Window?.Content);
+    }
+
+    void CoverOverlays_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        S.ShowCoverOverlays = CoverOverlaysToggle.IsOn;
+        SettingsStore.Save();
+        foreach (var c in CoverTagKindsPanel.Children.OfType<Panel>().SelectMany(p => p.Children.OfType<CheckBox>())) c.IsEnabled = S.ShowCoverOverlays;
+    }
+
+    /// <summary>One check box per kind of cover tag (pinned, play time, each mod, upscalers, achievements).</summary>
+    void FillCoverTagKinds()
+    {
+        CoverTagKindsPanel.Children.Clear();
+        var wrap = new WrapPanel(20, []);
+        CoverTagKindsPanel.Children.Add(wrap);
+        foreach (var (key, label) in AppSettings.CoverTagKinds)
+        {
+            var cb = new CheckBox
+            {
+                Content = L.T(label),
+                MinWidth = 0,
+                IsChecked = key == "tech" ? S.ShowCoverTags : !S.HiddenCoverTags.Contains(key),
+                IsEnabled = S.ShowCoverOverlays,
+            };
+            cb.Click += (_, _) => { S.SetCoverTag(key, cb.IsChecked == true); SettingsStore.Save(); };
+            wrap.Children.Add(cb);
+        }
     }
 
     void OverviewCards_Toggled(object sender, RoutedEventArgs e)
@@ -809,12 +1074,9 @@ public sealed partial class SettingsPage : Page
 
     void TestPopup_Click(object sender, RoutedEventArgs e) => AchievementPopup.ShowTest();
 
-    /// <summary>Achievements → Sources → Local achievements (on by default; only here, not a feature of the picker).</summary>
-    void LocalAchievements_Toggled(object sender, RoutedEventArgs e)
+    /// <summary>Achievements → Sources: a source turned on or off (AchievementExtrasView): what depends on it follows.</summary>
+    void OnAchievementSourcesChanged()
     {
-        if (_loading) return;
-        S.ReadSteamEmulator = LocalAchievementsToggle.IsOn;
-        SettingsStore.Save();
         ShowFeatures();
         FillPreviewGames();
     }
@@ -870,6 +1132,29 @@ public sealed partial class SettingsPage : Page
         finally { PreviewPlatinumButton.IsEnabled = true; }
     }
 
+    /// <summary>A progress pop-up of the picked game (a sample progress pop-up with no game picked). Nothing changes.</summary>
+    async void PreviewProgress_Click(object sender, RoutedEventArgs e) => await PreviewProgressAsync(true);
+
+    async Task PreviewProgressAsync(bool tell)
+    {
+        if ((PreviewGameCombo.SelectedItem as ComboBoxItem)?.Tag is not string id || AppState.Find(id) is not { } game)
+        {
+            AchievementPopup.ShowReplacing(new Toast(L.T("Sample achievement"), L.T("A step towards an achievement"), null, "Hybrid Launcher", 12.5, Progress: "3 / 10"));
+            return;
+        }
+        PreviewProgressButton.IsEnabled = false;
+        try
+        {
+            if (!await AchievementWatcher.PreviewProgressAsync(game) && tell)
+                App.Window?.ShowError(L.T("No achievements"), L.F("{0} has no achievements that can be read on this PC.", game.Title));
+        }
+        catch (Exception ex) { if (tell) App.Window?.ShowError(L.T("Action failed"), ex.Message, ex); }
+        finally { PreviewProgressButton.IsEnabled = true; }
+    }
+
+    /// <summary>Self-test hook: Progress in the real-game preview row (no dialog).</summary>
+    public Task SelfTestPreviewProgress() => PreviewProgressAsync(false);
+
     /// <summary>Self-test hook: Platinum in the real-game preview row (the sample when the picked game has no platinum: no dialog).</summary>
     public async Task SelfTestPreviewPlatinum()
     {
@@ -892,8 +1177,8 @@ public sealed partial class SettingsPage : Page
     {
         _loading = true;
         PopupToggle.IsOn = S.AchievementPopups;
-        LocalAchievementsToggle.IsOn = S.ReadSteamEmulator;
         _loading = false;
+        AchievementExtrasView.Fill(AchievementExtrasPanel);
         FillIconsAndParts();
         FillTabs();
         ShowFeatures();
@@ -918,6 +1203,9 @@ public sealed partial class SettingsPage : Page
         if (_loading) return;
         S.Popup.Look = TagOf(LookCombo, "Hybrid");
         SettingsStore.Save();
+        UpdatePopupOptions();
+        // The two colour pickers now hold the new look's colours, not the previous look's.
+        LoadLookColours();
         AchievementPopup.ShowTest();
     }
 
@@ -944,19 +1232,70 @@ public sealed partial class SettingsPage : Page
         UpdatePopupOptions();
     }
 
+    /// <summary>The look whose background and text colours the rows show: the look picked, or for "Match the game's store" the one picked beside them.</summary>
+    string ColoursLook => S.Popup.Look == "Auto" ? TagOf(ColoursLookCombo, "Steam") : S.Popup.Look;
+
+    static readonly Windows.UI.Color NoColour = Windows.UI.Color.FromArgb(255, 0x14, 0x12, 0x1A);
+
+    /// <summary>Puts the colours of <see cref="ColoursLook"/> into the two pickers (their change handlers stay quiet).</summary>
+    void LoadLookColours()
+    {
+        bool was = _loading;
+        _loading = true;
+        var c = S.Popup.LookColours.TryGetValue(ColoursLook, out var lc) ? lc : new PopupLookColours();
+        PopupBackPicker.Color = AchievementPopup.TryParseHex(c.Background, out var back) ? back : NoColour;
+        PopupTextPicker.Color = AchievementPopup.TryParseHex(c.Text, out var ink) ? ink : Microsoft.UI.Colors.White;
+        _loading = was;
+    }
+
+    void ColoursLook_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        LoadLookColours();
+        UpdatePopupOptions();
+    }
+
     void BackgroundColor_Changed(ColorPicker sender, ColorChangedEventArgs e)
     {
         if (_loading) return;
-        S.Popup.Background = Hex(e.NewColor);
+        S.Popup.ColoursOf(ColoursLook).Background = Hex(e.NewColor);
         SettingsStore.Save();
         UpdatePopupOptions();
     }
 
     void BackgroundAuto_Click(object sender, RoutedEventArgs e)
     {
-        S.Popup.Background = "";
+        S.Popup.ColoursOf(ColoursLook).Background = "";
+        SettingsStore.Save();
+        LoadLookColours();
+        UpdatePopupOptions();
+    }
+
+    void TextColor_Changed(ColorPicker sender, ColorChangedEventArgs e)
+    {
+        if (_loading) return;
+        S.Popup.ColoursOf(ColoursLook).Text = Hex(e.NewColor);
         SettingsStore.Save();
         UpdatePopupOptions();
+    }
+
+    void TextAuto_Click(object sender, RoutedEventArgs e)
+    {
+        S.Popup.ColoursOf(ColoursLook).Text = "";
+        SettingsStore.Save();
+        LoadLookColours();
+        UpdatePopupOptions();
+    }
+
+    /// <summary>A row a look does not use: greyed and not clickable, so it is clear which options shape the chosen look.</summary>
+    static void Usable(bool on, params UIElement[] parts)
+    {
+        foreach (var p in parts)
+        {
+            p.Opacity = on ? 1 : 0.4;
+            if (p is Control c) c.IsEnabled = on;
+            else if (p is Panel panel) foreach (var child in panel.Children.OfType<Control>()) child.IsEnabled = on;
+        }
     }
 
     void Opacity_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -1006,8 +1345,24 @@ public sealed partial class SettingsPage : Page
         CustomColorButton.Visibility = o.Style == "Custom" ? Visibility.Visible : Visibility.Collapsed;
         PlacePanel.Visibility = o.Corner == "Custom" ? Visibility.Visible : Visibility.Collapsed;
         if (AchievementPopup.TryParseHex(o.CustomColor, out var custom)) CustomColorSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(custom);
-        PopupBackSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(AchievementPopup.TryParseHex(o.Background, out var back) ? back : Windows.UI.Color.FromArgb(255, 0x14, 0x12, 0x1A));
-        BackgroundAutoButton.IsEnabled = o.Background.Length > 0;
+        var look = o.Look;
+        var colours = o.LookColours.TryGetValue(ColoursLook, out var lc) ? lc : new PopupLookColours();
+        bool ownBack = AchievementPopup.TryParseHex(colours.Background, out var back);
+        bool ownText = AchievementPopup.TryParseHex(colours.Text, out var ink);
+        PopupBackSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ownBack ? back : NoColour);
+        PopupTextSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ownText ? ink : Microsoft.UI.Colors.White);
+        PopupBackSwatch.Opacity = ownBack ? 1 : 0.35;
+        PopupTextSwatch.Opacity = ownText ? 1 : 0.35;
+        BackgroundAutoButton.IsEnabled = ownBack;
+        TextAutoButton.IsEnabled = ownText;
+        ColoursLookCombo.Visibility = look == "Auto" ? Visibility.Visible : Visibility.Collapsed;
+        string lookName = (LookCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == ColoursLook)?.Content as string) ?? ColoursLook;
+        ColoursForText.Text = L.F("Of the {0} look", lookName);
+        // Colour (the accent) shapes only Hybrid Launcher and Minimal; the rarity line shows only on the card looks.
+        bool accentUsed = look is "Hybrid" or "Minimal" or "Auto";
+        Usable(accentUsed, StyleHeader, StyleControls);
+        bool rarityUsed = look is "Hybrid" or "Steam" or "Gog" or "Epic" or "Auto";
+        Usable(rarityUsed, RarityHeader, RarityToggle);
         PopupOptions.Opacity = PopupLookRow.Opacity = S.AchievementPopups ? 1 : 0.5;
     }
 
@@ -1018,6 +1373,9 @@ public sealed partial class SettingsPage : Page
         S.ScanEpic = EpicCheck.IsChecked == true;
         S.ScanGog = GogCheck.IsChecked == true;
         S.ScanXbox = XboxCheck.IsChecked == true;
+        S.ScanUbisoft = UbisoftCheck.IsChecked == true;
+        S.ScanEa = EaCheck.IsChecked == true;
+        S.ScanRockstar = RockstarCheck.IsChecked == true;
         SettingsStore.Save();
         _ = AppState.RescanAsync();
     }
@@ -1028,6 +1386,53 @@ public sealed partial class SettingsPage : Page
         if (dir is null || S.GameLibraries.Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
         S.GameLibraries.Add(dir);
         Changed();
+    }
+
+    bool _fillingCacheBudget;
+
+    /// <summary>Settings → Storage → Game page cache: the budget choices and the size now (measured in the background).</summary>
+    void FillPageCache()
+    {
+        _fillingCacheBudget = true;
+        CacheBudgetCombo.Items.Clear();
+        foreach (var gb in CacheJanitor.BudgetChoices) CacheBudgetCombo.Items.Add(L.F("{0} GB", gb));
+        int at = Array.IndexOf(CacheJanitor.BudgetChoices, S.CacheBudgetGb);
+        CacheBudgetCombo.SelectedIndex = at >= 0 ? at : 1;
+        _fillingCacheBudget = false;
+        _ = ShowPageCacheSizeAsync();
+    }
+
+    async Task ShowPageCacheSizeAsync()
+    {
+        PageCacheText.Text = L.T("Measuring…");
+        try
+        {
+            long size = await Task.Run(CacheJanitor.Size);
+            PageCacheText.Text = L.F("{0} in use now.", DiskUsage.Format(size));
+        }
+        catch (Exception ex) { PageCacheText.Text = ""; Log.Warn($"Cache size: {ex.Message}"); }
+    }
+
+    void CacheBudget_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingCacheBudget || CacheBudgetCombo.SelectedIndex < 0) return;
+        int gb = CacheJanitor.BudgetChoices[CacheBudgetCombo.SelectedIndex];
+        if (gb == S.CacheBudgetGb) return;
+        S.CacheBudgetGb = gb;
+        SettingsStore.Save();
+        // A smaller budget takes effect now, not at the next start.
+        _ = CacheJanitor.RunAsync().ContinueWith(_ => DispatcherQueue.TryEnqueue(() => _ = ShowPageCacheSizeAsync()), TaskScheduler.Default);
+    }
+
+    async void EmptyPageCache_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            long freed = await CacheJanitor.ClearAsync();
+            App.Window?.ShowInfo(L.F("Game page cache emptied: {0} freed. Pages fetch what they show again.", DiskUsage.Format(freed)));
+            await ShowPageCacheSizeAsync();
+        }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not empty the cache"), ex.Message, ex); }
     }
 
     void ClearCache_Click(object sender, RoutedEventArgs e)

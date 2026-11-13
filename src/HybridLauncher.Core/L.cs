@@ -51,6 +51,24 @@ public static class L
     /// <summary>The text in the UI language.</summary>
     public static string T(string english) => _table is not null && _table.TryGetValue(english, out var s) ? s : english;
 
+    static Dictionary<string, string>? _reverse;
+
+    /// <summary>
+    /// The English text a translated one was made from, or "" when there is none (an English UI, or a text not in the table).
+    /// Settings search finds a setting by its English name in any UI language.
+    /// </summary>
+    public static string English(string shown)
+    {
+        if (_table is null || string.IsNullOrEmpty(shown)) return "";
+        if (_reverse is null)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (en, tr) in _table) map.TryAdd(tr, en);
+            _reverse = map;
+        }
+        return _reverse.TryGetValue(shown, out var english) && english != shown ? english : "";
+    }
+
     /// <summary>A format string in the UI language, filled with <paramref name="args"/>.</summary>
     public static string F(string english, params object?[] args) => string.Format(CultureInfo.CurrentCulture, T(english), args);
 

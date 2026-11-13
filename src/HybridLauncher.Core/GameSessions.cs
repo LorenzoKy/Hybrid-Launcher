@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using HybridLauncher.Core.Hardware;
 using HybridLauncher.Core.Opti;
 
@@ -28,10 +28,60 @@ public static class GameSessions
         public GameRunState State;
         public DateTime StartedAt;
         public DateTime? RunningSince;
+        /// <summary>When the game was first seen running (UTC); RunningSince moves on as the minutes are counted.</summary>
+        public DateTime? FirstRunning;
         public double PendingMinutes;
         public int Misses;
         public string? Process;
         public bool Launched;
+        /// <summary>The game process waited on (its exit checks the game at once instead of at the next 2 s look).</summary>
+        public int WaitPid;
+        public RegisteredWaitHandle? Wait;
+        public WaitHandle? WaitObject;
+    }
+
+    sealed class ProcessHandle : WaitHandle
+    {
+        public ProcessHandle(nint handle) => SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(handle, ownsHandle: true);
+    }
+
+    /// <summary>
+    /// Waits on the game's process (SYNCHRONIZE only, granted for most processes): when it exits the sessions are checked at once
+    /// and twice more within a second, so a closed game ends its session in about a second instead of 4 to 6 (1.4.0-rc.20: the
+    /// window came back late, and users opened it by hand before the app saw the game closed).
+    /// </summary>
+    static void WaitOnExit(Session s, int pid)
+    {
+        if (pid <= 0 || s.WaitPid == pid) return;
+        StopWaiting(s);
+        var h = OpenProcess(0x00100000, false, pid);
+        if (h == 0) return;
+        try
+        {
+            var handle = new ProcessHandle(h);
+            s.WaitPid = pid;
+            s.WaitObject = handle;
+            s.Wait = ThreadPool.RegisterWaitForSingleObject(handle, (_, _) => _ = QuickChecksAsync(), null, Timeout.Infinite, executeOnlyOnce: true);
+        }
+        catch (Exception ex) { Log.Warn($"Session wait: {ex.Message}"); }
+    }
+
+    static void StopWaiting(Session s)
+    {
+        try { s.Wait?.Unregister(null); } catch { }
+        try { s.WaitObject?.Dispose(); } catch { }
+        s.Wait = null;
+        s.WaitObject = null;
+        s.WaitPid = 0;
+    }
+
+    static async Task QuickChecksAsync()
+    {
+        foreach (var delay in new[] { 150, 500, 500, 600 })
+        {
+            await Task.Delay(delay);
+            Tick();
+        }
     }
 
     static readonly Dictionary<string, Session> Sessions = new(StringComparer.OrdinalIgnoreCase);
@@ -76,6 +126,21 @@ public static class GameSessions
         lock (Sessions) return Sessions.Values.Where(s => s.State != GameRunState.Stopped).Select(s => s.Game.Id).ToList();
     }
 
+    // When Play was last pressed for a game here (or its launched session ended): a session that shows up soon after is still
+    // that launch. Games that start through a launcher exe, restart themselves once (Steam's DRM wrapper, anti-cheat) or come
+    // up before the launch call returned were taken for games "started outside" and the window stayed on screen over them.
+    static readonly Dictionary<string, DateTime> Intent = new(StringComparer.OrdinalIgnoreCase);
+    static readonly TimeSpan IntentFor = TimeSpan.FromMinutes(3), RestartFor = TimeSpan.FromSeconds(75);
+
+    /// <summary>Play was pressed for this game: called before anything is started, so whatever finds the game running knows.</summary>
+    public static void WillLaunch(string gameId)
+    {
+        lock (Sessions) Intent[gameId] = DateTime.UtcNow + IntentFor;
+    }
+
+    // Under the Sessions lock.
+    static bool Intended(string gameId) => Intent.TryGetValue(gameId, out var until) && DateTime.UtcNow < until;
+
     /// <summary>Called right after the game was started from Hybrid Launcher: turns HDR on when the game asks for it, then watches it.</summary>
     public static void Launched(Game game, GameSettings settings, string dir)
     {
@@ -84,6 +149,7 @@ public static class GameSessions
         lock (Sessions)
         {
             Sessions[game.Id] = new Session { Game = game, Settings = settings, Dir = WatchDir(game, dir), State = GameRunState.Starting, StartedAt = DateTime.UtcNow, Launched = true };
+            Intent[game.Id] = DateTime.UtcNow + IntentFor;
         }
         Raise(game.Id);
         EnsureTimer();
@@ -108,7 +174,7 @@ public static class GameSessions
                 Sessions[game.Id] = new Session
                 {
                     Game = game, Settings = settings, Dir = dir, State = GameRunState.Running, StartedAt = DateTime.UtcNow,
-                    RunningSince = DateTime.UtcNow, Process = running,
+                    RunningSince = DateTime.UtcNow, FirstRunning = DateTime.UtcNow, Process = running, Launched = Intended(game.Id),
                 };
             }
             Log.Info($"Session: {game.Name} found running ({running})");
@@ -154,13 +220,17 @@ public static class GameSessions
             if (games.Count == 0) return;
             var alive = new HashSet<int>();
             var found = new Dictionary<string, (Game Game, GameSettings Settings, string Exe)>(StringComparer.OrdinalIgnoreCase);
-            foreach (var p in Process.GetProcesses())
+            // Process ids only (EnumProcesses): Process.GetProcesses made a few hundred objects every 2 s.
+            var pids = new uint[4096];
+            if (!EnumProcesses(pids, (uint)(pids.Length * sizeof(uint)), out uint needed)) needed = 0;
+            int count = Math.Min(pids.Length, (int)(needed / sizeof(uint)));
+            for (int i = 0; i < count; i++)
             {
-                using (p)
                 {
-                    if (p.Id <= 4) continue;
-                    alive.Add(p.Id);
-                    if (PathOf(p) is not { } path) continue;
+                    int pid = (int)pids[i];
+                    if (pid <= 4) continue;
+                    alive.Add(pid);
+                    if (PathOf(pid) is not { } path) continue;
                     foreach (var g in games)
                     {
                         if (!path.StartsWith(g.Dir + "\\", StringComparison.OrdinalIgnoreCase)) continue;
@@ -174,7 +244,7 @@ public static class GameSessions
 
             foreach (var (id, (game, settings, exe)) in found)
             {
-                bool added = false;
+                bool added = false, launched = false;
                 lock (Sessions)
                 {
                     if (!Sessions.TryGetValue(id, out var s) || s.State == GameRunState.Stopped)
@@ -182,7 +252,8 @@ public static class GameSessions
                         Sessions[id] = new Session
                         {
                             Game = game, Settings = settings, Dir = WatchDir(game, Path.GetDirectoryName(exe)!), State = GameRunState.Running,
-                            StartedAt = DateTime.UtcNow, RunningSince = DateTime.UtcNow, Process = Path.GetFileName(exe),
+                            StartedAt = DateTime.UtcNow, RunningSince = DateTime.UtcNow, FirstRunning = DateTime.UtcNow, Process = Path.GetFileName(exe),
+                            Launched = launched = Intended(id),
                         };
                         added = true;
                     }
@@ -193,13 +264,13 @@ public static class GameSessions
                     }
                 }
                 if (!added) continue;
-                Log.Info($"Session: {game.Name} found running ({Path.GetFileName(exe)}), started outside Hybrid Launcher");
+                Log.Info($"Session: {game.Name} found running ({Path.GetFileName(exe)}), {(launched ? "started from Hybrid Launcher a moment ago" : "started outside Hybrid Launcher")}");
                 // Smart HDR follows the game however it was started (the Xbox app, Steam, a shortcut), not only from Play here.
                 if (settings.SmartHdr) OnUi(() => HdrOn(game));
-                if (game.Store != GameStore.Steam) OnUi(() =>
+                OnUi(() =>
                 {
                     settings.LastPlayed = DateTime.Now;
-                    PlaytimeLedger.Started(game, DateTime.Now);
+                    if (game.Store != GameStore.Steam) PlaytimeLedger.Started(game, DateTime.Now);
                     SettingsStore.Save();
                     PlaytimeChanged?.Invoke(game.Id);
                 });
@@ -253,22 +324,27 @@ public static class GameSessions
     /// The process's exe path, cached by pid and start time (a reused pid is read again). Both come from one handle opened with
     /// limited rights: Process.StartTime needed more and threw "access denied" for every protected process, every 3 seconds.
     /// </summary>
-    static string? PathOf(Process p)
+    static string? PathOf(Process p) => PathOf(p.Id);
+
+    static string? PathOf(int pid)
     {
-        var h = OpenProcess(0x1000, false, p.Id);
+        var h = OpenProcess(0x1000, false, pid);
         if (h == 0) return null;
         try
         {
             var start = GetProcessTimes(h, out var created, out _, out _, out _) ? DateTime.FromFileTimeUtc(created) : default;
-            lock (Seen) if (Seen.TryGetValue(p.Id, out var seen) && seen.Start == start) return seen.Path;
+            lock (Seen) if (Seen.TryGetValue(pid, out var seen) && seen.Start == start) return seen.Path;
             var sb = new System.Text.StringBuilder(1024);
             int size = sb.Capacity;
             var path = QueryFullProcessImageName(h, 0, sb, ref size) ? sb.ToString(0, size) : null;
-            lock (Seen) Seen[p.Id] = (start, path);
+            lock (Seen) Seen[pid] = (start, path);
             return path;
         }
         finally { CloseHandle(h); }
     }
+
+    [System.Runtime.InteropServices.DllImport("psapi.dll", SetLastError = true)]
+    static extern bool EnumProcesses(uint[] pids, uint size, out uint needed);
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetProcessTimes(nint process, out long creation, out long exit, out long kernel, out long user);
@@ -286,9 +362,12 @@ public static class GameSessions
     }
 
     /// <summary>The exe name of a game process running from this folder or below it, or null (crash handlers and the like do not count).</summary>
-    static string? RunningUnder(string dir)
+    static string? RunningUnder(string dir) => RunningUnder(dir, out _);
+
+    static string? RunningUnder(string dir, out int pid)
     {
         var procs = Under(dir, helpers: false);
+        pid = procs.Count > 0 ? procs[0].Id : 0;
         try { return procs.Count > 0 ? procs[0].ProcessName + ".exe" : null; }
         finally { foreach (var p in procs) p.Dispose(); }
     }
@@ -300,16 +379,17 @@ public static class GameSessions
         string[] names;
         try { names = Directory.GetFiles(dir, "*.exe").Select(Path.GetFileNameWithoutExtension).ToArray()!; }
         catch { return list; }
-        foreach (var name in names)
+        var wanted = new HashSet<string>(names.Where(n => helpers || !IsHelperExe(n)), StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0) return list;
+        // One look at the running processes for every exe of the folder (2.0.0-rc.9): GetProcessesByName walks them all on each
+        // call, once per exe, and a game page asks on every refresh (10-25 ms on the UI thread for a folder of a few exes).
+        foreach (var p in Process.GetProcesses())
         {
-            if (!helpers && IsHelperExe(name)) continue;
-            foreach (var p in Process.GetProcessesByName(name))
-            {
-                // A path Windows will not give is another program's process with the same name: never assume it is the game.
-                var path = ImagePath(p.Id);
-                if (path is not null && string.Equals(Path.GetDirectoryName(path), dir.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) list.Add(p);
-                else p.Dispose();
-            }
+            if (!wanted.Contains(p.ProcessName)) { p.Dispose(); continue; }
+            // A path Windows will not give is another program's process with the same name: never assume it is the game.
+            var path = ImagePath(p.Id);
+            if (path is not null && string.Equals(Path.GetDirectoryName(path), dir.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)) list.Add(p);
+            else p.Dispose();
         }
         return list;
     }
@@ -390,19 +470,21 @@ public static class GameSessions
             lock (Sessions) sessions = Sessions.Values.Where(s => s.State != GameRunState.Stopped).ToList();
             foreach (var s in sessions)
             {
-                var running = RunningUnder(s.Dir);
+                var running = RunningUnder(s.Dir, out int pid);
                 var now = DateTime.UtcNow;
+                if (running is not null && s.State is GameRunState.Starting or GameRunState.Running) WaitOnExit(s, pid);
                 switch (s.State)
                 {
                     case GameRunState.Starting when running is not null:
                         s.State = GameRunState.Running;
-                        s.RunningSince = now;
+                        s.RunningSince = s.FirstRunning = now;
                         s.Process = running;
                         Log.Info($"Session: {s.Game.Name} is running ({running})");
-                        if (s.Game.Store != GameStore.Steam) OnUi(() =>
+                        // Last played for every store (Steam's own date comes late); the time stays Steam's to count.
+                        OnUi(() =>
                         {
                             s.Settings.LastPlayed = DateTime.Now;
-                            PlaytimeLedger.Started(s.Game, DateTime.Now);
+                            if (s.Game.Store != GameStore.Steam) PlaytimeLedger.Started(s.Game, DateTime.Now);
                             SettingsStore.Save();
                             PlaytimeChanged?.Invoke(s.Game.Id);
                         });
@@ -451,7 +533,25 @@ public static class GameSessions
     static void End(Session s, string why)
     {
         s.State = GameRunState.Stopped;
+        StopWaiting(s);
+        if (s.Game.Store == GameStore.Steam && s.FirstRunning is not null) OnUi(() =>
+        {
+            s.Settings.LastPlayed = DateTime.Now;
+            SettingsStore.Save();
+            PlaytimeChanged?.Invoke(s.Game.Id);
+        });
+        // A launched game that closes and comes back within a minute restarted itself: still the same launch.
+        if (s.Launched) lock (Sessions) Intent[s.Game.Id] = DateTime.UtcNow + RestartFor;
         Log.Info($"Session: {s.Game.Name} {why}");
+        // The game Dashboard's list of sessions: from the moment it was seen running to now.
+        if ((s.FirstRunning ?? s.RunningSince) is { } since)
+        {
+            var start = since.ToLocalTime();
+            // Two missed checks (4 s) told it closed: they are not play time.
+            double minutes = (DateTime.UtcNow - since).TotalMinutes - (s.Misses >= 2 ? 4 / 60.0 : 0);
+            var game = s.Game;
+            _ = Task.Run(() => SessionLog.Add(new PlaySession(game.Id, game.Name, start, minutes)));
+        }
         OnUi(() => HdrRestoreFor(s.Game.Id));
         Raise(s.Game.Id);
         OnUi(() => Ended?.Invoke(s.Game));
@@ -564,7 +664,7 @@ public static class GameSessions
             {
                 // Still running: watch it, and turn HDR off when it closes.
                 lock (Sessions)
-                    Sessions[game.Id] = new Session { Game = game, Settings = settings!, Dir = dir, State = GameRunState.Running, StartedAt = DateTime.UtcNow, RunningSince = DateTime.UtcNow, Process = running };
+                    Sessions[game.Id] = new Session { Game = game, Settings = settings!, Dir = dir, State = GameRunState.Running, StartedAt = DateTime.UtcNow, RunningSince = DateTime.UtcNow, FirstRunning = DateTime.UtcNow, Process = running };
                 EnsureTimer();
                 continue;
             }

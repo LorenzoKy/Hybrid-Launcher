@@ -43,6 +43,46 @@ public static class Motion
         Start(body, sb);
     }
 
+    /// <summary>
+    /// Folds or opens a section's body: opening fades it in, folding takes it away at once (the parts under it move up on the
+    /// same frame as the click, with nothing to wait for).
+    /// </summary>
+    public static void Fold(FrameworkElement body, bool open)
+    {
+        if (open) { Open(body); return; }
+        if (States.TryGetValue(body, out var s)) { s.Running?.Stop(); s.Running = null; s.Gen++; }
+        body.Opacity = 1;
+        body.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Makes a whole heading fold its section: a press anywhere on it (not only on the chevron or the title's letters) runs
+    /// <paramref name="toggle"/> at once, with a light hover over the heading. Controls inside it (buttons, filters, menus)
+    /// keep their own clicks.
+    /// </summary>
+    public static void FoldOnPress(Panel header, Action toggle)
+    {
+        var clear = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var hover = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF));
+        header.Background = clear;
+        header.PointerEntered += (_, _) => header.Background = hover;
+        header.PointerExited += (_, _) => header.Background = clear;
+        header.PointerCanceled += (_, _) => header.Background = clear;
+        header.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(header).Properties.IsLeftButtonPressed || InControl(e.OriginalSource as DependencyObject, header)) return;
+            e.Handled = true;
+            toggle();
+        };
+    }
+
+    static bool InControl(DependencyObject? from, FrameworkElement header)
+    {
+        for (var o = from; o is not null && !ReferenceEquals(o, header); o = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(o))
+            if (o is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase or Microsoft.UI.Xaml.Controls.Control) return true;
+        return false;
+    }
+
     /// <summary>Hides <paramref name="body"/> after a quick fade and slide up; <paramref name="done"/> runs once it is collapsed.</summary>
     public static void Close(FrameworkElement body, Action? done = null)
     {
@@ -101,6 +141,32 @@ public static class Motion
         // The end angle is kept as the real value, so the next turn starts from it.
         sb.Completed += (_, _) => { r.Angle = to; sb.Stop(); };
         sb.Begin();
+    }
+
+    /// <summary>
+    /// Makes an element glide to a new place when layout moves it (a card above grew, a list re-flowed) instead of jumping
+    /// there. It runs in the compositor, so layout is not done per frame. Turned on a moment after the element is first laid
+    /// out, so the first placement is not animated; turned off while the element is out of the tree.
+    /// </summary>
+    public static void GlideOnLayout(FrameworkElement element, int ms = 220)
+    {
+        element.Loaded += (_, _) =>
+        {
+            element.DispatcherQueue?.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (!element.IsLoaded) return;
+                var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element);
+                var c = visual.Compositor;
+                var glide = c.CreateVector3KeyFrameAnimation();
+                glide.Target = "Offset";
+                glide.InsertExpressionKeyFrame(1f, "this.FinalValue", c.CreateCubicBezierEasingFunction(new System.Numerics.Vector2(0.2f, 0.8f), new System.Numerics.Vector2(0.3f, 1f)));
+                glide.Duration = TimeSpan.FromMilliseconds(ms);
+                var set = c.CreateImplicitAnimationCollection();
+                set["Offset"] = glide;
+                visual.ImplicitAnimations = set;
+            });
+        };
+        element.Unloaded += (_, _) => Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element).ImplicitAnimations = null;
     }
 
     /// <summary>Fades an element in (pictures, freshly built content).</summary>

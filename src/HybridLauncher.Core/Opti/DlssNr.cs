@@ -60,6 +60,73 @@ public static class DlssNr
         Log.Info($"DLSS NR model file stored: {Path.GetFileName(source)} {Version(dest)}");
     }
 
+    // ---------- janblade's F5: who runs the model, and the optional downloads ----------
+
+    /// <summary>The forwarder OptiScaler loads to reach the model: NVIDIA's NGX in the build, or the vendor-neutral port.</summary>
+    public const string ForwarderName = "nvngx.dll_dlssnr.dll";
+
+    /// <summary>The oldest model file the vendor-neutral port can run (it uses the small network that came with 310.9).</summary>
+    public static readonly Version PortMinimum = new(310, 9);
+
+    /// <summary>An NVIDIA RTX card is in the PC (NGX and F5Low need one).</summary>
+    public static bool HasRtx() => Hardware.HardwareInfo.Gpus().Any(g => g.Vendor == Hardware.GpuVendor.Nvidia && g.Name.Contains("RTX", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Whether the vendor-neutral port should run the model: chosen, or "auto" on a PC without an RTX card.</summary>
+    public static bool PortWanted(AppSettings s) => s.DlssNrBackend switch
+    {
+        "port" => true,
+        "ngx" => false,
+        _ => !HasRtx(),
+    };
+
+    /// <summary>The release's vendor-neutral forwarder download, if it publishes one.</summary>
+    public static OptiAddon? PortAddon(OptiRelease r) => r.Addons.FirstOrDefault(a =>
+        a.Name.Contains("vendor-neutral", StringComparison.OrdinalIgnoreCase) || a.Name.Contains("dlss5-forwarder", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The release's newer F5Low, if it publishes one.</summary>
+    public static OptiAddon? F5LowAddon(OptiRelease r) => r.Addons.FirstOrDefault(a => a.Name.Contains("f5low", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>"1.1.0.184" from "Optional-F5Low-Update-1.1.0.184.zip"; empty when the name has none.</summary>
+    public static string AddonVersion(OptiAddon a) =>
+        System.Text.RegularExpressions.Regex.Match(a.Name, @"\d+(?:\.\d+){1,3}") is { Success: true } m ? m.Value : "";
+
+    /// <summary>
+    /// The optional downloads an install of <paramref name="r"/> takes on this PC: the vendor-neutral forwarder when the port
+    /// runs the model (it has nothing to run without a model file), the newer F5Low on an RTX card when it is wanted.
+    /// </summary>
+    public static List<OptiAddon> AddonsFor(OptiRelease r, AppSettings s, bool modelGoesIn)
+    {
+        var list = new List<OptiAddon>();
+        if (modelGoesIn && PortWanted(s) && PortAddon(r) is { } port) list.Add(port);
+        if (s.F5LowUpdate && HasRtx() && F5LowAddon(r) is { } f5) list.Add(f5);
+        return list;
+    }
+
+    /// <summary>The file's version as a <see cref="System.Version"/> (null when it has none).</summary>
+    public static Version? VersionOf(string file) => System.Version.TryParse(Version(file).Split('+')[0], out var v) ? v : null;
+
+    /// <summary>The model file is new enough for the vendor-neutral port (310.9 or newer).</summary>
+    public static bool PortCanRun(string model) => VersionOf(model) is { } v && v >= PortMinimum;
+
+    /// <summary>The forwarder in a folder is the vendor-neutral port (its version info says so), not NVIDIA's NGX one.</summary>
+    public static bool IsPort(string forwarder)
+    {
+        try
+        {
+            var v = FileVersionInfo.GetVersionInfo(forwarder);
+            return $"{v.ProductName} {v.FileDescription} {v.InternalName}".Contains("vendor-neutral", StringComparison.OrdinalIgnoreCase)
+                || (v.InternalName ?? "").Equals("nr_port", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>What runs the model in an install: "port", "ngx", or null when the build has no forwarder.</summary>
+    public static string? Backend(InstallManifest m)
+    {
+        var f = Path.Combine(m.TargetDir, ForwarderName);
+        return File.Exists(f) ? IsPort(f) ? "port" : "ngx" : null;
+    }
+
     public static void Forget()
     {
         OptiInstaller.TryDelete(StoredPath);
@@ -130,8 +197,22 @@ public static class DlssNr
         return true;
     }
 
-    /// <summary>The file holds <paramref name="text"/> as ASCII or UTF-16 (any case), read in chunks.</summary>
+    // What Mentions found per file as it was then (size, last write): the game page asks about the same OptiScaler.dll on every
+    // refresh, and reading the whole dll (tens of MB) each time held the UI thread 20-50 ms a call (2.0.0-rc.9).
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<(string File, string Text), (long Size, DateTime Write, bool Found)> MentionsCache = new();
+
+    /// <summary>The file holds <paramref name="text"/> as ASCII or UTF-16 (any case), read in chunks; remembered until the file changes.</summary>
     static bool Mentions(string file, string text)
+    {
+        var info = new FileInfo(file);
+        var key = (file.ToLowerInvariant(), text);
+        if (MentionsCache.TryGetValue(key, out var known) && known.Size == info.Length && known.Write == info.LastWriteTimeUtc) return known.Found;
+        bool found = Scan(file, text);
+        MentionsCache[key] = (info.Length, info.LastWriteTimeUtc, found);
+        return found;
+    }
+
+    static bool Scan(string file, string text)
     {
         var needles = new[] { System.Text.Encoding.ASCII.GetBytes(text.ToLowerInvariant()), System.Text.Encoding.Unicode.GetBytes(text.ToLowerInvariant()) };
         int overlap = needles.Max(n => n.Length);

@@ -15,7 +15,7 @@ namespace HybridLauncher.Views;
 /// place (launch options typed straight in, switches, Open buttons with folder sizes). Esc, the X or a click outside closes it.
 /// Built each time it opens, so it always matches the game's state.
 /// </summary>
-public sealed partial class GamePage
+public partial class GamePage
 {
     string _propsPage = "general";
     StackPanel? _propsNav;
@@ -60,7 +60,8 @@ public sealed partial class GamePage
         window.Children.Add(rail);
         Grid.SetColumn(right, 1);
         window.Children.Add(right);
-        double w = Math.Min(1000, Math.Max(640, ActualWidth - 120)), h = Math.Min(720, Math.Max(460, ActualHeight - 100));
+        double w = Math.Min(1000, Math.Max(640, ActualWidth - 120));
+        double h = Math.Min(720, Math.Max(460, ActualHeight - 100));
         window.Width = w;
         window.Height = h;
         window.Tapped += (_, e) => e.Handled = true;
@@ -76,6 +77,7 @@ public sealed partial class GamePage
 
     void CloseProperties()
     {
+        _propsPage = "general";
         PropsOverlay.Visibility = Visibility.Collapsed;
         PropsOverlay.Children.Clear();
         _propsNav = null;
@@ -91,7 +93,9 @@ public sealed partial class GamePage
         CloseProperties();
     }
 
-    static IEnumerable<(string Id, string Title)> PropsPages(Game game)
+    static IEnumerable<(string Id, string Title)> PropsPages(Game game) => GamePropsPages(game);
+
+    static IEnumerable<(string Id, string Title)> GamePropsPages(Game game)
     {
         yield return ("general", L.T("General"));
         if (!game.NotInstalled) yield return ("files", L.T("Installed files"));
@@ -116,7 +120,7 @@ public sealed partial class GamePage
     void ShowPropsPage(string id)
     {
         if (_game is not { } game || _propsNav is null || _propsBody is null) return;
-        if (!PropsPages(game).Any(p => p.Id == id)) id = "general";
+        if (!PropsPages(game).Any(p => p.Id == id)) id = PropsPages(game).First().Id;
         _propsPage = id;
         foreach (var b in _propsNav.Children.OfType<Button>())
         {
@@ -229,6 +233,43 @@ public sealed partial class GamePage
                 PropButton(L.T("Hide"), () => { CloseProperties(); Hide_Click(this, new RoutedEventArgs()); })));
         }
         page.Children.Add(PropRow(L.T("Store"), game.StoreLabel, new Border()));
+        CoverRow(page, game);
+    }
+
+    /// <summary>The library cover: the store's, or a picture of the user's own (copied into the data folder, so it stays).</summary>
+    void CoverRow(StackPanel page, Game game)
+    {
+        bool own = _settings.CustomCover is { } c && File.Exists(c);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        buttons.Children.Add(PropButton(L.T("Choose a picture…"), async () =>
+        {
+            if (App.Window is not { } window || await Pickers.PickFileAsync(window, ".jpg", ".jpeg", ".png", ".webp", ".bmp") is not { } picked) return;
+            try
+            {
+                var safe = string.Concat(game.Id.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) || ch == ':' ? '_' : ch));
+                // A new name each time: the decoded picture of the old one may still be cached by the image loader.
+                var target = Path.Combine(AppInfo.CoversDir, $"{safe}-{DateTime.UtcNow:yyyyMMddHHmmss}{Path.GetExtension(picked).ToLowerInvariant()}");
+                File.Copy(picked, target, overwrite: true);
+                var old = _settings.CustomCover;
+                _settings.CustomCover = target;
+                SettingsStore.Save();
+                if (old is not null && !old.Equals(target, StringComparison.OrdinalIgnoreCase)) try { File.Delete(old); } catch { }
+                LibraryPage.ForgetCover(game.Id);
+                Log.Info($"Cover for {game.Name}: own picture {Path.GetFileName(picked)}");
+                ShowPropsPage("library");
+            }
+            catch (Exception ex) { Log.Warn($"Cover for {game.Name}: {ex.Message}"); }
+        }));
+        if (own) buttons.Children.Add(PropButton(L.T("Use the store's"), () =>
+        {
+            var old = _settings.CustomCover;
+            _settings.CustomCover = null;
+            SettingsStore.Save();
+            if (old is not null) try { File.Delete(old); } catch { }
+            LibraryPage.ForgetCover(game.Id);
+            ShowPropsPage("library");
+        }));
+        page.Children.Add(PropRow(L.T("Cover"), own ? L.T("Your own picture. A portrait picture (2:3, like 600 × 900) fits the tile best.") : L.T("The store's cover. Choose a picture to use your own (2:3, like 600 × 900, fits best)."), buttons));
     }
 
     /// <summary>"Customization": a switch per part of the banner and the launch bar, for this game.</summary>
@@ -295,7 +336,7 @@ public sealed partial class GamePage
 /// The OptiScaler tab's foldable parts: the note under Install, ASI plugins, Custom DLLs and Saved versions. Each remembers whether it was
 /// folded (Settings: CollapsedCards), for every game, so it stays the way the user left it.
 /// </summary>
-public sealed partial class GamePage
+public partial class GamePage
 {
     const string HintKey = "opti:installhint", AsiKey = "opti:asi", CustomDllKey = "opti:customdlls", VersionsKey = "opti:versions";
 

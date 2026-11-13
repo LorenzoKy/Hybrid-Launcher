@@ -73,6 +73,7 @@ public static class AppState
         try
         {
             await CloudSync.BeforeLaunchAsync(game);
+            GameSessions.WillLaunch(game.Id);
             await GameLauncher.LaunchAsync(game, settings);
             if (GameScanner.EffectiveExe(game, settings) is { } exe) GameSessions.Launched(game, settings, Path.GetDirectoryName(exe)!);
         }

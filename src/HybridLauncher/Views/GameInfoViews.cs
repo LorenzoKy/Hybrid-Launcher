@@ -67,31 +67,16 @@ static class Ui
     public static Color Pink => Palettes.Adapt(Color.FromArgb(0xFF, 0xE0, 0x5C, 0xB8));
     public static Color Slate => Palettes.Adapt(Color.FromArgb(0xFF, 0x8B, 0x94, 0xA8));
     public static Color Yellow => Palettes.Adapt(Color.FromArgb(0xFF, 0xF5, 0xC5, 0x18));
+    public static Color Violet => Palettes.Adapt(Color.FromArgb(0xFF, 0x9A, 0x7C, 0xFF));
 
-    /// <summary>A rounded tinted square with a glyph in it: the icon of a card heading.</summary>
-    public static Border Badge(string glyph, Color? tint = null, double size = 34)
-    {
-        var c = tint ?? ToneColor(Tone.Accent);
-        return new Border
-        {
-            Width = size,
-            Height = size,
-            CornerRadius = new CornerRadius(size / 4),
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Windows.Foundation.Point(0, 0),
-                EndPoint = new Windows.Foundation.Point(1, 1),
-                GradientStops =
-                {
-                    new GradientStop { Color = Color.FromArgb(0x55, c.R, c.G, c.B), Offset = 0 },
-                    new GradientStop { Color = Color.FromArgb(0x22, c.R, c.G, c.B), Offset = 1 },
-                },
-            },
-            BorderThickness = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = Tinted(Icons.Make(glyph, size * 0.47), c),
-        };
-    }
+    /// <summary>
+    /// The icon of a card heading (and of every list that shows one per row): a rounded tile filled with its colour, lit from
+    /// above (lighter at the top, deeper at the bottom, a soft sheen over the upper half) with the glyph in white on it, as
+    /// Windows 11 and the consoles draw their settings icons. One shape, one size rule and one light everywhere, so the icons
+    /// of every tab read as one family. Drawn by <see cref="HybridLauncher.Controls.IconTile"/>, which XAML can use too.
+    /// </summary>
+    public static FrameworkElement Badge(string glyph, Color? tint = null, double size = 34) =>
+        new HybridLauncher.Controls.IconTile(glyph, tint ?? ToneColor(Tone.Accent), size);
 
     /// <summary>
     /// The separator between the sections of a tab: a hairline that starts in the section's colour and fades to the page's
@@ -138,7 +123,8 @@ static class Ui
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         // Settings → Appearance → Icons → Card headings: the title alone.
-        if (Icons.Show(IconSpots.Headings)) grid.Children.Add(Badge(glyph, tint));
+        // An empty glyph: no icon (a card right under a tab that already shows it).
+        if (Icons.Show(IconSpots.Headings) && glyph.Length > 0) grid.Children.Add(Badge(glyph, tint));
         else grid.ColumnSpacing = 0;
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = title, Style = Style("BodyStrongTextBlockStyle"), FontSize = 17, TextTrimming = TextTrimming.CharacterEllipsis });
@@ -163,7 +149,7 @@ static class Ui
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var c = tint ?? ToneColor(Tone.Accent);
         // The trophy is the shaded one, as on the covers and the play bar.
-        if (Icons.Show(IconSpots.Headings)) grid.Children.Add(glyph == Icons.TrophyGlyph ? Icons.Trophy(22) : Tinted(Icons.Make(glyph, 18), c));
+        if (Icons.Show(IconSpots.Headings)) grid.Children.Add(Badge(glyph, c, 30));
         else grid.ColumnSpacing = 0;
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = title, FontSize = 20, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
@@ -177,6 +163,43 @@ static class Ui
             grid.Children.Add(right);
         }
         return grid;
+    }
+
+    /// <summary>
+    /// Makes a section fold: a chevron at the end of <paramref name="heading"/> (a click on it or on the title folds or opens
+    /// <paramref name="body"/>), remembered for every game under <paramref name="key"/> (AppSettings.CollapsedCards). The links
+    /// on the heading's right stay where they were and keep working while it is folded.
+    /// </summary>
+    public static void Foldable(Grid heading, FrameworkElement body, string key)
+    {
+        bool open = !AppState.Settings.CollapsedCards.Contains(key);
+        var chevron = Motion.Chevron(open, 11);
+        var fold = new Button
+        {
+            Content = chevron,
+            Padding = new Thickness(8, 6, 8, 6),
+            MinWidth = 0,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(fold, L.T("Fold or open this section"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(fold, L.T("Fold or open this section"));
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(fold, heading.ColumnDefinitions.Count - 1);
+        heading.Children.Add(fold);
+        body.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        void Toggle()
+        {
+            open = !open;
+            Motion.Turn(chevron, open);
+            Motion.Fold(body, open);
+            if (open) AppState.Settings.CollapsedCards.Remove(key); else AppState.Settings.CollapsedCards.Add(key);
+            heading.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, SettingsStore.Save);
+        }
+        fold.Click += (_, _) => Toggle();
+        // The whole heading folds, its links keep their clicks.
+        Motion.FoldOnPress(heading, Toggle);
     }
 
     /// <summary>
@@ -304,12 +327,20 @@ static class Ui
     public static FrameworkElement Wrap(IEnumerable<FrameworkElement> items, double spacing = 6) => new WrapPanel(spacing, items);
 
     /// <summary>A label on the left, a value (pill, text...) on the right.</summary>
-    public static Grid Row(string label, FrameworkElement value, string? tooltip = null)
+    public static Grid Row(string label, FrameworkElement value, string? tooltip = null, FrameworkElement? logo = null)
     {
         var grid = new Grid { ColumnSpacing = 12, MinHeight = 30 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
+        var text = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        if (logo is null) grid.Children.Add(text);
+        else
+        {
+            // A small mark before the label (the Controllers card: Xbox, PlayStation), a little quieter than the text.
+            logo.VerticalAlignment = VerticalAlignment.Center;
+            logo.Opacity = 0.85;
+            grid.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { logo, text } });
+        }
         value.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(value, 1);
         grid.Children.Add(value);
@@ -715,9 +746,8 @@ static class WikiPreviews
 public sealed partial class OverviewView : UserControl
 {
     readonly GameData _data;
-    readonly Grid _root = new() { ColumnSpacing = 44, RowSpacing = 32, HorizontalAlignment = HorizontalAlignment.Center, MaxWidth = 1840 };
-    readonly StackPanel _main = new() { Spacing = 34 };
-    readonly StackPanel _side = new() { Spacing = 12 };
+    // The media's place on the Dashboard: its width sets the player's and the thumbnails' size.
+    readonly Border _mediaHost = new();
 
     // The media: the player (picture or trailer) and the thumbnails under it.
     readonly StackPanel _media = new() { Spacing = 10, Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
@@ -733,35 +763,23 @@ public sealed partial class OverviewView : UserControl
     readonly StackPanel _details = new() { Spacing = 10 };
     readonly StackPanel _steamReviews = new() { Spacing = 12 };
     FrameworkElement? _steamReviewsSection;
-    readonly StackPanel _achBody = new() { Spacing = 10 };
-    FrameworkElement? _achCard;
-    Grid? _achHead;
     readonly Grid _wikiRow = new() { ColumnSpacing = 32, RowSpacing = 28 };
     readonly StackPanel _controllers = new() { Spacing = 4 };
-    readonly StackPanel _hltb = new() { Spacing = 8 };
-    readonly StackPanel _reviews = new() { Spacing = 8 };
     readonly StackPanel _languages = new() { Spacing = 2 };
     readonly TextBlock _languagesSummary = new() { Style = Ui.Style("RowDescription"), Margin = new Thickness(0, -4, 0, 4) };
-    FrameworkElement? _languagesCard, _reviewsCard;
+    FrameworkElement? _languagesCard;
     readonly Grid _requirements = new() { ColumnSpacing = 32, RowSpacing = 12 };
     FrameworkElement? _requirementsCard;
-    bool _wide = true;
+    readonly StackPanel _languagesPanel = new() { Spacing = 8, Visibility = Visibility.Collapsed };
+    Button? _steamInput, _writeReview, _storeLink;
+    string? _storeUrl;
     double _mainWidth = -1;
 
-    const double SideWidth = 400, MediaMaxWidth = 1240, ThumbMinWidth = 132, ThumbGap = 8;
+    const double MediaMaxWidth = 1100, MediaShare = 0.88, MediaMaxScreen = 0.56, ThumbMinWidth = 132, ThumbGap = 8;
 
     public OverviewView(GameData data)
     {
         _data = data;
-        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(SideWidth) });
-        _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _root.Children.Add(_main);
-        Grid.SetColumn(_side, 1);
-        _root.Children.Add(_side);
-        _root.Padding = new Thickness(4, 6, 4, 0);
-        Content = _root;
         _thumbPrev = PageButton("", -1);
         _thumbNext = PageButton("", 1);
         _viewer.Failed += reason =>
@@ -774,24 +792,30 @@ public sealed partial class OverviewView : UserControl
             }
         };
         Build();
-        _main.SizeChanged += (_, e) => LayoutTop(e.NewSize.Width);
-        Unloaded += (_, _) => StopTrailer();
+        _mediaHost.SizeChanged += (_, e) => LayoutTop(e.NewSize.Width);
+        _wikiRow.SizeChanged += (_, e) => LayoutPair(_wikiRow, e.NewSize.Width >= 640);
+        // Off the page (the Dashboard taken down): nothing plays unseen.
+        _viewer.Unloaded += (_, _) => StopTrailer();
     }
+
+    /// <summary>
+    /// The overview's parts for the Dashboard (1.4.0-rc.7: the overview became cards of the Dashboard tab): the element for the
+    /// card's body, the one whose visibility says whether the card has anything to show, and the control for its header.
+    /// </summary>
+    public (FrameworkElement Body, FrameworkElement Shown, FrameworkElement? Extra)? Part(string id) => id switch
+    {
+        "media" => (_mediaHost, _media, null),
+        "about" => (_about, _about, _storeLink),
+        "wikis" => (_wikiRow, _wikiRow, null),
+        "requirements" => (_requirements, _requirements, null),
+        "reviews" => (_steamReviews, _steamReviews, _writeReview),
+        "controllers" => (_controllers, _controllers, _steamInput),
+        "details" => (_details, _details, null),
+        "languages" => (_languagesPanel, _languagesPanel, null),
+        _ => null,
+    };
 
     bool _userPicked;
-
-    /// <summary>Side column beside the main one on wide pages, below it otherwise.</summary>
-    public void ApplyLayout(double width)
-    {
-        bool wide = width >= 1180;
-        LayoutPair(_wikiRow, width >= 900);
-        if (wide == _wide) return;
-        _wide = wide;
-        _root.ColumnDefinitions[1].Width = wide ? new GridLength(SideWidth) : new GridLength(0);
-        _root.ColumnSpacing = wide ? 44 : 0;
-        Grid.SetColumn(_side, wide ? 1 : 0);
-        Grid.SetRow(_side, wide ? 0 : 1);
-    }
 
     static void LayoutPair(Grid grid, bool sideBySide)
     {
@@ -811,12 +835,17 @@ public sealed partial class OverviewView : UserControl
         }
     }
 
-    /// <summary>The media as wide as the main column allows (up to 1240 px), 16:9, the thumbnails filling the same width.</summary>
+    /// <summary>
+    /// The media at most 88% of the main column (up to 1100 px, rc.12: it filled the column and took the whole screen), its
+    /// 16:9 picture no taller than 56% of the window, the thumbnails filling the same width.
+    /// </summary>
     void LayoutTop(double width)
     {
         if (width <= 0 || Math.Abs(width - _mainWidth) < 0.5) return;
         _mainWidth = width;
-        double media = Math.Floor(Math.Min(MediaMaxWidth, width));
+        double media = Math.Min(MediaMaxWidth, width * MediaShare);
+        if (_mediaHost.XamlRoot is { } root && root.Size.Height > 0) media = Math.Min(media, root.Size.Height * MediaMaxScreen * 16 / 9);
+        media = Math.Floor(Math.Max(Math.Min(width, 320), media));
         _media.Width = media;
         _viewer.Width = media;
         _viewer.Height = Math.Round(media * 9 / 16);
@@ -885,113 +914,67 @@ public sealed partial class OverviewView : UserControl
     /// <summary>Stops a playing trailer (another tab, another page): its sound must not keep going.</summary>
     public void StopTrailer() => _viewer.Stop();
 
-    /// <summary>
-    /// Adds a section to the main column; every section after the media starts with the same separator as the OptiScaler and
-    /// ReShade tabs, shown and hidden with the section itself.
-    /// </summary>
-    void AddMain(FrameworkElement section, Color tint)
+    StoreMovie? _pendingTrailer;
+
+    /// <summary>The overview is on screen (its tab open): the first trailer may start by itself.</summary>
+    public bool Live { get; private set; }
+
+    /// <summary>The overview's tab is shown: a trailer waiting to start starts now.</summary>
+    public void Show()
     {
-        var rule = Ui.SectionRule(tint);
-        // The column's spacing already parts the sections: the rule sits close above its section.
-        rule.Margin = new Thickness(0, 0, 0, -20);
-        rule.Visibility = section.Visibility;
-        section.RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => rule.Visibility = section.Visibility);
-        _main.Children.Add(rule);
-        _main.Children.Add(section);
+        Live = true;
+        if (_pendingTrailer is { } movie)
+        {
+            _pendingTrailer = null;
+            PlayTrailer(movie);
+        }
     }
 
-    /// <summary>A main-column section: the heading over the body, no box (like About this game).</summary>
-    static FrameworkElement MainSection(string glyph, string title, FrameworkElement body, FrameworkElement? right = null, string? subtitle = null, Color? tint = null)
+    /// <summary>Another tab or game is shown: nothing plays unseen.</summary>
+    public void Hide()
     {
-        var panel = new StackPanel { Spacing = 14 };
-        panel.Children.Add(Ui.FlatHeading(glyph, title, right, subtitle, tint));
-        panel.Children.Add(body);
-        return panel;
-    }
-
-    /// <summary>A side section in its own card (rounded, a subtle fill and border), the heading over the body.</summary>
-    FrameworkElement SideSection(string glyph, string title, FrameworkElement body, FrameworkElement? right = null, string? subtitle = null, Color? tint = null)
-    {
-        var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(Ui.FlatHeading(glyph, title, right, subtitle, tint));
-        panel.Children.Add(body);
-        return Ui.Card(panel);
+        Live = false;
+        _viewer.Stop();
     }
 
     void Build()
     {
-        // ---- main column: media, about, the wikis, requirements, then Steam's reviews last (as on the store) ----
         _thumbHost.Children.Add(_thumbRow);
         _thumbHost.Children.Add(_thumbPrev);
         _thumbHost.Children.Add(_thumbNext);
         _media.Children.Add(_viewer);
+        // The player stands off the page like the covers do (Helpers.Depth).
+        HybridLauncher.Helpers.Depth.Raise(_viewer, 16);
         _media.Children.Add(_thumbHost);
-        _main.Children.Add(_media);
+        _mediaHost.Child = _media;
         _about.Children.Add(Ui.Loading());
-        AddMain(_about, Ui.Pink);
+        _storeLink = Ui.LinkButton(L.T("Steam store page"), "", () => Ui.Open(_storeUrl));
+        _storeLink.Visibility = Visibility.Collapsed;
 
         // What the wikis say: a short preview each, with the way to their tab.
         _wikiRow.Children.Add(WikiPreviews.OptiCard(_data, flat: true));
         _wikiRow.Children.Add(WikiPreviews.PcgwCard(_data, flat: true));
         LayoutPair(_wikiRow, true);
-        AddMain(_wikiRow, Ui.Teal);
 
-        var req = new StackPanel { Spacing = 12 };
-        req.Children.Add(Ui.FlatHeading("", L.T("System requirements"), tint: Ui.Orange));
-        req.Children.Add(_requirements);
-        _requirementsCard = req;
-        req.Visibility = Visibility.Collapsed;
-        AddMain(req, Ui.Orange);
-
+        _requirements.Visibility = Visibility.Collapsed;
+        _steamReviews.Visibility = Visibility.Collapsed;
         _steamReviews.Children.Add(Ui.Loading());
-        var write = Ui.LinkButton(L.T("Write a review"), "", WriteReview);
-        ToolTipService.SetToolTip(write, L.T("Opens the game's store page in Steam, at its reviews: write yours there with your Steam account."));
-        _steamReviewsSection = MainSection("", L.T("Steam reviews"), _steamReviews, write, tint: Ui.Blue);
-        _steamReviewsSection.Visibility = Visibility.Collapsed;
-        AddMain(_steamReviewsSection, Ui.Blue);
+        _writeReview = Ui.LinkButton(L.T("Write a review"), "\uE70F", WriteReview);
+        ToolTipService.SetToolTip(_writeReview, L.T("Opens the game's store page in Steam, at its reviews: write yours there with your Steam account."));
+        _steamReviewsSection = _steamReviews;
 
-        // ---- side column: controllers first, then achievements, details, play time, scores, languages ----
         // Steam Input: the game's controller layout in Steam (community configurations, remapping), for games Steam knows.
-        var steamInput = Ui.LinkButton("Steam Input", "", OpenSteamInput);
-        ToolTipService.SetToolTip(steamInput, L.T("Opens this game's controller layout in Steam (Steam Input: remapping and community configurations)"));
-        steamInput.Visibility = SteamAppId is null ? Visibility.Collapsed : Visibility.Visible;
+        _steamInput = Ui.LinkButton("Steam Input", "\uE8A7", OpenSteamInput);
+        ToolTipService.SetToolTip(_steamInput, L.T("Opens this game's controller layout in Steam (Steam Input: remapping and community configurations)"));
+        _steamInput.Visibility = SteamAppId is null ? Visibility.Collapsed : Visibility.Visible;
         _controllers.Children.Add(Ui.Loading());
-        _side.Children.Add(SideSection("", L.T("Controllers"), _controllers, steamInput, subtitle: L.T("Official support (Steam, PCGamingWiki)"), tint: Ui.Blue));
-        _ = ShowSteamInputWhenKnownAsync(steamInput);
-
-        _achHead = Ui.FlatHeading(Icons.TrophyGlyph, L.T("Achievements"), Ui.LinkButton(L.T("View all"), "", () => _data.ShowTab("ach")), tint: Ui.Gold);
-        var achPanel = new StackPanel { Spacing = 12 };
-        achPanel.Children.Add(_achHead);
-        achPanel.Children.Add(_achBody);
-        _achCard = Ui.Card(achPanel);
-        _achCard.Visibility = Visibility.Collapsed;
-        _side.Children.Add(_achCard);
+        _ = ShowSteamInputWhenKnownAsync(_steamInput);
 
         _details.Children.Add(Ui.Loading());
-        _side.Children.Add(SideSection("", L.T("Details"), _details, tint: Ui.Pink));
-
-
-        if (AppState.Settings.ShowHltb)
-        {
-            _hltb.Children.Add(Ui.Loading());
-            _side.Children.Add(SideSection("", L.T("How long to beat"), _hltb, Ui.LinkButton("HLTB", "", OpenHltb), tint: Ui.Green));
-            _ = FillHltbAsync();
-        }
-
-        if (AppState.Settings.ShowMetacritic)
-        {
-            _reviews.Children.Add(Ui.Loading());
-            _reviewsCard = SideSection("", "Metacritic", _reviews, Ui.LinkButton("Metacritic", "", OpenMetacritic), subtitle: L.T("Critic and user scores"), tint: Ui.Yellow);
-            _side.Children.Add(_reviewsCard);
-            _ = FillReviewsAsync();
-        }
-
-        var lang = new StackPanel { Spacing = 8 };
-        lang.Children.Add(_languagesSummary);
-        lang.Children.Add(_languages);
-        _languagesCard = SideSection("", L.T("Languages"), lang, tint: Ui.Teal);
-        _languagesCard.Visibility = Visibility.Collapsed;
-        _side.Children.Add(_languagesCard);
+        _languagesPanel.Children.Add(_languagesSummary);
+        _languagesPanel.Children.Add(_languages);
+        _languagesCard = _languagesPanel;
+        _requirementsCard = _requirements;
 
         _ = FillStoreAsync();
     }
@@ -1046,7 +1029,7 @@ public sealed partial class OverviewView : UserControl
             _ = FillSteamReviewsAsync(store.AppId);
         }
         _mainWidth = -1;
-        LayoutTop(_main.ActualWidth);
+        LayoutTop(_mediaHost.ActualWidth);
         _ = FillLanguagesAsync(store);
         await FillControllersAsync(store);
     }
@@ -1063,7 +1046,9 @@ public sealed partial class OverviewView : UserControl
         {
             if (store.Screenshots.Count > 0) ShowPicture(store.Screenshots[0].Full);
             Select(_thumbs[movies.IndexOf(first)].Wrapper);
-            PlayTrailer(first);
+            // Made ahead of time (the page's idle warm-up) or behind another tab: it starts when the overview is on screen.
+            if (Live) PlayTrailer(first);
+            else _pendingTrailer = first;
         }
         else if (store.Screenshots.Count > 0)
         {
@@ -1108,7 +1093,7 @@ public sealed partial class OverviewView : UserControl
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
         // Decoded at the viewer's size: a 1920 px screenshot is not needed in full on most windows.
-        double scale = XamlRoot?.RasterizationScale ?? 1;
+        double scale = _viewer.XamlRoot?.RasterizationScale ?? 1;
         int width = (int)Math.Clamp((_viewer.ActualWidth > 0 ? _viewer.ActualWidth : 1280) * scale, 640, 1920);
         _viewer.ShowPicture(uri, width);
     }
@@ -1131,10 +1116,9 @@ public sealed partial class OverviewView : UserControl
     /// </summary>
     void FillAbout(StoreDetails store)
     {
-        // No heading: the description speaks for itself. The store link keeps its place, on the right.
-        var storeLink = Ui.LinkButton(L.T("Steam store page"), "", () => Ui.Open(store.StoreUrl));
-        storeLink.HorizontalAlignment = HorizontalAlignment.Right;
-        _about.Children.Add(storeLink);
+        // The store link sits on the section's heading (the Dashboard puts it there).
+        _storeUrl = store.StoreUrl;
+        if (_storeLink is not null) _storeLink.Visibility = Visibility.Visible;
         if (store.ShortDescription.Length > 0)
             _about.Children.Add(new TextBlock { Text = store.ShortDescription, Style = Ui.Style("BodyTextBlockStyle"), FontSize = 17, LineHeight = 26, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Opacity = 0.92 });
         if (store.About.Count > 0)
@@ -1438,15 +1422,15 @@ public sealed partial class OverviewView : UserControl
             : store is { XboxPartial: true } ? (L.T("Partial"), Ui.Tone.Partial)
             : Input("Xbox controllers") is { } x ? Ui.State(x)
             : store is null ? (L.T("Unknown"), Ui.Tone.Unknown) : (L.T("No"), Ui.Tone.Bad);
-        _controllers.Children.Add(Ui.Row(L.T("Xbox controllers"), Ui.Pill(xbox, xboxTone)));
+        _controllers.Children.Add(Ui.Row(L.T("Xbox controllers"), Ui.Pill(xbox, xboxTone), logo: StoreLogos.Controller(false)));
 
         var models = wiki?.PlayStationModels.Select(m => m.Trim().ToUpperInvariant()).ToHashSet() ?? [];
         bool? ps = Input("PlayStation controllers") is { } p ? p.Yes ? true : p.No ? false : null : null;
         bool? ds4 = store?.DualShock == true || models.Contains("DS4") ? true : store is not null || ps == false ? false : null;
         bool? ds5 = store?.DualSense == true || models.Contains("DS") || models.Contains("DS5") ? true : store is not null || ps == false ? false : null;
-        _controllers.Children.Add(Ui.Row("DualShock 4", Ui.Pill(Y(ds4), T(ds4))));
-        _controllers.Children.Add(Ui.Row("DualSense", Ui.Pill(ds5 == true && store?.DualSenseBluetooth == true ? L.T("Yes, also Bluetooth") : Y(ds5), T(ds5))));
-        if (models.Contains("DSE")) _controllers.Children.Add(Ui.Row("DualSense Edge", Ui.Pill(L.T("Yes"), Ui.Tone.Good)));
+        _controllers.Children.Add(Ui.Row("DualShock 4", Ui.Pill(Y(ds4), T(ds4)), logo: StoreLogos.Controller(true)));
+        _controllers.Children.Add(Ui.Row("DualSense", Ui.Pill(ds5 == true && store?.DualSenseBluetooth == true ? L.T("Yes, also Bluetooth") : Y(ds5), T(ds5)), logo: StoreLogos.Controller(true)));
+        if (models.Contains("DSE")) _controllers.Children.Add(Ui.Row("DualSense Edge", Ui.Pill(L.T("Yes"), Ui.Tone.Good), logo: StoreLogos.Controller(true)));
 
         // DualSense features: only the wiki tracks them.
         _controllers.Children.Add(new TextBlock { Text = L.T("DUALSENSE FEATURES"), Style = Ui.Style("GroupHeader"), Margin = new Thickness(0, 8, 0, 0) });
@@ -1461,116 +1445,6 @@ public sealed partial class OverviewView : UserControl
             _controllers.Children.Add(Ui.Row(L.T("PlayStation button prompts"), Ui.Pill(text, tone), prompts.Notes));
         }
         if (wiki is null) _controllers.Children.Add(Ui.Muted(L.T("PCGamingWiki has no page for this game: DualSense features are unknown.")));
-    }
-
-    // ---------- HowLongToBeat ----------
-
-    HltbTimes? _times;
-
-    async Task FillHltbAsync()
-    {
-        try { _times = await _data.Hltb; }
-        catch (Exception ex) { Log.Warn($"Overview HLTB: {ex.Message}"); }
-        if (Gone) return;
-        _hltb.Children.Clear();
-        if (_times is null)
-        {
-            _hltb.Children.Add(Ui.Muted(L.T("No times found on HowLongToBeat for this game.")));
-            return;
-        }
-        var tiles = new[] { (L.T("Main story"), _times.Main), (L.T("Main + extras"), _times.MainExtra), (L.T("Completionist"), _times.Completionist), (L.T("All styles"), _times.AllStyles) }
-            .Select(t => (FrameworkElement)Ui.ValueTile(t.Item1, Ui.Hours(t.Item2))).ToList();
-        _hltb.Children.Add(Ui.TwoByN(tiles));
-        if (!SameName(_times.Name)) _hltb.Children.Add(Ui.Muted(L.F("As \"{0}\" on HowLongToBeat", _times.Name)));
-    }
-
-    bool SameName(string name) => GameNames.SameGame(_data.Game.Name, name);
-
-    void OpenHltb() => Ui.Open(_times?.Url ?? $"https://howlongtobeat.com/?q={Uri.EscapeDataString(_data.SearchName)}");
-
-    // ---------- Metacritic ----------
-
-    MetacriticScores? _scores;
-
-    async Task FillReviewsAsync()
-    {
-        try { _scores = await _data.Reviews; }
-        catch (Exception ex) { Log.Warn($"Overview Metacritic: {ex.Message}"); }
-        if (Gone) return;
-        _reviews.Children.Clear();
-        if (_scores is null)
-        {
-            _reviews.Children.Add(Ui.Muted(L.T("No scores found on Metacritic for this game.")));
-            return;
-        }
-        var s = _scores;
-        var tiles = new List<FrameworkElement>
-        {
-            Ui.ValueTile(L.T("Metascore"), s.Metascore?.ToString() ?? "—", s.Metascore is { } m ? ScoreColor(m) : null,
-                s.Metascore is null ? L.T("No critic reviews") : L.N(s.CriticReviews, "{0} critic review", "{0} critic reviews")),
-            Ui.ValueTile(L.T("User score"), s.UserScore?.ToString("0.0", System.Globalization.CultureInfo.CurrentCulture) ?? "—",
-                s.UserScore is { } u ? ScoreColor((int)Math.Round(u * 10)) : null,
-                s.UserScore is null ? L.T("No user ratings") : L.N(s.UserRatings, "{0} rating", "{0} ratings")),
-        };
-        _reviews.Children.Add(Ui.TwoByN(tiles));
-        var notes = new List<string>();
-        if (s.CriticVerdict.Length > 0) notes.Add(L.T(s.CriticVerdict));
-        if (s.MetascorePlatform is { } platform) notes.Add(L.F("Metascore of the {0} version", platform));
-        if (s.MustPlay) notes.Add(L.T("Must-play"));
-        if (notes.Count > 0) _reviews.Children.Add(Ui.Muted(string.Join("  ·  ", notes)));
-        if (!SameName(s.Title)) _reviews.Children.Add(Ui.Muted(L.F("As \"{0}\" on Metacritic", s.Title)));
-    }
-
-    /// <summary>Metacritic's own colours: green from 75, yellow from 50, red below.</summary>
-    static Color ScoreColor(int score) => score >= 75 ? Color.FromArgb(0xFF, 0x3F, 0xC2, 0x6A) : score >= 50 ? Color.FromArgb(0xFF, 0xF5, 0xC5, 0x18) : Color.FromArgb(0xFF, 0xE5, 0x48, 0x4D);
-
-    void OpenMetacritic() => Ui.Open(_scores?.Url ?? $"https://www.metacritic.com/search/{Uri.EscapeDataString(_data.SearchName)}/");
-
-    // ---------- achievements ----------
-
-    /// <summary>Called by the game page whenever Steam's achievement data changes (null: none for this game).</summary>
-    public void SetAchievements(AchievementSet? set)
-    {
-        if (_achCard is null) return;
-        _achBody.Children.Clear();
-        _achCard.Visibility = set is null ? Visibility.Collapsed : Visibility.Visible;
-        if (set is null) return;
-
-        double share = (double)set.UnlockedCount / set.Total;
-        // Every achievement unlocked: the heading shows the platinum trophy, as the play bar and the cover do.
-        bool platinum = set.Total > 0 && set.UnlockedCount == set.Total;
-        if (_achHead is { } h && h.Children.Count > 0 && h.Children[0] is Viewbox)
-        {
-            h.Children[0] = Icons.Trophy(22, platinum);
-            ToolTipService.SetToolTip(h.Children[0], platinum ? L.T("Platinum: every Steam achievement unlocked") : null);
-        }
-        var head = new Grid();
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.Children.Add(new TextBlock { Text = L.F("{0} of {1} unlocked", set.UnlockedCount, set.Total), VerticalAlignment = VerticalAlignment.Center });
-        var pct = new TextBlock { Text = $"{share:P0}", FontWeight = FontWeights.SemiBold, Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush") };
-        Grid.SetColumn(pct, 1);
-        head.Children.Add(pct);
-        _achBody.Children.Add(head);
-        _achBody.Children.Add(new ProgressBar { Maximum = 1, Value = share });
-
-        // Newest unlocks first, then the rarest locked ones: each opens the Achievements tab.
-        var picks = set.Items.Where(a => a.Unlocked).OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue).Take(4)
-            .Concat(set.Items.Where(a => !a.Unlocked && !a.Hidden).OrderBy(a => a.GlobalPercent ?? 100).Take(4)).Take(8).ToList();
-        var icons = new List<FrameworkElement>();
-        foreach (var a in picks)
-        {
-            var url = a.Unlocked ? a.IconUrl : a.IconGrayUrl ?? a.IconUrl;
-            var box = new Border { Width = 52, Height = 52, CornerRadius = new CornerRadius(6), Background = Ui.Brush("ControlFillColorSecondaryBrush"), Opacity = a.Unlocked ? 1 : 0.55 };
-            if (url is not null && Uri.TryCreate(url, UriKind.Absolute, out var uri))
-                box.Child = Smooth.Art(new BitmapImage { UriSource = uri, DecodePixelWidth = 64 }, Smooth.Inner(box), Stretch.UniformToFill);
-            var button = new Button { Content = box, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-            ToolTipService.SetToolTip(button, $"{a.Name}\n{a.Description}\n\n" + (a.Unlocked ? (a.UnlockedAt is { } t ? L.F("Unlocked {0:d MMM yyyy}", t) : L.T("Unlocked")) : L.T("Locked"))
-                + (a.GlobalPercent is { } p ? "  ·  " + L.F("{0:0.#}% of players", p) : ""));
-            button.Click += (_, _) => _data.ShowTab("ach");
-            icons.Add(button);
-        }
-        if (icons.Count > 0) _achBody.Children.Add(Ui.Wrap(icons, 6));
     }
 }
 
@@ -1740,8 +1614,11 @@ public sealed partial class PcgwView : UserControl
         public Entry? Parent;
     }
 
-    /// <summary>A line of the contents was clicked: the game page scrolls to this element (its top under the pinned bar).</summary>
-    public event Action<FrameworkElement>? ScrollRequested;
+    /// <summary>
+    /// A line of the contents was clicked: the game page scrolls to this element (its top under the pinned bar). Set by the page
+    /// that shows this view now, again when a kept view moves to another page, and cleared when it is kept (2.0.0-rc.12).
+    /// </summary>
+    public Action<FrameworkElement>? ScrollRequested;
 
     /// <summary>The contents column: the game page moves it to a pinned spot of its own while the tab bar is pinned.</summary>
     public FrameworkElement Toc => _toc;
@@ -1811,7 +1688,7 @@ public sealed partial class PcgwView : UserControl
     }
 
     /// <summary>The contents column appeared or went away (the window was resized).</summary>
-    public event Action? TocLayoutChanged;
+    public Action? TocLayoutChanged;
 
     /// <summary>The element of a section by id ("page2", "issues"): built now if it was still waiting for its frame.</summary>
     public FrameworkElement? SectionElement(string id)
@@ -2315,12 +2192,20 @@ public sealed partial class PcgwView : UserControl
         var panel = new StackPanel { Spacing = 6 };
         if (block.Title.Length > 0) panel.Children.Add(new TextBlock { Text = L.T(block.Title).ToUpper(), Style = Ui.Style("GroupHeader"), FontSize = 11 });
         // Wide tables scroll sideways on a narrow window instead of squeezing every column.
-        panel.Children.Add(new ScrollViewer
+        var scroller = new ScrollViewer
         {
             Content = grid,
             HorizontalScrollMode = ScrollMode.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        });
+        };
+        // A sideways scroller offers its content endless room, so a long cell ran on one line far past the page: the table is as
+        // wide as the scroller (its text wraps) and only its minimum width scrolls.
+        scroller.SizeChanged += (_, e) =>
+        {
+            double w = Math.Max(grid.MinWidth, Math.Floor(e.NewSize.Width));
+            if (Math.Abs(grid.Width - w) > 0.5 || double.IsNaN(grid.Width)) grid.Width = w;
+        };
+        panel.Children.Add(scroller);
         return panel;
     }
 
@@ -2505,7 +2390,9 @@ public sealed partial class LinksView : UserControl
         var ct = _data.Token;
 
         var storeLinks = new List<Link>();
-        if (game.Store != GameStore.Steam && StoreLinks.For(game, id) is { } own && own.Uri.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        if (game.Store != GameStore.Steam && StoreLinks.For(game, id) is { } own && own.Uri.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            // A game added by hand falls back to its Steam store page, which is the next link already.
+            && !own.Uri.StartsWith("https://store.steampowered.com/app/", StringComparison.OrdinalIgnoreCase))
             storeLinks.Add(Fixed(StoreLogos.Label(game.Store), L.T(own.What), own.Uri, ""));
         if (id is not null)
         {
@@ -2563,15 +2450,19 @@ public sealed partial class LinksView : UserControl
         // The site's own icon (from its domain) when it loads, the glyph badge otherwise.
         var badge = Ui.Badge(link.Glyph, tint, 40);
         var icon = new Image { Width = 22, Height = 22, Visibility = Visibility.Collapsed };
+        var plate = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(12), Background = Ui.Brush("ControlFillColorSecondaryBrush"), Visibility = Visibility.Collapsed };
         var bitmap = new BitmapImage { DecodePixelWidth = 44 };
         bitmap.ImageOpened += (_, _) =>
         {
+            // The site's own icon on a quiet tile of its own: a coloured tile under someone else's logo would clash.
             icon.Visibility = Visibility.Visible;
-            if (badge.Child is FontIcon f) f.Visibility = Visibility.Collapsed;
+            badge.Visibility = Visibility.Collapsed;
+            plate.Visibility = Visibility.Visible;
         };
         bitmap.UriSource = new Uri($"https://www.google.com/s2/favicons?domain={Uri.EscapeDataString(link.Host)}&sz=64");
         icon.Source = bitmap;
         var iconHost = new Grid { VerticalAlignment = VerticalAlignment.Center };
+        iconHost.Children.Add(plate);
         iconHost.Children.Add(badge);
         iconHost.Children.Add(icon);
 
@@ -2707,14 +2598,21 @@ public sealed partial class OptiNotesView : UserControl
         if (run != _filling) return;
         _list.Children.Clear();
         var installed = _installed();
+        if (releases.Count == 0) { _list.Children.Add(Ui.Muted(L.T("GitHub lists no releases for this channel."))); return; }
+        // One release per turn of the UI thread (2.0.0-rc.9): the twelve built together, every note turned into rich text, held
+        // it 200-300 ms right after a game's OptiScaler tab showed. A folded release builds its notes when it is opened.
         int shown = 0;
-        foreach (var r in releases.Take(12))
+        var queue = new Queue<OptiRelease>(releases.Take(12));
+        void Next()
         {
+            if (run != _filling || queue.Count == 0) return;
+            var r = queue.Dequeue();
             bool mine = installed is not null && installed.Channel == r.Channel && installed.Tag == r.Tag
                         && (r.Channel != OptiChannel.Fork || string.Equals(installed.Source, r.Repo, StringComparison.OrdinalIgnoreCase));
-            _list.Children.Add(Release(r, mine, open: shown++ < 2 || mine));
+            using (UiPerf.Scope("OptiNotes.Release")) _list.Children.Add(Release(r, mine, open: shown++ < 2 || mine));
+            if (queue.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
         }
-        if (releases.Count == 0) _list.Children.Add(Ui.Muted(L.T("GitHub lists no releases for this channel.")));
+        Next();
     }
 
     static FrameworkElement Release(OptiRelease r, bool installed, bool open)
@@ -2734,16 +2632,25 @@ public sealed partial class OptiNotesView : UserControl
             head.Children.Add(pill);
         }
         var body = new StackPanel { Spacing = 10, Padding = new Thickness(4, 2, 4, 4) };
-        var (notes, commits) = Notes(r.Notes);
+        // The number of changes is known without building the notes (a folded release builds them when opened).
+        int commits = r.Notes.Replace("\r", "").Split('\n').Count(l => CommitLine().IsMatch(l));
         if (commits > 0) title.Children.Add(new TextBlock { Text = L.N(commits, "{0} change", "{0} changes"), FontSize = 12, Foreground = new SolidColorBrush(Ui.Teal) });
-        body.Children.Add(notes ?? Ui.Muted(L.T("No notes for this release.")));
-        if (r.PageUrl.Length > 0)
+        bool built = false;
+        void Build()
         {
-            var link = Ui.LinkButton(L.T("Open on GitHub"), "", () => Ui.Open(r.PageUrl));
-            link.HorizontalAlignment = HorizontalAlignment.Left;
-            body.Children.Add(link);
+            if (built) return;
+            built = true;
+            var (notes, _) = Notes(r.Notes);
+            body.Children.Add(notes ?? Ui.Muted(L.T("No notes for this release.")));
+            if (r.PageUrl.Length > 0)
+            {
+                var link = Ui.LinkButton(L.T("Open on GitHub"), "", () => Ui.Open(r.PageUrl));
+                link.HorizontalAlignment = HorizontalAlignment.Left;
+                body.Children.Add(link);
+            }
         }
-        return new Expander
+        if (open) Build();
+        var expander = new Expander
         {
             Header = head,
             Content = body,
@@ -2751,6 +2658,8 @@ public sealed partial class OptiNotesView : UserControl
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
+        expander.Expanding += (_, _) => Build();
+        return expander;
     }
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^\s*[-*]\s+\[`?([0-9a-fA-F]{7,40})`?\]\((https?://[^)\s]+)\)\s+(.*?)\s*(?:\(([^()]+)\))?\s*$")]

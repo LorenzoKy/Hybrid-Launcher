@@ -6,22 +6,45 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:HybridLauncher.Controls">
 
-    <!-- The column's width is set in code (at most 1600, see PageScroller_SizeChanged): with MaxWidth here the ScrollViewer
-         centred it by the width its content wanted, then it stretched to 1600 from there and ran past a 1080p window (issue #5). -->
-    <ScrollViewer x:Name="PageScroller" VerticalScrollBarVisibility="Auto" SizeChanged="PageScroller_SizeChanged">
-        <StackPanel x:Name="PageColumn" HorizontalAlignment="Center" Padding="24,8,24,40" Spacing="4">
-            <!-- The title, the search through every tab, and on the right Restore defaults for the open tab (each tab has its own defaults). -->
-            <Grid Margin="0,8,0,12" ColumnSpacing="12">
+    <!-- The column's width is set in code (at most ColumnMax, see FitColumn): with MaxWidth here the ScrollViewer
+         centred it by the width its content wanted, then it stretched from there and ran past a 1080p window (issue #5). -->
+    <!-- 2.0: a side column that never scrolls away (the title, the search through every tab, the tabs as a list with the
+         open tab's sections under it), and beside it the open tab at a reading width under its own heading. -->
+    <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+    <Grid x:Name="SideColumn" Width="296" Padding="20,14,10,16" RowSpacing="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="8,2,0,0" />
+        <!-- Out of the scrolling page: wherever the focus lands, the open tab stays where it was scrolled. -->
+        <AutoSuggestBox x:Name="SettingsSearch" Grid.Row="1" Margin="4,0,4,0" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                        PlaceholderText="Search all settings" TextChanged="SettingsSearch_TextChanged" QuerySubmitted="SettingsSearch_QuerySubmitted" PreviewKeyDown="SettingsSearch_KeyDown">
+            <AutoSuggestBox.QueryIcon><SymbolIcon Symbol="Find" /></AutoSuggestBox.QueryIcon>
+        </AutoSuggestBox>
+        <ScrollView x:Name="NavScroller" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" ContentOrientation="Vertical">
+            <StackPanel x:Name="SettingsNav" Spacing="2" Padding="0,0,6,0" />
+        </ScrollView>
+    </Grid>
+    <ScrollView x:Name="PageScroller" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" ContentOrientation="Vertical">
+        <StackPanel x:Name="PageColumn" HorizontalAlignment="Left" Padding="20,8,24,40" Spacing="4">
+            <!-- The open tab's heading: its icon on its colour, its name, what it holds, and on the right Restore defaults for
+                 this tab (each tab has its own defaults; it only fades out on tabs without any, so nothing moves). -->
+            <Grid x:Name="TabIntro" ColumnSpacing="16" Margin="0,10,0,14">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
-                <AutoSuggestBox x:Name="SettingsSearch" Grid.Column="1" MaxWidth="420" Margin="12,0,0,0" HorizontalAlignment="Stretch" VerticalAlignment="Center"
-                                PlaceholderText="Search all settings" TextChanged="SettingsSearch_TextChanged" QuerySubmitted="SettingsSearch_QuerySubmitted">
-                    <AutoSuggestBox.QueryIcon><SymbolIcon Symbol="Find" /></AutoSuggestBox.QueryIcon>
-                </AutoSuggestBox>
+                <Border x:Name="TabIntroTile" Width="48" Height="48" CornerRadius="12" VerticalAlignment="Center">
+                    <ContentPresenter x:Name="TabIntroIcon" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock x:Name="TabIntroTitle" FontSize="26" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="TabIntroText" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                </StackPanel>
                 <Button x:Name="RestoreDefaultsButton" Grid.Column="2" VerticalAlignment="Center" Padding="12,6" Click="RestoreDefaults_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE777;" FontSize="14" />
@@ -34,7 +57,8 @@
             <StackPanel x:Name="SearchResults" Spacing="4" Visibility="Collapsed" />
 
             <!-- One tab per area: what Hybrid Launcher looks like, what it does, what it keeps on disk, and about. -->
-            <SelectorBar x:Name="SettingsTabs" Margin="0,0,0,12" SelectionChanged="SettingsTabs_SelectionChanged">
+            <!-- The tabs' model (items, icons, the selection): shown as the list on the left (SettingsNav), never itself. -->
+            <SelectorBar x:Name="SettingsTabs" Visibility="Collapsed" SelectionChanged="SettingsTabs_SelectionChanged">
                 <SelectorBarItem Text="Appearance" Tag="appearance">
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xE790;" Foreground="{ThemeResource TintPinkBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
@@ -60,20 +84,6 @@
                     <SelectorBarItem.Icon><FontIcon Glyph="&#xE946;" Foreground="{ThemeResource TintGreenBrush}" /></SelectorBarItem.Icon>
                 </SelectorBarItem>
             </SelectorBar>
-
-            <!-- What the open tab holds, and its sections: each one a button that scrolls to it (by mouse, touch or controller). -->
-            <Grid x:Name="TabIntro" ColumnSpacing="14" Margin="0,0,0,10">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Border x:Name="TabIntroTile" Width="44" Height="44" CornerRadius="12" VerticalAlignment="Top">
-                    <ContentPresenter x:Name="TabIntroIcon" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Border>
-                <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
-                    <TextBlock x:Name="TabIntroText" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
-                    <ScrollViewer x:Name="TabSectionsScroller" HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled">
-                        <StackPanel x:Name="TabSections" Orientation="Horizontal" Spacing="6" Margin="0,0,0,2" />
-                    </ScrollViewer>
-                </StackPanel>
-            </Grid>
 
             <StackPanel x:Name="AppearancePanel" Spacing="4">
             <TextBlock Text="LANGUAGE" Style="{StaticResource GroupHeader}" Margin="0,0,0,4" />
@@ -114,6 +124,37 @@
                         <TextBlock Text="On: cards, outlines and the window take a trace of the colour theme (with Windows accent, of your Windows colour). Off: neutral grey surfaces like before, only buttons and highlights in the accent colour." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="MaterialToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Material_Toggled" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Shading" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="On: cards and rows lit from above, a glow under the open tab, a sheen on the launch bar and covers that lift under the pointer. Off: flat surfaces." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="ShadingToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Shading_Toggled" />
+                </Grid>
+            </Border>
+            <!-- Interface size (GitHub issue #7) and scroll bars (#8): applied at once. -->
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Interface size" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Makes everything in the window smaller or bigger, on top of the Windows display scale. Menus and dialogs keep the Windows size. Only 100% is fully tested: any other size is experimental and some pages may not look right." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="InterfaceSizeCombo" Grid.Column="1" MinWidth="120" VerticalAlignment="Center" SelectionChanged="InterfaceSize_Changed" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Scroll bars" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Shown: they get thinner in a smaller window. Hidden: no scroll bars on the pages and lists; the mouse wheel, touch, the keyboard and a controller still scroll." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="ScrollBarsToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="ScrollBars_Toggled" />
                 </Grid>
             </Border>
             <!-- Free colour pickers: picking any of them switches the colour theme to "My colours". -->
@@ -300,12 +341,15 @@
             <TextBlock Text="LIBRARY" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Upscaler tags on the covers" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="DLSS, FSR, XeSS and frame generation tags at the bottom of each cover. Also in the library's Filters." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Tags on the covers" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Play time, the mods installed (Opti, RS, RDX, U+), upscaler tags and achievements on each cover. Hidden shows the bare cover art. Each kind can be turned off below, or in the library's Filters." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <ToggleSwitch x:Name="CoverTagsToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="CoverTags_Toggled" />
+                    <ToggleSwitch x:Name="CoverOverlaysToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="CoverOverlays_Toggled" />
+                    <!-- Each kind of tag on its own (built in code from AppSettings.CoverTagKinds), greyed while all tags are hidden. -->
+                    <StackPanel x:Name="CoverTagKindsPanel" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" />
                 </Grid>
             </Border>
 
@@ -359,6 +403,9 @@
                         <CheckBox x:Name="EpicCheck" Content="Epic" MinWidth="0" Click="Sources_Changed" />
                         <CheckBox x:Name="GogCheck" Content="GOG" MinWidth="0" Click="Sources_Changed" />
                         <CheckBox x:Name="XboxCheck" Content="Xbox" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="UbisoftCheck" Content="Ubisoft" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="EaCheck" Content="EA" MinWidth="0" Click="Sources_Changed" />
+                        <CheckBox x:Name="RockstarCheck" Content="Rockstar" MinWidth="0" Click="Sources_Changed" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -416,18 +463,26 @@
             </Border>
             <!-- A real achievement of a game in the library, shown exactly as an unlock would be: nothing is unlocked or written. -->
             <Border x:Name="PreviewGameRow" Style="{StaticResource RowStyle}">
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel VerticalAlignment="Center">
+                <!-- The words over the controls (2.0): beside them, four controls left the words a narrow column. -->
+                <Grid ColumnSpacing="8" RowSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel Grid.ColumnSpan="5" VerticalAlignment="Center">
                         <TextBlock Text="Preview with a real game" Style="{StaticResource RowHeader}" />
-                        <TextBlock x:Name="PreviewGameText" Text="Shows one of the game's real achievements (its name, picture and rarity) the same way an unlock would, in the look of its store when the look matches the store. Platinum shows the game's own platinum: its achievement for unlocking all the others. Nothing is unlocked." Style="{StaticResource RowDescription}" />
+                        <TextBlock x:Name="PreviewGameText" Text="Shows one of the game's real achievements (its name, picture and rarity) the same way an unlock would, in the look of its store when the look matches the store. Platinum shows the game's own platinum: its achievement for unlocking all the others. Progress shows a step towards one of its locked achievements, with its real count when the game keeps one. Nothing is unlocked." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <ComboBox x:Name="PreviewGameCombo" Grid.Column="1" MinWidth="220" MaxWidth="320" VerticalAlignment="Center" PlaceholderText="Pick a game" />
-                    <Button x:Name="PreviewGameButton" Grid.Column="2" Content="Show" VerticalAlignment="Center" Click="PreviewGame_Click" />
-                    <Button x:Name="PreviewPlatinumButton" Grid.Column="3" VerticalAlignment="Center" Click="PreviewPlatinum_Click" ToolTipService.ToolTip="The pop-up of this game's platinum: its achievement for unlocking all the others">
+                    <ComboBox x:Name="PreviewGameCombo" Grid.Row="1" MinWidth="260" MaxWidth="360" VerticalAlignment="Center" PlaceholderText="Pick a game" />
+                    <Button x:Name="PreviewGameButton" Grid.Row="1" Grid.Column="1" Content="Show" VerticalAlignment="Center" Click="PreviewGame_Click" />
+                    <Button x:Name="PreviewPlatinumButton" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Click="PreviewPlatinum_Click" ToolTipService.ToolTip="The pop-up of this game's platinum: its achievement for unlocking all the others">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <ContentPresenter x:Name="PreviewPlatinumIcon" VerticalAlignment="Center" />
                             <TextBlock Text="Platinum" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="PreviewProgressButton" Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Click="PreviewProgress_Click" ToolTipService.ToolTip="A progress pop-up of this game: a step towards one of its locked achievements">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon Glyph="&#xF16A;" FontSize="14" VerticalAlignment="Center" />
+                            <TextBlock Text="Progress" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
                 </Grid>
@@ -441,7 +496,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Text="Look" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Which store's notification to imitate. “Match the game's store” uses the Steam, GOG, Epic or Xbox look of each game. Colour and background below apply to Hybrid Launcher and Minimal; the others keep their own colours." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Which store's notification to imitate. “Match the game's store” uses the Steam, GOG, Epic or Xbox look of each game. Every look keeps its own background and text colours below (Automatic = the look's own). Colour applies only to Hybrid Launcher and Minimal; options a look does not use are greyed out." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ComboBox x:Name="LookCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="PopupLook_Changed">
                         <ComboBoxItem Content="Hybrid Launcher" Tag="Hybrid" />
@@ -464,6 +519,8 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -517,8 +574,11 @@
                         <ComboBoxItem Content="Large" Tag="Large" />
                     </ComboBox>
 
-                    <TextBlock Grid.Row="4" Text="Colour" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <StackPanel x:Name="StyleHeader" Grid.Row="4" VerticalAlignment="Center">
+                        <TextBlock Text="Colour" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="StyleHint" Text="Hybrid Launcher and Minimal only" Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <StackPanel x:Name="StyleControls" Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="8">
                         <Button x:Name="CustomColorButton" Padding="6" VerticalAlignment="Center" Visibility="Collapsed" ToolTipService.ToolTip="Pick the colour">
                             <Border x:Name="CustomColorSwatch" Width="44" Height="20" CornerRadius="4" />
                             <Button.Flyout>
@@ -535,17 +595,32 @@
                         </ComboBox>
                     </StackPanel>
 
-                    <TextBlock Grid.Row="7" Text="Time on screen" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Grid.Row="8" Text="Time on screen" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Spacing="10">
                         <Slider x:Name="SecondsSlider" Width="150" Minimum="2" Maximum="15" StepFrequency="0.5" VerticalAlignment="Center" ValueChanged="Seconds_Changed" />
                         <TextBlock x:Name="SecondsText" MinWidth="40" VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <TextBlock Grid.Row="8" Text="Show how rare it is" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <ToggleSwitch x:Name="RarityToggle" Grid.Row="8" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" Toggled="PopupOption_Changed" />
 
-                    <TextBlock Grid.Row="5" Text="Background" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel x:Name="RarityHeader" Grid.Row="9" VerticalAlignment="Center">
+                        <TextBlock Text="Show how rare it is" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="RarityHint" Text="Hybrid Launcher, Steam, GOG and Epic looks" Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="RarityToggle" Grid.Row="9" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" Toggled="PopupOption_Changed" />
+
+                    <!-- Background and text: the colours of one look (the one picked above, or for "Match the game's store" the one picked here). -->
+                    <StackPanel Grid.Row="5" VerticalAlignment="Center">
+                        <TextBlock Text="Background" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="ColoursForText" Style="{StaticResource RowDescription}" />
+                    </StackPanel>
                     <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <ComboBox x:Name="ColoursLookCombo" MinWidth="150" VerticalAlignment="Center" Visibility="Collapsed" SelectionChanged="ColoursLook_Changed" ToolTipService.ToolTip="Which look's colours to set">
+                            <ComboBoxItem Content="Steam Like" Tag="Steam" />
+                            <ComboBoxItem Content="GOG Like" Tag="Gog" />
+                            <ComboBoxItem Content="Epic Games Like" Tag="Epic" />
+                            <ComboBoxItem Content="Xbox Like" Tag="Xbox" />
+                            <ComboBoxItem Content="Hybrid Launcher" Tag="Hybrid" />
+                        </ComboBox>
                         <Button x:Name="BackgroundAutoButton" Content="Automatic" Click="BackgroundAuto_Click" VerticalAlignment="Center" />
                         <Button Padding="6" VerticalAlignment="Center" ToolTipService.ToolTip="Pick the background colour">
                             <Border x:Name="PopupBackSwatch" Width="44" Height="20" CornerRadius="4" />
@@ -557,8 +632,21 @@
                         </Button>
                     </StackPanel>
 
-                    <TextBlock Grid.Row="6" Text="Background opacity" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
-                    <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Grid.Row="6" Text="Text" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="TextAutoButton" Content="Automatic" Click="TextAuto_Click" VerticalAlignment="Center" />
+                        <Button Padding="6" VerticalAlignment="Center" ToolTipService.ToolTip="Pick the text colour">
+                            <Border x:Name="PopupTextSwatch" Width="44" Height="20" CornerRadius="4" />
+                            <Button.Flyout>
+                                <Flyout Placement="Bottom">
+                                    <ColorPicker x:Name="PopupTextPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorSliderVisible="True" IsHexInputVisible="True" ColorChanged="TextColor_Changed" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="7" Text="Background opacity" Style="{StaticResource RowHeader}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Spacing="10">
                         <Slider x:Name="OpacitySlider" Width="150" Minimum="60" Maximum="100" StepFrequency="1" VerticalAlignment="Center" ValueChanged="Opacity_Changed" />
                         <TextBlock x:Name="OpacityText" MinWidth="40" VerticalAlignment="Center" />
                     </StackPanel>
@@ -569,17 +657,9 @@
             <!-- Sounds, under the pop-ups: built in code (AchievementSoundsView), made again when something changes. -->
             <StackPanel x:Name="AchievementSoundsPanel" Spacing="4" Margin="0,16,0,0" />
             <!-- Where achievements are read from besides the stores (Local achievements: on by default, set only here). -->
-            <TextBlock Text="SOURCES" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
-            <Border Style="{StaticResource RowStyle}">
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Local achievements" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Achievements and the last session of games that keep them in save files on this PC: shown on the game page and announced with a pop-up like the others." Style="{StaticResource RowDescription}" />
-                    </StackPanel>
-                    <ToggleSwitch x:Name="LocalAchievementsToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="LocalAchievements_Toggled" />
-                </Grid>
-            </Border>
+            <!-- Every source (Steam, local files and their folders, Xbox, GOG), what happens with an unlock, the unlock history:
+                 built in code (AchievementExtrasView). -->
+            <StackPanel x:Name="AchievementExtrasPanel" Spacing="4" Margin="0,4,0,0" />
             </StackPanel>
 
             <!-- Controller: built in code (ControllerSettingsView), made again when something changes. -->
@@ -636,6 +716,18 @@
                     </Grid>
                     <controls:SavedVersionsList x:Name="VersionsList" />
                 </StackPanel>
+            </Border>
+            <Border Style="{StaticResource RowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Game page cache" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Covers, banners, screenshots and the store, wiki and review data of each game, kept on disk so pages open at once, also offline. Past this size the pictures used least recently go first." Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="PageCacheText" Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="CacheBudgetCombo" Grid.Column="1" MinWidth="110" VerticalAlignment="Center" SelectionChanged="CacheBudget_Changed" />
+                    <Button Grid.Column="2" Content="Empty" Click="EmptyPageCache_Click" VerticalAlignment="Center" />
+                </Grid>
             </Border>
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">
@@ -725,25 +817,14 @@
             <Border Style="{StaticResource RowStyle}">
                 <StackPanel VerticalAlignment="Center" Spacing="4">
                     <TextBlock x:Name="AboutText" Style="{StaticResource RowHeader}" />
+                    <!-- Third-party software: one fixed statement, the same as the README's (never a list of names to keep up to date). -->
                     <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
-                               Text="OptiScaler, OptiPatcher and their setup script belong to the OptiScaler team; Hybrid Launcher downloads them from GitHub and runs them unchanged. OptiScaler forks belong to their own authors and install through their own setup script." />
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <HyperlinkButton Content="OptiScaler on GitHub" NavigateUri="https://github.com/optiscaler/OptiScaler" Padding="0" />
-                        <HyperlinkButton Content="OptiPatcher" NavigateUri="https://github.com/optiscaler/OptiPatcher" Padding="0" />
-                        <HyperlinkButton Content="ReShade" NavigateUri="https://reshade.me" Padding="0" />
-                        <HyperlinkButton Content="RenoDX" NavigateUri="https://github.com/clshortfuse/renodx" Padding="0" />
-                        <HyperlinkButton Content="Luma" NavigateUri="https://github.com/Filoppi/Luma-Framework" Padding="0" />
-                        <HyperlinkButton Content="Ultra+" NavigateUri="https://theultraplace.com/" Padding="0" />
-                    </StackPanel>
-                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
-                               Text="ReShade installers come from reshade.me and run unchanged; RenoDX mods come from their authors' GitHub pages or, for Nexus Mods files, from your own download; Luma comes from Filoppi's Luma Framework releases; Ultra+ comes from The Ultra Place. NVIDIA's DLSS files are never shipped: you pick your own copy." />
-                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
-                               Text="Game information comes from PCGamingWiki, HowLongToBeat, Metacritic and the stores' public pages; SteamDB, Nexus Mods and the OptiScaler wiki are links only." />
-                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
-                               Text="Not affiliated with or endorsed by any of them, or by Valve, Epic Games, GOG, Microsoft, Sony Interactive Entertainment, AMD, NVIDIA or Intel. The PlayStation, Xbox, Steam, GOG and Epic Games &quot;Like&quot; pop-up looks are Hybrid Launcher's own drawings inspired by them, with its own logo and trophies. All trademarks belong to their owners." />
+                               Text="I make and own only Hybrid Launcher. Everything it downloads, installs, runs, reads or links to (mods, tools, games, stores, services, fonts and libraries) belongs to its own authors and owners, under their own licenses and terms. None of them is affiliated with Hybrid Launcher or endorses it, and all trademarks belong to their owners. Looks inspired by consoles or stores are Hybrid Launcher's own drawings." />
+                    <HyperlinkButton Content="Third-party software" NavigateUri="https://github.com/LorenzoKy/Hybrid-Launcher#third-party-software" Padding="0" />
                 </StackPanel>
             </Border>
             </StackPanel>
         </StackPanel>
-    </ScrollViewer>
+    </ScrollView>
+    </Grid>
 </Page>

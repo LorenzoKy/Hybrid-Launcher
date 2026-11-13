@@ -76,6 +76,8 @@ public static class AppInfo
     public static string ImageCacheDir => Ensure(Path.Combine(CacheDir, "images"));
     public static string DownloadsDir => Ensure(Path.Combine(CacheDir, "downloads"));
     public static string BackupsDir => Ensure(Path.Combine(DataRoot, "backups"));
+    /// <summary>Covers picked by the user for a game (Game settings → Library → Cover).</summary>
+    public static string CoversDir => Ensure(Path.Combine(DataRoot, "covers"));
     public static string LogsDir => Ensure(Path.Combine(DataRoot, "logs"));
 
     /// <summary>The universal ASI plugin folder: every enabled .asi in here is copied into each OptiScaler install.</summary>

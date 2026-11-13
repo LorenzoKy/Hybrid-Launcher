@@ -9,11 +9,17 @@ namespace HybridLauncher.Core;
 /// </summary>
 public static class CacheJanitor
 {
-    /// <summary>The cache's budget on disk. A game page needs a few MB at most (its art, its data): this holds a few hundred games.</summary>
-    public const long Budget = 300L * 1024 * 1024;
+    /// <summary>The choices offered in Settings → Storage, in GB.</summary>
+    public static readonly int[] BudgetChoices = [1, 2, 4, 8, 16];
+
+    /// <summary>
+    /// The cache's budget on disk (Settings → Storage, 2 GB by default). A game page needs a few MB (its art, its data): 2 GB
+    /// keeps every page of a large library ready, with its screenshots, so pages open from the disk instead of the network.
+    /// </summary>
+    public static long Budget => Math.Clamp(SettingsStore.Current.CacheBudgetGb, 1, 64) * 1024L * 1024 * 1024;
 
     /// <summary>Trimmed down to this, so it does not run again at every start.</summary>
-    const long Target = 240L * 1024 * 1024;
+    static long Target => Budget / 10 * 8;
 
     static readonly string[] Kept = ["downloads", "webview"];
 
@@ -74,7 +80,7 @@ public static class CacheJanitor
             var age = now - f.LastWriteTimeUtc;
             bool leftover = f.Name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) || f.Name.EndsWith(".part", StringComparison.OrdinalIgnoreCase);
             bool image = IsImage(f);
-            if ((leftover && age > TimeSpan.FromDays(1)) || (!image && age > TimeSpan.FromDays(60) && Expires(f)))
+            if ((leftover && age > TimeSpan.FromDays(1)) || (!image && age > TimeSpan.FromDays(180) && Expires(f)))
             {
                 if (Delete(f)) continue;
             }
@@ -95,6 +101,16 @@ public static class CacheJanitor
         }
         if (freed > 0) Log.Info($"Cache trimmed: {DiskUsage.Format(freed)} freed, {DiskUsage.Format(total)} kept");
     }
+
+    /// <summary>Empties the cache of the game pages (the Downloads folder stays); pages fetch what they need again.</summary>
+    public static Task<long> ClearAsync() => Task.Run(() =>
+    {
+        long freed = 0;
+        foreach (var f in Files().ToList())
+            try { long size = f.Length; f.Delete(); freed += size; } catch { }
+        Log.Info($"Cache emptied: {DiskUsage.Format(freed)} freed");
+        return freed;
+    });
 
     static bool IsImage(FileInfo f) => f.Extension.ToLowerInvariant() is ".jpg" or ".jpeg" or ".png" or ".webp" or ".avif" or ".gif";
 

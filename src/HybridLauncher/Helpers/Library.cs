@@ -9,6 +9,9 @@ namespace HybridLauncher.Helpers;
 /// <summary>What the library sorts and filters on, per game, gathered in the background once per session.</summary>
 public sealed record GameStats(long Minutes, DateTime? LastPlayed, int AchUnlocked, int AchTotal, List<string>? Tags);
 
+/// <summary>One unlocked achievement of a game in the library (the Library's "Latest achievements" panel).</summary>
+public sealed record RecentUnlock(Game Game, Achievement Item, DateTime At);
+
 /// <summary>
 /// The library's groups (launchers, games folders) in the user's order, folded or not, and its sort and filters
 /// (shared by the grid page and the list in the side pane).
@@ -22,6 +25,105 @@ public static class Library
     public static event Action? StatsReady;
 
     public static GameStats? StatsOf(string id) => Stats.GetValueOrDefault(id);
+
+    static List<RecentUnlock> _unlocks = [];
+
+    /// <summary>The achievements unlocked last, over every game in the library, newest first (filled with the stats).</summary>
+    public static IReadOnlyList<RecentUnlock> Unlocks => _unlocks;
+
+    /// <summary>Raised on the UI thread when <see cref="Unlocks"/> was read again (an unlock while the app runs).</summary>
+    public static event Action? UnlocksChanged;
+
+    const int UnlocksKept = 40;
+
+    static int _unlocksWeek;
+
+    /// <summary>How many achievements were unlocked over the last seven days, every game counted (not only those kept).</summary>
+    public static int UnlocksThisWeek => _unlocksWeek;
+
+    static int CountWeek(IEnumerable<RecentUnlock> all) => all.Count(u => (DateTime.Now - u.At).TotalDays < 7);
+
+    /// <summary>A game's unlocks that carry a time, newest first.</summary>
+    static IEnumerable<RecentUnlock> UnlocksOf(Game game, AchievementSet set) => set.Items
+        .Where(a => a.Unlocked && a.UnlockedAt is not null)
+        .Select(a => new RecentUnlock(game, a, a.UnlockedAt!.Value.ToLocalTime()))
+        .OrderByDescending(u => u.At);
+
+    static int _unlockRun;
+
+    /// <summary>Reads every game's unlocks again, off the UI thread (local files only).</summary>
+    static void RefreshUnlocks(Microsoft.UI.Dispatching.DispatcherQueue ui)
+    {
+        int run = ++_unlockRun;
+        var games = AppState.VisibleGames.ToList();
+        _ = Task.Run(async () =>
+        {
+            // A game writes its stats file several times around an unlock: one read once it has settled, not one per write.
+            await Task.Delay(3000);
+            if (run != Volatile.Read(ref _unlockRun) || App.ShuttingDown) return;
+            var all = new List<RecentUnlock>();
+            var counts = new Dictionary<string, (int Unlocked, int Total)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var g in games)
+            {
+                try
+                {
+                    if (SteamAchievements.ReadFor(g) is not { Total: > 0 } set) continue;
+                    all.AddRange(UnlocksOf(g, set));
+                    counts[g.Id] = (set.UnlockedCount, set.Total);
+                }
+                catch (Exception ex) { Log.Warn($"Library unlocks for {g.Name}: {ex.Message}"); }
+            }
+            var newest = all.OrderByDescending(u => u.At).Take(UnlocksKept).ToList();
+            int week = CountWeek(all);
+            ui.TryEnqueue(() =>
+            {
+                if (run != _unlockRun) return;
+                _unlocks = newest;
+                _unlocksWeek = week;
+                foreach (var (id, c) in counts)
+                    if (Stats.TryGetValue(id, out var old)) Stats[id] = old with { AchUnlocked = c.Unlocked, AchTotal = c.Total };
+                UnlocksChanged?.Invoke();
+            });
+        });
+    }
+
+    static bool _watching;
+
+    /// <summary>
+    /// Keeps one game's play time and last played current while the app runs: read again when the game starts, when it closes
+    /// and when its time is counted. The stats were read once per session, so the Library's Last played section and its "last
+    /// played" order stayed as they were at start (1.4.0-rc.20).
+    /// </summary>
+    public static void WatchSessions(Microsoft.UI.Dispatching.DispatcherQueue ui)
+    {
+        if (_watching) return;
+        _watching = true;
+        GameSessions.PlaytimeChanged += id => RefreshPlay(id, ui);
+        GameSessions.Changed += id => { if (GameSessions.State(id) is GameRunState.Running or GameRunState.Stopped) RefreshPlay(id, ui); };
+        // An unlock while the app runs (raised on the UI thread): the Latest achievements panel follows.
+        AchievementWatcher.Changed += _ => RefreshUnlocks(ui);
+    }
+
+    static void RefreshPlay(string id, Microsoft.UI.Dispatching.DispatcherQueue ui)
+    {
+        if (AppState.FindAny(id) is not { } game) return;
+        var settings = AppState.Settings.Games.GetValueOrDefault(id) ?? new GameSettings();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var play = Playtime.Get(game, settings);
+                ui.TryEnqueue(() =>
+                {
+                    var old = Stats.GetValueOrDefault(id);
+                    if (old is not null && old.Minutes == play.Minutes && old.LastPlayed == play.LastPlayed) return;
+                    Stats[id] = old is null ? new GameStats(play.Minutes, play.LastPlayed, 0, 0, null) : old with { Minutes = play.Minutes, LastPlayed = play.LastPlayed };
+                    StatsReady?.Invoke();
+                });
+            }
+            catch (Exception ex) { Log.Warn($"Library stats for {game.Name}: {ex.Message}"); }
+        });
+    }
 
     /// <summary>Upscaler / frame generation tags found for a game (the grid tiles fill this as they load).</summary>
     public static void SetTags(string id, List<string> tags)
@@ -39,6 +141,7 @@ public static class Library
         _loading = Task.Run(async () =>
         {
             var results = new Dictionary<string, GameStats>(StringComparer.OrdinalIgnoreCase);
+            var unlocks = new List<RecentUnlock>();
             foreach (var g in games)
             {
                 try
@@ -49,6 +152,7 @@ public static class Library
                     {
                         unlocked = set.UnlockedCount;
                         total = set.Total;
+                        unlocks.AddRange(UnlocksOf(g, set));
                     }
                     List<string>? tags = null;
                     try
@@ -61,9 +165,14 @@ public static class Library
                 }
                 catch (Exception ex) { Log.Warn($"Library stats for {g.Name}: {ex.Message}"); }
             }
+            var newest = unlocks.OrderByDescending(u => u.At).Take(UnlocksKept).ToList();
+            int week = CountWeek(unlocks);
             ui.TryEnqueue(() =>
             {
                 foreach (var (id, s) in results) Stats[id] = s;
+                _unlocks = newest;
+                _unlocksWeek = week;
+                _unlockRun++;
                 StatsReady?.Invoke();
             });
         });
@@ -113,9 +222,10 @@ public static class Library
         var settings = AppState.Settings.Games.GetValueOrDefault(game.Id);
         try
         {
-            if (settings?.Install is { } m && File.Exists(Path.Combine(m.TargetDir, m.DllName))) return m.DisplayVersion;
+            // The record's version, unless the dll was replaced since (a nightly or a test build dropped over it): then the dll's own.
+            if (settings?.Install is { } m && File.Exists(Path.Combine(m.TargetDir, m.DllName)) && !OptiDetector.ReplacedSince(m)) return m.DisplayVersion;
             return GameScanner.TargetDir(game, settings ?? new GameSettings()) is { } dir && OptiDetector.Detect(dir) is { } found
-                ? CustomBuilds.PrettyVersion(found.Version) : null;
+                ? CustomBuilds.Readable(found.Version) : null;
         }
         catch { return null; }
     }

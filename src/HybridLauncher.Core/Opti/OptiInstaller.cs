@@ -20,6 +20,8 @@ public sealed class InstallRequest
     public bool Backup { get; init; } = true;
     /// <summary>The stored DLSS NR model file (<see cref="DlssNr"/>), put in when the build needs it; null = never.</summary>
     public string? DlssNrDll { get; init; }
+    /// <summary>The fork's optional downloads to put in with the build (<see cref="DlssNr.AddonsFor"/>).</summary>
+    public IReadOnlyList<OptiAddon> Addons { get; init; } = [];
 }
 
 public sealed class InstallException(string message, string? transcript = null) : Exception(message)
@@ -156,6 +158,29 @@ public static class OptiInstaller
             await Task.Run(() => File.Copy(nr, Path.Combine(payload, DlssNr.FileName), overwrite: false), ct);
         }
 
+        // The fork's optional downloads (the vendor-neutral DLSS 5 forwarder, a newer F5Low) go over the build in the work
+        // copy, so they are backed up, recorded and rolled back like the release's own files.
+        var addons = new List<string>();
+        foreach (var addon in req.Addons)
+        {
+            try
+            {
+                await ApplyAddonAsync(req.Release, addon, payload, progress, ct);
+                addons.Add(addon.Name);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // The build works without it: say so and go on.
+                Log.Warn($"Addon {addon.Name}: {ex.Message}");
+                progress?.Report(new(0.6, L.F("Skipping {0}", addon.Name), L.F("{0} could not be added: {1}", addon.Name, ex.Message)));
+            }
+        }
+        if (addons.Any(a => DlssNr.PortAddon(req.Release)?.Name == a) && File.Exists(Path.Combine(payload, DlssNr.FileName))
+            && !DlssNr.PortCanRun(Path.Combine(payload, DlssNr.FileName)))
+            progress?.Report(new(0.61, L.T("Vendor-neutral DLSS 5"), L.F("The port runs only with {0} {1} or newer; yours is {2}, so it will be slow or not start.",
+                DlssNr.FileName, DlssNr.PortMinimum, DlssNr.Version(Path.Combine(payload, DlssNr.FileName)))));
+
         var batText = await File.ReadAllTextAsync(batPath, ct);
         var manifest = new InstallManifest
         {
@@ -168,6 +193,7 @@ public static class OptiInstaller
             PluginsDir = batText.Contains(@"OptiScaler\plugins", StringComparison.OrdinalIgnoreCase) ? @"OptiScaler\plugins" : "plugins",
             InstalledAt = DateTime.Now,
             BackupRoot = Path.Combine(AppInfo.BackupsDir, SafeName(req.GameId), DateTime.Now.ToString("yyyyMMdd-HHmmss")),
+            Addons = addons,
         };
 
         var payloadFiles = Directory.GetFiles(payload, "*", SearchOption.AllDirectories)
@@ -252,8 +278,27 @@ public static class OptiInstaller
             manifest.DefaultIni = SnapshotDefaultIni(req.GameId, target);
             progress?.Report(new(0.92, L.T("Applying saved settings")));
             ApplyIniOverrides(manifest, req.IniOverrides);
+            // Ready to use: a DLSS NR build that got the model file has neural rendering on (one pass, the fork's own
+            // defaults otherwise), unless the user set it in OptiScaler settings.
+            if (manifest.Files.ContainsKey(DlssNr.FileName) && !req.IniOverrides.Keys.Any(k => k.Equals("DlssNr/Enabled", StringComparison.OrdinalIgnoreCase)))
+                ApplyIniOverrides(manifest, new Dictionary<string, string> { ["DlssNr/Enabled"] = "true" });
             SyncAsiPlugins(manifest, req.AsiPlugins);
             Opti.CustomDlls.Sync(manifest, req.CustomDlls);
+            // An older OptiScaler of Hybrid Launcher's own that the install replaced is not the game's file: kept in the backup
+            // folder (a failed install above still puts it back), never put back at uninstall or by a file name change. With no
+            // earlier install of Hybrid Launcher here, an OptiScaler in the folder is the user's own (put in by hand): it goes
+            // back at uninstall (2.0.0-rc.17: uninstalling deleted a user's own dxgi.dll).
+            // An update (2.0.0-rc.18) first uninstalls the previous install, which puts the user's own OptiScaler back; backed up
+            // again here, it is still the user's: it was dropped, and never came back after an update.
+            var userBefore = req.Previous?.UserOptiBackups ?? [];
+            bool userOwn = req.Previous is null;
+            foreach (var rel in manifest.Backups.Where(b => IsOptiBackup(b.Key, b.Value)).Select(b => b.Key).ToList())
+            {
+                if (!userOwn && !userBefore.Contains(rel, StringComparer.OrdinalIgnoreCase)) manifest.Backups.Remove(rel);
+                else if (!manifest.UserOptiBackups.Contains(rel, StringComparer.OrdinalIgnoreCase)) manifest.UserOptiBackups.Add(rel);
+            }
+            // An older OptiScaler under another name (installed as dxgi.dll before, winmm.dll now) would load twice.
+            OptiDllSwap.RemoveOtherCopies(manifest, userOwn || userBefore.Count > 0);
 
             progress?.Report(new(1, L.F("OptiScaler {0} installed as {1}", manifest.DisplayVersion, manifest.DllName)));
             Log.Info($"Installed {manifest.DisplayVersion} into {target} as {manifest.DllName}");
@@ -265,7 +310,7 @@ public static class OptiInstaller
             progress?.Report(new(0, L.T("Install failed, restoring the folder")));
             foreach (var rel in payloadFiles.Append("Remove_OptiScaler.bat").Append(req.Options.DllName).Append(manifest.DllName).Append(@$"{manifest.PluginsDir}\OptiPatcher.asi"))
                 TryDelete(Path.Combine(target, rel));
-            RestoreBackups(manifest);
+            RestoreBackups(manifest, olderOpti: true);
             RemoveCreatedDirs(manifest);
             throw ex is InstallException or OperationCanceledException ? ex : new InstallException(ex.Message);
         }
@@ -357,6 +402,8 @@ public static class OptiInstaller
 
         // The custom dlls first, while OptiScaler.ini still says where OptiScaler's folder is.
         Opti.CustomDlls.Sync(m, []);
+        // DLSSNR-AMD laid over the install (its folder, plugin, ini; OptiScaler.ini's keys as they were).
+        Opti.DlssNrAmd.Remove(m);
 
         foreach (var (rel, hash) in m.Files)
         {
@@ -482,6 +529,111 @@ public static class OptiInstaller
         finally { foreach (var p in procs) p.Dispose(); }
     }
 
+    /// <summary>
+    /// Downloads one optional archive of the release and lays its files over the build: same paths, notes left out. A file
+    /// the build has elsewhere under the same name (a dll packed without its folder) replaces that one.
+    /// </summary>
+    /// <summary>
+    /// Switches what runs the DLSS 5 model in an installed F5 build, without reinstalling it: to the vendor-neutral port
+    /// (<paramref name="port"/> true: the release's optional forwarder download laid over the install, its files recorded as
+    /// the install's own, the build's NGX forwarder kept aside) or back to NVIDIA's NGX forwarder kept aside. Returns false
+    /// when there is nothing to switch (no forwarder, already the wanted one, no port download, no NGX copy kept).
+    /// 1.4.0-rc.11: before this, an install made before the model file was stored kept the NGX forwarder, and DLSS 5 never
+    /// started on an AMD card.
+    /// </summary>
+    public static async Task<bool> SwitchForwarderAsync(InstallManifest m, OptiRelease release, bool port, IProgress<InstallProgress>? progress, CancellationToken ct)
+    {
+        var dst = Path.Combine(m.TargetDir, DlssNr.ForwarderName);
+        if (!File.Exists(dst) || DlssNr.IsPort(dst) == port) return false;
+        EnsureNotRunning(m.TargetDir);
+        var keep = Path.Combine(m.BackupRoot ?? Path.Combine(AppInfo.BackupsDir, "dlss5-forwarder"), "ngx-forwarder", DlssNr.ForwarderName);
+        if (port)
+        {
+            if (DlssNr.PortAddon(release) is not { } addon) return false;
+            var work = Path.Combine(Path.GetTempPath(), "hl-port-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(work);
+            try
+            {
+                await ApplyAddonAsync(release, addon, work, progress, ct);
+                if (!File.Exists(Path.Combine(work, DlssNr.ForwarderName)) || !DlssNr.IsPort(Path.Combine(work, DlssNr.ForwarderName)))
+                    throw new InstallException(L.F("{0} does not hold the vendor-neutral {1}.", addon.Name, DlssNr.ForwarderName));
+                Directory.CreateDirectory(Path.GetDirectoryName(keep)!);
+                File.Copy(dst, keep, overwrite: true);
+                foreach (var file in Directory.GetFiles(work, "*", SearchOption.AllDirectories))
+                {
+                    var rel = Path.GetRelativePath(work, file);
+                    var to = Path.Combine(m.TargetDir, rel);
+                    // A file of the game's own that the download would replace (not one of the install's): backed up first.
+                    if (File.Exists(to) && !m.Files.ContainsKey(rel) && !m.Backups.ContainsKey(rel) && m.BackupRoot is { } root)
+                    {
+                        var backup = Path.Combine(root, rel);
+                        Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+                        File.Copy(to, backup, overwrite: true);
+                        m.Backups[rel] = backup;
+                    }
+                    Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                    File.Copy(file, to, overwrite: true);
+                    m.Files[rel] = Hash(to);
+                }
+                if (!m.Addons.Contains(addon.Name)) m.Addons.Add(addon.Name);
+                Log.Info($"DLSS 5 forwarder switched to the vendor-neutral port ({addon.Name}) in {m.TargetDir}");
+            }
+            finally
+            {
+                try { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); } catch { }
+            }
+            return true;
+        }
+        if (!File.Exists(keep)) return false;
+        File.Copy(keep, dst, overwrite: true);
+        m.Files[DlssNr.ForwarderName] = Hash(dst);
+        // The port's own settings file goes with it (only when it is still the one put in).
+        const string PortIni = "nr_port.ini";
+        if (m.Files.Remove(PortIni, out var iniHash))
+        {
+            var ini = Path.Combine(m.TargetDir, PortIni);
+            if (File.Exists(ini) && Hash(ini) == iniHash) TryDelete(ini);
+            if (m.Backups.Remove(PortIni, out var backup) && File.Exists(backup)) File.Copy(backup, ini, overwrite: true);
+        }
+        if (DlssNr.PortAddon(release) is { } a) m.Addons.Remove(a.Name);
+        Log.Info($"DLSS 5 forwarder switched back to NVIDIA NGX in {m.TargetDir}");
+        return true;
+    }
+
+    static async Task ApplyAddonAsync(OptiRelease release, OptiAddon addon, string payload, IProgress<InstallProgress>? progress, CancellationToken ct)
+    {
+        progress?.Report(new(0.58, L.F("Downloading {0}", addon.Name)));
+        var archive = await OptiReleases.DownloadAsync(release with { AssetName = addon.Name, AssetUrl = addon.Url, Size = addon.Size, Sha256 = addon.Sha256 },
+            null, ct);
+        var tmp = payload + "-addon";
+        try
+        {
+            await ArchiveExtractor.ExtractAsync(archive, tmp, ct);
+            var root = tmp;
+            var dirs = Directory.GetDirectories(tmp);
+            if (Directory.GetFiles(tmp).Length == 0 && dirs.Length == 1 && !Path.GetFileName(dirs[0]).Equals("OptiScaler", StringComparison.OrdinalIgnoreCase)) root = dirs[0];
+            int copied = 0;
+            foreach (var file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+            {
+                var name = Path.GetFileName(file);
+                if (name.StartsWith("README", StringComparison.OrdinalIgnoreCase) || name.StartsWith("SHA256SUMS", StringComparison.OrdinalIgnoreCase)) continue;
+                var rel = Path.GetRelativePath(root, file);
+                var dst = Path.Combine(payload, rel);
+                if (!File.Exists(dst) && !rel.Contains(Path.DirectorySeparatorChar)
+                    && Directory.GetFiles(payload, name, SearchOption.AllDirectories) is [var only]) dst = only;
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                File.Copy(file, dst, overwrite: true);
+                copied++;
+            }
+            progress?.Report(new(0.6, L.F("Added {0}", addon.Name), L.F("{0}: {1} files laid over the build.", addon.Name, copied)));
+            Log.Info($"Addon {addon.Name}: {copied} files over {payload}");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tmp)) Directory.Delete(tmp, recursive: true); } catch { }
+        }
+    }
+
     static string FindPayloadRoot(string extracted)
     {
         if (File.Exists(Path.Combine(extracted, "OptiScaler.dll"))) return extracted;
@@ -491,7 +643,7 @@ public static class OptiInstaller
     }
 
     /// <summary>Puts every backed-up original back. Returns false if any of them could not be restored.</summary>
-    static bool RestoreBackups(InstallManifest m)
+    static bool RestoreBackups(InstallManifest m, bool olderOpti = false)
     {
         bool ok = true;
         foreach (var (rel, backup) in m.Backups)
@@ -499,6 +651,9 @@ public static class OptiInstaller
             try
             {
                 if (!File.Exists(backup)) continue;
+                // Records made before 1.4.0 could hold an older OptiScaler as the "original": it is not the game's file. The
+                // user's own OptiScaler (in the folder before Hybrid Launcher) is, as far as the folder goes.
+                if (!olderOpti && IsOptiBackup(rel, backup) && !m.UserOptiBackups.Contains(rel, StringComparer.OrdinalIgnoreCase)) continue;
                 var dst = Path.Combine(m.TargetDir, rel);
                 Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                 File.Copy(backup, dst, overwrite: true);
@@ -511,6 +666,9 @@ public static class OptiInstaller
         }
         return ok;
     }
+
+    static bool IsOptiBackup(string rel, string backup) =>
+        rel.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && File.Exists(backup) && OptiDetector.IsOptiScaler(backup);
 
     static void RemoveCreatedDirs(InstallManifest m)
     {

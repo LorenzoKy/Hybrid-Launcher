@@ -190,8 +190,7 @@ public sealed partial class MainWindow
             var empty = new StackPanel { Spacing = 8, Padding = new Thickness(12, 20, 12, 22), HorizontalAlignment = HorizontalAlignment.Center };
             empty.Children.Add(new Border
             {
-                Width = 52, Height = 52, CornerRadius = new CornerRadius(26), HorizontalAlignment = HorizontalAlignment.Center,
-                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+                Width = 52, Height = 40, HorizontalAlignment = HorizontalAlignment.Center,
                 Child = new FontIcon { Glyph = "", FontSize = 22, Opacity = 0.6 },
             });
             empty.Children.Add(new TextBlock { Text = L.T("You're all caught up"), FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
@@ -268,20 +267,7 @@ public sealed partial class MainWindow
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
 
-        grid.Children.Add(new Border
-        {
-            Width = 38, Height = 38, CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Top,
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new(0, 0), EndPoint = new(1, 1),
-                GradientStops =
-                {
-                    new GradientStop { Color = Color.FromArgb(0x3A, color.R, color.G, color.B), Offset = 0 },
-                    new GradientStop { Color = Color.FromArgb(0x16, color.R, color.G, color.B), Offset = 1 },
-                },
-            },
-            Child = new FontIcon { Glyph = glyph, FontSize = 17, Foreground = new SolidColorBrush(color), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-        });
+        grid.Children.Add(new Controls.IconTile(glyph, color, 38) { VerticalAlignment = VerticalAlignment.Top });
 
         var game = entry.GameId is null ? null : AppState.Find(entry.GameId);
         var text = new StackPanel { Spacing = 2 };

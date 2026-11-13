@@ -68,6 +68,15 @@ public static class GameLauncher
                 OpenUri(game.EpicLaunchUri);
                 return;
 
+            // Ubisoft Connect starts its games by link; arguments mean starting the exe (below), as for Epic.
+            case GameStore.Ubisoft when game.LaunchUri is not null && args.Length == 0:
+                OpenUri(game.LaunchUri);
+                return;
+
+            case GameStore.Rockstar when game.LauncherCommand is { } rockstar && args.Length == 0 && File.Exists(rockstar.Exe):
+                Start(rockstar.Exe, rockstar.Args, Path.GetDirectoryName(rockstar.Exe));
+                return;
+
             case GameStore.Xbox when game.XboxAumid is not null:
                 Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), $"shell:AppsFolder\\{game.XboxAumid}");
                 return;

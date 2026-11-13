@@ -27,16 +27,66 @@ public static class SettingsStore
     /// <summary>Goes up on every save: a page kept in memory compares it to know whether what it shows may be stale.</summary>
     public static int Version { get; private set; }
 
+    /// <summary>
+    /// Saves the settings. The JSON is made here (a millisecond: it is a snapshot of this moment), the disk is written on a
+    /// background thread: a save never waits for the disk (writing and replacing the file took 5-30 ms on the UI thread at every
+    /// click that changed a setting, more while an antivirus scans). Saves made while one is being written are merged into one
+    /// write of the newest state. <see cref="Flush"/> waits for the write (at exit).
+    /// </summary>
     public static void Save()
     {
+        string json;
         lock (Gate)
         {
             Version++;
+            try { json = JsonSerializer.Serialize(Current, HybridJson.Default.AppSettings); }
+            catch (Exception ex)
+            {
+                Log.Error("Saving settings failed", ex);
+                return;
+            }
+        }
+        lock (WriteGate)
+        {
+            _pending = json;
+            _writer ??= Task.Run(WriteLoop);
+        }
+    }
+
+    static readonly object WriteGate = new();
+    static string? _pending;
+    static Task? _writer;
+
+    static void WriteLoop()
+    {
+        while (true)
+        {
+            string? json;
+            lock (WriteGate)
+            {
+                json = _pending;
+                _pending = null;
+                if (json is null)
+                {
+                    _writer = null;
+                    return;
+                }
+            }
+            Write(json);
+        }
+    }
+
+    static readonly object FileGate = new();
+
+    static void Write(string json)
+    {
+        lock (FileGate)
+        {
             try
             {
                 var file = AppInfo.SettingsFile;
                 var tmp = file + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(Current, HybridJson.Default.AppSettings));
+                File.WriteAllText(tmp, json);
                 if (File.Exists(file))
                     File.Replace(tmp, file, file + ".bak", ignoreMetadataErrors: true);
                 else
@@ -47,6 +97,19 @@ public static class SettingsStore
                 Log.Error("Saving settings failed", ex);
             }
         }
+    }
+
+    /// <summary>Waits (up to 5 s) until every save made so far is on disk: before the app ends or restarts.</summary>
+    public static void Flush()
+    {
+        Task? writer;
+        lock (WriteGate) writer = _writer;
+        try { writer?.Wait(5000); }
+        catch (Exception ex) { Log.Warn($"Settings flush: {ex.Message}"); }
+        // A save that came in while the writer was ending is written here.
+        string? json;
+        lock (WriteGate) { json = _pending; _pending = null; }
+        if (json is not null) Write(json);
     }
 
     /// <summary>
@@ -273,6 +336,12 @@ public static class SettingsStore
             g.HiddenTabs = new HashSet<string>(g.HiddenTabs ?? [], StringComparer.OrdinalIgnoreCase);
             g.HiddenPageParts = new HashSet<string>(g.HiddenPageParts ?? [], StringComparer.OrdinalIgnoreCase);
             g.HiddenModCards = new HashSet<string>(g.HiddenModCards ?? [], StringComparer.OrdinalIgnoreCase);
+            g.DismissedModProblems = new HashSet<string>(g.DismissedModProblems ?? [], StringComparer.OrdinalIgnoreCase);
+            if (g.Dxvk is { } dx)
+            {
+                dx.Files = new Dictionary<string, string>(dx.Files ?? [], StringComparer.OrdinalIgnoreCase);
+                dx.Backups = new Dictionary<string, string>(dx.Backups ?? [], StringComparer.OrdinalIgnoreCase);
+            }
             g.QuickLinks = (g.QuickLinks ?? []).Where(l => !string.IsNullOrWhiteSpace(l.Path)).ToList();
             g.Notes ??= "";
             g.QuickPanelExtras = (g.QuickPanelExtras ?? []).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -297,6 +366,14 @@ public static class SettingsStore
             g.AsiPlugins = new HashSet<string>(g.AsiPlugins ?? g.Install?.AsiPlugins.Keys ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         }
         MigrateTabs(s);
+        // 1.4.0: the Library opens on the games played last, every launcher in one block; once, the user can change it back.
+        if (s.Library.DefaultsVersion < 1)
+        {
+            s.Library.Sort = "recent";
+            s.Library.Descending = false;
+            s.Library.GroupByLauncher = false;
+            s.Library.DefaultsVersion = 1;
+        }
         // 0.21: Material colours are off by default; turned off once in settings from before, the user can turn them back on.
         if (s.LookVersion < 2)
         {
@@ -310,4 +387,5 @@ public static class SettingsStore
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(InstallManifest))]
 [JsonSerializable(typeof(CloudManifest))]
+[JsonSerializable(typeof(HybridLauncher.Core.Opti.DlssNrAmdStage))]
 public partial class HybridJson : JsonSerializerContext;

@@ -1,8 +1,12 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace HybridLauncher.Core;
 
-public enum GameStore { Steam, Epic, Gog, Xbox, Custom }
+/// <summary>Where a game comes from. Saved by name (settings), so new launchers go before Custom: its place in the list orders the groups.</summary>
+public enum GameStore { Steam, Epic, Gog, Xbox, Ubisoft, Ea, Rockstar, Custom }
+
+/// <summary>A launcher's own exe and the arguments that make it start one game (Rockstar Games Launcher).</summary>
+public sealed record LauncherCommand(string Exe, string Args);
 
 /// <summary>A game found on disk. Detection output only; user choices live in <see cref="GameSettings"/>.</summary>
 public sealed class Game
@@ -39,6 +43,13 @@ public sealed class Game
     public string? EpicLaunchUri { get; init; }
     public string? XboxAumid { get; init; }
 
+    /// <summary>The launcher's link that starts the game (Ubisoft Connect: uplay://launch/&lt;id&gt;/0).</summary>
+    public string? LaunchUri { get; init; }
+    /// <summary>The launcher exe that starts the game (Rockstar Games Launcher), when it has no link for it.</summary>
+    public LauncherCommand? LauncherCommand { get; init; }
+    /// <summary>The command Windows runs to uninstall the game (its installed-programs entry), for launchers found through it.</summary>
+    public string? UninstallCommand { get; init; }
+
     /// <summary>Downloaded by Hybrid Launcher from a launcher account: started and uninstalled by Hybrid Launcher, no launcher involved.</summary>
     public bool Direct { get; init; }
 
@@ -60,6 +71,9 @@ public sealed class Game
         GameStore.Epic => "Epic Games",
         GameStore.Gog => "GOG",
         GameStore.Xbox => "Xbox / Game Pass",
+        GameStore.Ubisoft => "Ubisoft Connect",
+        GameStore.Ea => "EA app",
+        GameStore.Rockstar => "Rockstar Games Launcher",
         _ => L.T("Custom"),
     };
 
@@ -80,6 +94,12 @@ public sealed class OptiSetupOptions
     /// <summary>"Will you try to use DLSS inputs ... (enables Nvidia spoofing)". Only asked for AMD/Intel.</summary>
     public bool Spoofing { get; set; } = true;
 
+    /// <summary>
+    /// The user set <see cref="Spoofing"/> themselves (2.0.0-rc.11). Until then it follows the game: off when OptiPatcher
+    /// supports it (OptiPatcher unlocks the DLSS inputs without spoofing), on otherwise.
+    /// </summary>
+    public bool SpoofingSet { get; set; }
+
     /// <summary>Download OptiPatcher.asi when the bat says the game is supported. Only asked for AMD/Intel.</summary>
     public bool OptiPatcher { get; set; } = true;
 
@@ -98,6 +118,39 @@ public sealed class OptiSetupOptions
 
 /// <summary>Custom = a build imported by the user (see <see cref="Opti.CustomBuilds"/>), not a GitHub release. Fork = a release of another OptiScaler repository (see <see cref="OptiFork"/>).</summary>
 public enum OptiChannel { Stable, Nightly, Custom, Fork }
+
+/// <summary>DLSSNR-AMD in a game (<see cref="Opti.DlssNrAmd"/>): the release, the network it starts with, what it changed.</summary>
+public sealed class DlssNrAmdInstall
+{
+    public string Tag { get; set; } = "";
+    public string Network { get; set; } = "";
+    public bool RenoDx { get; set; } = true;
+    public string PluginHash { get; set; } = "";
+    /// <summary>OptiScaler.ini keys changed for it ("Section|Key") and their values before.</summary>
+    public Dictionary<string, string> OptiIniBefore { get; set; } = [];
+    /// <summary>A dlssnr-amd folder the game had before, kept aside.</summary>
+    public string? OwnFolderBackup { get; set; }
+}
+
+/// <summary>
+/// DLSSNR-AMD through ReShade (1.4.0-rc.20), with no OptiScaler: the package's reshade-feeder routes. What went into the game
+/// folder (files and folders, by their path in it) and what was there before under the same names, so it comes out exactly.
+/// </summary>
+public sealed class DlssNrAmdReShadeInstall
+{
+    public string Tag { get; set; } = "";
+    /// <summary>"reshade-feeder" (DirectX 10/11/12), "reshade-feeder-dx9" (DirectX 9 through DXVK) or "reshade-feeder-vulkan".</summary>
+    public string Route { get; set; } = "";
+    public string TargetDir { get; set; } = "";
+    public string Network { get; set; } = "";
+    public bool RenoDx { get; set; } = true;
+    public DateTime InstalledAt { get; set; }
+    public List<string> Files { get; set; } = [];
+    public List<string> Dirs { get; set; } = [];
+    /// <summary>Where the game's own files of the same names went (same paths below it).</summary>
+    public string? BackupDir { get; set; }
+    public List<string> BackedUp { get; set; } = [];
+}
 
 /// <summary>What Hybrid Launcher put into a game folder, so it can be removed exactly and originals restored.</summary>
 public sealed class InstallManifest
@@ -124,8 +177,16 @@ public sealed class InstallManifest
     /// <summary>Pre-existing files that were replaced or deleted: relative path -> backup file path.</summary>
     public Dictionary<string, string> Backups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Backups that are an OptiScaler the user had put in the folder before Hybrid Launcher installed one there (2.0.0-rc.17):
+    /// unlike an older OptiScaler of Hybrid Launcher's own, they go back at uninstall, so the folder is as it was.
+    /// </summary>
+    public List<string> UserOptiBackups { get; set; } = [];
+
     /// <summary>ASI plugins copied from the universal folder: file name -> SHA-256.</summary>
     public Dictionary<string, string> AsiPlugins { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The fork's optional downloads put in with the build (their archive names), see <see cref="Opti.OptiAddon"/>.</summary>
+    public List<string> Addons { get; set; } = [];
 
     /// <summary>
     /// Custom dlls copied from the shared folder into OptiScaler's custom\&lt;name&gt; (see <see cref="Opti.CustomDlls"/>):
@@ -135,6 +196,9 @@ public sealed class InstallManifest
 
     /// <summary>A copy of OptiScaler.ini as the install left it, before Hybrid Launcher's saved choices (OptiScaler settings → Restore defaults).</summary>
     public string? DefaultIni { get; set; }
+
+    /// <summary>DLSSNR-AMD laid over this install (<see cref="Opti.DlssNrAmd"/>), or null.</summary>
+    public DlssNrAmdInstall? DlssNrAmd { get; set; }
 
     [JsonIgnore]
     public string DisplayVersion => Channel switch
@@ -149,6 +213,9 @@ public sealed class InstallManifest
 public sealed class GameSettings
 {
     public string? ExeOverride { get; set; }
+
+    /// <summary>A cover picked by the user (a copy under the data folder's covers\), shown instead of the store's.</summary>
+    public string? CustomCover { get; set; }
     public string LaunchArgs { get; set; } = "";
 
     /// <summary>Show the launch arguments box in the play bar (off: they are set in ⋯ → Launch options only).</summary>
@@ -176,6 +243,18 @@ public sealed class GameSettings
     /// </summary>
     public bool? DlssNrChoice { get; set; }
 
+    /// <summary>How DLSS 5 runs in this game (Setup DLSS 5): "f5" (janblade's fork), "amd" (DLSSNR-AMD), or null for none chosen.</summary>
+    public string? Dlss5Method { get; set; }
+
+    /// <summary>How DLSSNR-AMD goes into this game: "optiscaler" (default, a plugin of OptiScaler) or "reshade" (with ReShade, no OptiScaler).</summary>
+    public string? Dlss5AmdWay { get; set; }
+
+    /// <summary>The ReShade route picked for this game ("reshade-feeder", "reshade-feeder-dx9", "reshade-feeder-vulkan"); null = by its graphics API.</summary>
+    public string? Dlss5AmdRoute { get; set; }
+
+    /// <summary>DLSSNR-AMD put in through ReShade (no OptiScaler), or null.</summary>
+    public DlssNrAmdReShadeInstall? DlssNrAmdReShade { get; set; }
+
     /// <summary>Settings from 1.3.0-rc.4/rc.5 had a per-game switch, on by default: a game turned off there stays off.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? DlssNr { get => null; set { if (value == false) DlssNrChoice ??= false; } }
@@ -199,6 +278,9 @@ public sealed class GameSettings
 
     /// <summary>Game page tabs hidden for this game only (the global ones are in <see cref="AppSettings.HiddenTabs"/>).</summary>
     public HashSet<string> HiddenTabs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How this game's page opens: "dashboard" or "tabs"; null follows <see cref="AppSettings.GameView"/>.</summary>
+    public string? View { get; set; }
 
     /// <summary>Parts of the game page hidden for this game only (see <see cref="PageParts"/>; the global ones are in <see cref="AppSettings.HiddenPageParts"/>).</summary>
     public HashSet<string> HiddenPageParts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -246,6 +328,12 @@ public sealed class GameSettings
 
     /// <summary>The Luma mod Hybrid Launcher put in the game folder, so it can be removed exactly.</summary>
     public LumaState? Luma { get; set; }
+
+    /// <summary>DXVK, DXVK-gplasync or VKD3D-Proton installed by Hybrid Launcher in this game.</summary>
+    public Mods.DxvkState? Dxvk { get; set; }
+
+    /// <summary>Mod check findings the user dismissed for this game (their ids), until the folder changes again.</summary>
+    public HashSet<string> DismissedModProblems { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The Ultra+ mod Hybrid Launcher put in the game folder (with its add-ons), so it can be updated and removed exactly.</summary>
     public UltraPlusState? UltraPlus { get; set; }
@@ -364,6 +452,9 @@ public sealed class LinkedAccounts
     public bool Epic { get; set; } = true;
     public bool Gog { get; set; } = true;
     public bool Xbox { get; set; } = true;
+    public bool Ubisoft { get; set; } = true;
+    public bool Ea { get; set; } = true;
+    public bool Rockstar { get; set; } = true;
 }
 
 /// <summary>A game Hybrid Launcher downloaded from a launcher account: where it is and how it starts (from the store's own data).</summary>
@@ -392,6 +483,9 @@ public sealed class ReShadeState
     /// <summary>ReShade64.dll was copied back from OptiScaler's backup (ReShade had been replaced when OptiScaler went in).</summary>
     public bool RestoredFromBackup { get; set; }
 
+    /// <summary>The dll Hybrid Launcher put in itself, without ReShade's installer (the Auto tab, 2.0.0-rc.7); null = none.</summary>
+    public string? Placed { get; set; }
+
     /// <summary>The last installer started for this game had full add-on support (needed by RenoDX); null = unknown.</summary>
     public bool? Addon { get; set; }
     public string? InstallerVersion { get; set; }
@@ -406,6 +500,13 @@ public sealed class IniProfile
 }
 
 /// <summary>Achievement pop-up options (Settings → Achievements).</summary>
+/// <summary>One pop-up look's own colours (#RRGGBB; empty = the look's own).</summary>
+public sealed class PopupLookColours
+{
+    public string Background { get; set; } = "";
+    public string Text { get; set; } = "";
+}
+
 public sealed class PopupSettings
 {
     /// <summary>"Native" (where the chosen look's original shows it), "BottomRight", "BottomLeft", "TopRight", "TopLeft",
@@ -433,6 +534,52 @@ public sealed class PopupSettings
     /// game's own store). <see cref="Style"/> and the background colours only apply to Hybrid and Minimal.
     /// </summary>
     public string Look { get; set; } = "Hybrid";
+
+    /// <summary>
+    /// The PlayStation looks' background: "Original" (the console's own: the PS5 plate's grey gradient, the PS4 bar white or
+    /// black as the look says), "Light", "Dark", "Tier" (the trophy's metal) or "Colour" (the colour picked in Colour).
+    /// </summary>
+    public string PsBackground { get; set; } = "Original";
+
+    /// <summary>
+    /// 1.4: the PlayStation looks take the shared <see cref="Background"/> (any colour). A background chosen with the old list moves
+    /// there once, when no background was picked; "Tier" (per trophy) has no single colour and goes back to the console's own.
+    /// </summary>
+    public void MovePsBackground(string accentHex)
+    {
+        if (PsBackground == "Original") return;
+        if (Background.Length == 0)
+            Background = PsBackground switch { "Light" => "#F4F3F5", "Dark" => "#1C1B1D", "Colour" => accentHex, _ => "" };
+        PsBackground = "Original";
+    }
+
+    /// <summary>
+    /// 1.4: each look's own background and text colours (look key as in <see cref="Look"/> → colours). A look with no entry, or
+    /// an empty colour, keeps its own (the console's or store's, or the theme's tint for Hybrid and Minimal).
+    /// </summary>
+    public Dictionary<string, PopupLookColours> LookColours { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The colours of <paramref name="look"/> (a new, empty entry when it has none yet).</summary>
+    public PopupLookColours ColoursOf(string look)
+    {
+        if (!LookColours.TryGetValue(look, out var c)) LookColours[look] = c = new PopupLookColours();
+        return c;
+    }
+
+    /// <summary>The looks that took the one shared <see cref="Background"/> before 1.4.</summary>
+    public static readonly string[] SharedBackgroundLooks = ["Hybrid", "Minimal", "PlayStation", "PlayStation4", "PlayStation4Black"];
+
+    /// <summary>
+    /// 1.4: the one shared <see cref="Background"/> becomes the background of each look that used it, so every look has its own
+    /// from now on. Runs once (the shared value is emptied).
+    /// </summary>
+    public void MoveSharedBackground()
+    {
+        if (Background.Length == 0) return;
+        foreach (var look in SharedBackgroundLooks)
+            if (ColoursOf(look).Background.Length == 0) ColoursOf(look).Background = Background;
+        Background = "";
+    }
 
     /// <summary>"Accent" (colour theme), "Gold", "Steam" (blue), or "Custom" with <see cref="CustomColor"/>.</summary>
     public string Style { get; set; } = "Accent";
@@ -495,11 +642,14 @@ public sealed class ControllerSettings
 public sealed class LibraryFilter
 {
     /// <summary>"name", "recent" (last played), "added", "playtime", "achievements" or "tech" (most upscaler / FG tags).</summary>
-    public string Sort { get; set; } = "name";
+    public string Sort { get; set; } = "recent";
     public bool Descending { get; set; }
 
-    /// <summary>Keep the launcher groups; off = one block of every game in the chosen order.</summary>
-    public bool GroupByLauncher { get; set; } = true;
+    /// <summary>Keep the launcher groups; off = one block of every game in the chosen order (the default since 1.4.0).</summary>
+    public bool GroupByLauncher { get; set; }
+
+    /// <summary>1 = the 1.4.0 defaults (last played, one block) applied once over older settings.</summary>
+    public int DefaultsVersion { get; set; }
 
     public bool OptiOnly { get; set; }
 
@@ -538,6 +688,18 @@ public sealed class AppSettings
     /// </summary>
     public bool Material { get; set; }
 
+    /// <summary>
+    /// Shading (1.4.0): cards and rows lit from above, a glow under the open tab, a sheen on the launch bar and covers lifted
+    /// under the pointer. Off by default: flat surfaces as before.
+    /// </summary>
+    public bool Shading { get; set; }
+
+    /// <summary>Interface size in percent (50-200), on top of Windows' own display scale. 100 = as Windows draws it.</summary>
+    public int InterfaceSize { get; set; } = 100;
+
+    /// <summary>Hide the vertical scroll bars everywhere (the wheel, touch, keys and the controller still scroll).</summary>
+    public bool HideScrollBars { get; set; }
+
     /// <summary>Which one-time look changes were applied to these settings (2 = Material turned off once, 0.21).</summary>
     public int LookVersion { get; set; }
 
@@ -574,6 +736,12 @@ public sealed class AppSettings
     /// </summary>
     public bool BackgroundSaver { get; set; } = true;
 
+    /// <summary>
+    /// How much the cache of the game pages (covers, banners, store, wiki and review data) may take on disk, in GB (Settings →
+    /// Storage). Pages open from it at once, also offline; past it the pictures used least recently go first.
+    /// </summary>
+    public int CacheBudgetGb { get; set; } = 2;
+
     /// <summary>The game list's width, dragged by its edge (240 to 480, and at most 45 % of the window).</summary>
     public double SidebarWidth { get; set; } = 312;
 
@@ -588,6 +756,15 @@ public sealed class AppSettings
 
     /// <summary>Put the stored DLSS NR model file (<see cref="Opti.DlssNr"/>) in every OptiScaler install that needs it.</summary>
     public bool UseDlssNr { get; set; }
+
+    /// <summary>
+    /// What runs the DLSS 5 model in a DLSS NR build: "auto" (NVIDIA's NGX on an RTX card, the vendor-neutral port otherwise),
+    /// "ngx" or "port" (janblade's vendor-neutral forwarder: DirectX 12 compute, any GPU). See <see cref="Opti.DlssNr"/>.
+    /// </summary>
+    public string DlssNrBackend { get; set; } = "auto";
+
+    /// <summary>Put the newer F5Low a fork publishes beside its build (janblade's Optional-F5Low-Update) in with it, on RTX cards.</summary>
+    public bool F5LowUpdate { get; set; } = true;
 
     /// <summary>The fork ("owner/name") the Fork channel of the OptiScaler tab shows.</summary>
     public string? SelectedFork { get; set; }
@@ -631,6 +808,12 @@ public sealed class AppSettings
 
     public string? LastGameId { get; set; }
 
+    /// <summary>
+    /// The game pages' warm-up went through the whole library once (2.0): until then it starts right after the first window
+    /// and runs wider, so the first visit of every game opens from the cache (Helpers.WarmUp).
+    /// </summary>
+    public bool CacheWarmed { get; set; }
+
     /// <summary>Games pinned to the quick-access row on top of the list, in pin order.</summary>
     public List<string> PinnedGames { get; set; } = [];
 
@@ -654,6 +837,18 @@ public sealed class AppSettings
 
     /// <summary>Game page tabs hidden for every game.</summary>
     public HashSet<string> HiddenTabs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How a game page opens (1.4.0): "tabs" (the classic page with every tab, the default) or "dashboard" (a summary of the
+    /// game's news, achievements, sessions and mods). Each game can keep its own choice (<see cref="GameSettings.View"/>).
+    /// </summary>
+    public string GameView { get; set; } = "tabs";
+
+    /// <summary>Order of the Dashboard's cards as the user arranged them; cards missing here keep their default place.</summary>
+    public List<string> DashboardOrder { get; set; } = [];
+
+    /// <summary>Dashboard cards the user hid ("news", "activity", "play", "achievements", "mods", "updates", "time").</summary>
+    public HashSet<string> DashboardHidden { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The links on a game's banner (Nexus Mods, PCGamingWiki...), hidden all at once with the eye.</summary>
     public bool HideBannerLinks { get; set; }
@@ -731,6 +926,29 @@ public sealed class AppSettings
     /// <summary>Library covers show the upscaler and frame generation tags (DLSS, FSR, XeSS...). Settings → Library, or the library's Filters.</summary>
     public bool ShowCoverTags { get; set; } = true;
 
+    /// <summary>Library covers show their tags at all (play time, mods, upscalers, achievements). Off: the bare cover art.</summary>
+    public bool ShowCoverOverlays { get; set; } = true;
+
+    /// <summary>Single cover tags turned off (keys in <see cref="CoverTagKinds"/>); the upscaler tags keep <see cref="ShowCoverTags"/>.</summary>
+    public HashSet<string> HiddenCoverTags { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every kind of tag a library cover can show, in the order of Settings → Library and the library's Filters.</summary>
+    public static readonly (string Key, string Label)[] CoverTagKinds =
+    [
+        ("pin", "Pinned"), ("time", "Play time"), ("opti", "OptiScaler"), ("rs", "ReShade"), ("rdx", "RenoDX"), ("uplus", "Ultra+"), ("dxvk", "DXVK"),
+        ("tech", "Upscalers (DLSS, FSR, XeSS)"), ("ach", "Achievements"),
+    ];
+
+    /// <summary>Whether a cover shows the tag <paramref name="key"/> (all of them off with <see cref="ShowCoverOverlays"/>).</summary>
+    public bool CoverTag(string key) => ShowCoverOverlays && (key == "tech" ? ShowCoverTags : !HiddenCoverTags.Contains(key));
+
+    public void SetCoverTag(string key, bool on)
+    {
+        if (key == "tech") ShowCoverTags = on;
+        else if (on) HiddenCoverTags.Remove(key);
+        else HiddenCoverTags.Add(key);
+    }
+
     public HashSet<string> HiddenGames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, GameSettings> Games { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -757,6 +975,43 @@ public sealed class AppSettings
 
     /// <summary>Settings → Features: read achievements and the last session of games run through a Steam emulator (Goldberg / GSE).</summary>
     public bool ReadSteamEmulator { get; set; } = true;
+
+    /// <summary>Settings → Achievements → Sources: more folders with local achievement files (a folder per app id, or one game's).</summary>
+    public List<string> LocalAchievementFolders { get; set; } = [];
+
+    /// <summary>Settings → Achievements → Sources: Xbox games' achievements, read from the Xbox app's cache on this PC.</summary>
+    public bool ReadXboxAchievements { get; set; } = true;
+
+    /// <summary>Settings → Achievements → Sources: Steam games' achievements, from Steam's stats files on this PC.</summary>
+    public bool ReadSteamAchievements { get; set; } = true;
+
+    /// <summary>Settings → Achievements → Sources: GOG games' achievements, from the signed-in GOG account.</summary>
+    public bool ReadGogAchievements { get; set; } = true;
+
+    /// <summary>Settings → Achievements → Sources: with a Microsoft account signed in, Xbox unlocks pop up while the game runs.</summary>
+    public bool XboxLivePopups { get; set; } = true;
+
+    /// <summary>Settings → Achievements → On unlock: a screenshot of the game's screen with each unlock.</summary>
+    public bool AchScreenshot { get; set; }
+
+    /// <summary>The screenshot is taken with the pop-up on screen (false: just before it shows).</summary>
+    public bool AchScreenshotWithPopup { get; set; } = true;
+
+    /// <summary>Where the screenshots go; empty = Pictures\Hybrid Launcher\Achievements.</summary>
+    public string AchScreenshotDir { get; set; } = "";
+
+    /// <summary>Settings → Achievements → On unlock: a pop-up when an achievement with steps moves on (local files and Xbox give them).</summary>
+    /// Off by default and saved under a new name in 2.0.0-rc.10, so a true written by an older build does not carry over.
+    public bool AchProgressPopupsOn { get; set; }
+
+    /// <summary>Progress pop-ups every N percent of the way (10, 25 or 50).</summary>
+    public int AchProgressStep { get; set; } = 25;
+
+    /// <summary>Settings → Achievements → On unlock: a short rumble on a connected controller.</summary>
+    public bool AchRumble { get; set; }
+
+    /// <summary>Settings → Achievements → On unlock: every unlock is written to the unlock history (kept by Hybrid Launcher).</summary>
+    public bool AchHistory { get; set; } = true;
 
     /// <summary>Ultra+: look for new builds of the installed mods when Hybrid Launcher starts, then every few hours (the Ultra+ page's badge).</summary>
     public bool UltraPlusAutoCheck { get; set; } = true;
@@ -798,6 +1053,9 @@ public sealed class AppSettings
     public bool ScanEpic { get; set; } = true;
     public bool ScanGog { get; set; } = true;
     public bool ScanXbox { get; set; } = true;
+    public bool ScanUbisoft { get; set; } = true;
+    public bool ScanEa { get; set; } = true;
+    public bool ScanRockstar { get; set; } = true;
 
     public GameSettings For(string gameId)
     {
@@ -819,8 +1077,8 @@ public static class IconSpots
     public static readonly (string Key, string Label, string Description)[] All =
     [
         (Tabs, "Tabs", "The icons of the game page tabs"),
-        (SubTabs, "Sub-tabs", "The icons of the sections under a tab (OptiScaler, ReShade & Mods...)"),
-        (Headings, "Card headings", "The coloured badges of the cards inside the tabs"),
+        (SubTabs, "Sub-tabs", "The icons of the sections under a tab (OptiScaler, Mods...)"),
+        (Headings, "Card headings", "The icons beside the headings of the cards inside the tabs"),
         (LaunchBar, "Launch bar", "The icons of HDR, the folders and the achievements beside Play"),
         (Banner, "Banner", "The logos of the links and tags on the game's banner"),
     ];

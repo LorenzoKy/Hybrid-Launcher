@@ -35,7 +35,7 @@ public static class Uninstaller
         { Store: GameStore.Steam, SteamAppId: not null } => UninstallRoute.Steam,
         { Store: GameStore.Gog } when GogUninstaller(game) is not null => UninstallRoute.Uninstaller,
         { Store: GameStore.Epic } when EpicItem(game) is not null => UninstallRoute.Epic,
-        { Store: GameStore.Epic or GameStore.Gog or GameStore.Xbox } => UninstallRoute.Launcher,
+        { Store: GameStore.Epic or GameStore.Gog or GameStore.Xbox or GameStore.Ubisoft or GameStore.Ea or GameStore.Rockstar } => UninstallRoute.Launcher,
         _ => UninstallRoute.RecycleBin,
     };
 
@@ -98,6 +98,13 @@ public static class Uninstaller
                 SettingsStore.Save();
                 return null;
             case UninstallRoute.Launcher:
+                // Ubisoft Connect, the EA app and the Rockstar Games Launcher: the game's own entry in Windows' installed programs
+                // (it opens that launcher's uninstall), as Settings → Apps would run it.
+                if (game.UninstallCommand is { Length: > 0 } command && SplitCommand(command) is { } run)
+                {
+                    Process.Start(new ProcessStartInfo(run.Exe, run.Args) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(run.Exe) ?? "" })?.Dispose();
+                    return null;
+                }
                 GameLauncher.OpenUri(game.Store switch
                 {
                     GameStore.Epic => "com.epicgames.launcher://library",
@@ -109,6 +116,28 @@ public static class Uninstaller
                 if (!SafeToDelete(game.InstallDir)) return L.F("Hybrid Launcher does not delete {0}: it is not a game's own folder.", game.InstallDir);
                 return RecycleFolder(game.InstallDir) ? null : L.T("Windows did not move the folder to the Recycle Bin (a file may be in use).");
         }
+    }
+
+    /// <summary>An installed-programs command split into its exe (quoted or not) and the rest; null when the exe is not there.</summary>
+    public static (string Exe, string Args)? SplitCommand(string command)
+    {
+        command = command.Trim();
+        string exe, rest;
+        if (command.StartsWith('"'))
+        {
+            int end = command.IndexOf('"', 1);
+            if (end < 0) return null;
+            exe = command[1..end];
+            rest = command[(end + 1)..].Trim();
+        }
+        else
+        {
+            int dot = command.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+            if (dot < 0) return null;
+            exe = command[..(dot + 4)];
+            rest = command[(dot + 4)..].Trim();
+        }
+        return File.Exists(exe) ? (exe, rest) : null;
     }
 
     static string? DeleteFolder(string dir)
@@ -246,12 +275,12 @@ public static class Uninstaller
     {
         public IntPtr hwnd;
         public uint wFunc;
-        public string pFrom;
-        public string? pTo;
+        public IntPtr pFrom;
+        public IntPtr pTo;
         public ushort fFlags;
         public int fAnyOperationsAborted;
         public IntPtr hNameMappings;
-        public string? lpszProgressTitle;
+        public IntPtr lpszProgressTitle;
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -263,14 +292,22 @@ public static class Uninstaller
     /// <summary>Moves a folder to the Recycle Bin (Windows warns first when it is too big for it and would be deleted for good).</summary>
     public static bool RecycleFolder(string dir)
     {
-        var op = new SHFILEOPSTRUCT
+        // pFrom is a list ended by two nulls: written to native memory as such, not left to the string marshaller.
+        var chars = (Path.GetFullPath(dir) + "\0\0").ToCharArray();
+        var from = Marshal.AllocHGlobal(chars.Length * sizeof(char));
+        try
         {
-            wFunc = FO_DELETE,
-            pFrom = Path.GetFullPath(dir) + "\0\0",
-            fFlags = (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING),
-        };
-        int result = SHFileOperation(ref op);
-        if (result != 0) Log.Warn($"Recycle {dir}: shell error {result}");
-        return result == 0 && op.fAnyOperationsAborted == 0 && !Directory.Exists(dir);
+            Marshal.Copy(chars, 0, from, chars.Length);
+            var op = new SHFILEOPSTRUCT
+            {
+                wFunc = FO_DELETE,
+                pFrom = from,
+                fFlags = (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING),
+            };
+            int result = SHFileOperation(ref op);
+            if (result != 0) Log.Warn($"Recycle {dir}: shell error {result}");
+            return result == 0 && op.fAnyOperationsAborted == 0 && !Directory.Exists(dir);
+        }
+        finally { Marshal.FreeHGlobal(from); }
     }
 }

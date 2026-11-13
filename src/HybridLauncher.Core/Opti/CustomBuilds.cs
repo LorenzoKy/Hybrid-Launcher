@@ -9,7 +9,7 @@ public sealed record CustomBuild(string Name, string Folder, string PayloadRoot,
     /// <summary>"10.0.0-dev (fa44a4a8) (20261022_091208)" → "10.0.0-dev · fa44a4a8 · 2026-10-22 09:12".</summary>
     public string PrettyVersion => CustomBuilds.PrettyVersion(Version);
 
-    public string Display => $"{Name}  ·  {CustomBuilds.ShortVersion(Version)}";
+    public string Display => $"{Name}  ·  {CustomBuilds.Readable(Version)}";
 
     public OptiRelease ToRelease() => new(OptiChannel.Custom, Version, Name, Date, Name, PayloadRoot, 0, null);
 }
@@ -114,6 +114,45 @@ public static class CustomBuilds
         }
         return null;
     }
+
+    /// <summary>
+    /// The version as a person should read it. A release keeps its number ("0.9.4"). A development build does not: OptiScaler
+    /// stamps a placeholder such as "10.0.0-dev" or "11.0.0-dev" on every build of its main branch (nightlies, test builds,
+    /// forks), and no such release exists; it is named by its major number and build date instead ("v10 dev-nightly · 10 Nov").
+    /// </summary>
+    public static string Readable(string v)
+    {
+        var parts = v.Replace("(", " ").Replace(")", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return v;
+        var number = parts[0].TrimStart('v', 'V');
+        if (!number.EndsWith("-dev", StringComparison.OrdinalIgnoreCase)) return number;
+        DateTime? built = null;
+        foreach (var p in parts.Skip(1))
+            if (DateTime.TryParseExact(p, "yyyyMMdd_HHmmss", null, System.Globalization.DateTimeStyles.None, out var d)) built = d;
+        // Short on purpose ("v10 dev-nightly · 10 Nov"): the major number, the channel and the day; the commit stays out.
+        var major = number.Split('.', '-')[0];
+        if (built is not { } when) return L.F("v{0} dev-nightly", major);
+        return L.F("v{0} dev-nightly · {1}", major, when.ToString(when.Year == DateTime.Now.Year ? "d MMM" : "d MMM yyyy"));
+    }
+
+    /// <summary>
+    /// The shortest name, for the banner: a release keeps its number, a development build is its major number and day alone
+    /// ("v10 · 10 Nov"), with no channel word.
+    /// </summary>
+    public static string Brief(string v)
+    {
+        if (!IsDev(v)) return Readable(v);
+        var parts = v.Replace("(", " ").Replace(")", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var major = parts[0].TrimStart('v', 'V').Split('.', '-')[0];
+        foreach (var p in parts.Skip(1))
+            if (DateTime.TryParseExact(p, "yyyyMMdd_HHmmss", null, System.Globalization.DateTimeStyles.None, out var d))
+                return $"v{major} · {d.ToString(d.Year == DateTime.Now.Year ? "d MMM" : "d MMM yyyy")}";
+        return $"v{major}";
+    }
+
+    /// <summary>True for OptiScaler's development builds (a placeholder "-dev" number, named by <see cref="Readable"/>).</summary>
+    public static bool IsDev(string v) =>
+        v.Replace("(", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.EndsWith("-dev", StringComparison.OrdinalIgnoreCase) == true;
 
     public static string ShortVersion(string v)
     {

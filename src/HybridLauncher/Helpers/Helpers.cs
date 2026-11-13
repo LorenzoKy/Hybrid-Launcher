@@ -120,6 +120,13 @@ public static class IconCache
 }
 
 /// <summary>Windows App SDK pickers: they take a window id, so they also work when Hybrid Launcher runs elevated.</summary>
+/// <summary>Opens a file or folder with what Windows uses for it (Explorer for a folder).</summary>
+public static class Shell
+{
+    public static void Open(string path) =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+}
+
 public static class Pickers
 {
     public static async Task<string?> PickExeAsync(Window owner)
@@ -158,6 +165,19 @@ public static class Pickers
         return paths;
     }
 
+    /// <summary>A file to write: CSV or JSON (the first choice is the default), under <paramref name="name"/>.</summary>
+    public static async Task<string?> PickSaveAsync(Window owner, string name, params (string Label, string Ext)[] types)
+    {
+        var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(owner.AppWindow.Id)
+        {
+            SuggestedStartLocation = Microsoft.Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+            SuggestedFileName = string.Concat(name.Split(Path.GetInvalidFileNameChars())),
+        };
+        foreach (var (label, ext) in types) picker.FileTypeChoices.Add(label, [ext]);
+        var result = await picker.PickSaveFileAsync();
+        return result?.Path;
+    }
+
     public static async Task<string?> PickFolderAsync(Window owner)
     {
         var picker = new Microsoft.Windows.Storage.Pickers.FolderPicker(owner.AppWindow.Id)
@@ -186,6 +206,7 @@ public static class Elevation
         try
         {
             SettingsStore.Save();
+            SettingsStore.Flush();
             Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas" })?.Dispose();
             Application.Current.Exit();
             return true;

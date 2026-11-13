@@ -16,6 +16,15 @@ public sealed partial class MainWindow
     /// <summary>The highlights of each version (English, translated through <see cref="L"/>), each with its icon.</summary>
     static readonly Dictionary<string, (string Glyph, string Text)[]> Highlights = new()
     {
+        ["2.0.0"] =
+        [
+            ("", "A game's page opens on its Dashboard: trailer, the newest update and its patch notes read in the app, your play time, achievements and mods."),
+            ("", "The Mods tab lists every mod in the game folder, what loads it and whether it works, with a fix for each conflict."),
+            ("", "DLSS 5 (early, experimental): DLSSNR-AMD on Radeon RX 9000 and RX 7000, janblade's F5 Multipass on NVIDIA, set up step by step."),
+            ("", "DXVK, DXVK-gplasync and VKD3D-Proton in a click, and OptiScaler's file name changed without reinstalling."),
+            ("", "Ubisoft Connect, EA app and Rockstar games are found; the Library has a Last played section and Play on every cover."),
+            ("", "Xbox achievements, an unlock history with a screenshot of each unlock, and smooth mouse-wheel scrolling everywhere."),
+        ],
         ["1.3.1"] =
         [
             ("", "Achievement pop-ups that look like a console's or a store's, with the game's own platinum and your own sounds."),
@@ -87,12 +96,7 @@ public sealed partial class MainWindow
                 var row = new Grid { ColumnSpacing = 12 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(new Border
-                {
-                    Width = 30, Height = 30, CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Top,
-                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, tint.R, tint.G, tint.B)),
-                    Child = new FontIcon { Glyph = glyph, FontSize = 14, Foreground = new SolidColorBrush(tint), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-                });
+                row.Children.Add(new Controls.IconTile(glyph, tint, 30) { VerticalAlignment = VerticalAlignment.Top });
                 var label = new TextBlock { Text = L.T(text), FontSize = 14, LineHeight = 20, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
                 Grid.SetColumn(label, 1);
                 row.Children.Add(label);

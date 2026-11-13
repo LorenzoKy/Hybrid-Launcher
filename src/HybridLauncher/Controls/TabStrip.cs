@@ -31,33 +31,52 @@ public static class GameTabs
 
     public static readonly GameTab[] All =
     [
-        new("overview", "Game", "\uE7FC", C(0xFFE05CB8), "Trailer, screenshots, description, requirements, languages"),
+        // The game's home (2.0.0-rc.10): a large house icon, no name, at the head of its own group.
+        new("overview", "Dashboard", "\uE80F", C(0xFFE05CB8), "The game on one page: updates and news, your play, achievements, mods, trailer, details, requirements and reviews"),
+        new("auto", "Auto", "\uE9F5", C(0xFF2EC7F0), "Experimental: OptiScaler, ReShade, RenoDX and Luma picked for this game and installed together with one click, with recommended settings"),
+        new("quick", "Quick access", "\uECA5", C(0xFF00C2D8), "Your own folders, programs and files for this game"),
+        new("notes", "Notes", "\uE70B", C(0xFFB9A3FF), "Free notes for this game"),
         new("opti", "OptiScaler", "\uE740", C(0xFF9A7CFF), "Install, update and remove OptiScaler, its settings, ASI plugins and the wiki entry"),
-        new("mods", "ReShade & Mods", "\uE790", C(0xFFF07F2A), "ReShade, RenoDX and Luma: effects and HDR mods for this game"),
+        new("mods", "Mods", "\uEA86", C(0xFFF07F2A), "The mods installed in this game and their conflicts; ReShade, RenoDX, Luma, DLSS 5, DXVK and VKD3D-Proton"),
         new("ultra", "Ultra+", "\uE8B9", C(0xFF4FD6B0), "Ultra+ graphics mods for Unreal Engine games: builds, updates, add-ons and settings"),
         new("pcgw", "PCGamingWiki", "\uE774", C(0xFF3D9BFF), "Fixes, issues and settings from PCGamingWiki"),
         new("ach", "Achievements", HybridLauncher.Helpers.Icons.TrophyGlyph, C(0xFFF2B82E), "Steam achievements (only for games that have them)"),
-        new("quick", "Quick access", "\uECA5", C(0xFF00C2D8), "Your own folders, programs and files for this game"),
-        new("notes", "Notes", "\uE70B", C(0xFFB9A3FF), "Free notes for this game"),
         new("links", "Links", "\uE71B", C(0xFF3FC26A), "Every useful page about the game"),
     ];
 
     /// <summary>The sections stacked inside the tabs that hold several ("opti", "mods"), in page order: they are the sub-tabs.</summary>
     static readonly Dictionary<string, GameTab[]> SectionsOf = new(StringComparer.OrdinalIgnoreCase)
     {
+        // The Dashboard's main column (1.4.0-rc.9): the ids are its sections' own (DashboardView.All).
+        ["overview"] =
+        [
+            new("media", "Trailer", "\uE714", C(0xFFE5484D), "Trailers and screenshots"),
+            new("spotlight", "Latest update", "\uE735", C(0xFFF07F2A), "The post Steam features, or the newest major update, and what it changes"),
+            new("news", "News", "\uE789", C(0xFF3D9BFF), "The game's posts on Steam, and its version history"),
+            new("about", "About", "\uE946", C(0xFFE05CB8), "The store's description of the game"),
+            new("wikis", "Wikis", "\uE736", C(0xFF22B8B0), "What the OptiScaler wiki and PCGamingWiki say about the game"),
+            new("requirements", "Requirements", "\uE7F4", C(0xFFF07F2A), "Minimum and recommended PC"),
+            new("reviews", "Reviews", "\uE90A", C(0xFF3D9BFF), "Steam's ratings and reviews"),
+        ],
         ["opti"] =
         [
-            new("install", "Install & plugins", "\uE896", C(0xFF9A7CFF), "Install, update and remove OptiScaler, ASI plugins"),
-            new("quickpanel", "Quick Panel", "\uE945", C(0xFFF2B82E), "Frame rate cap, frame generation and ASI plugins in one place"),
+            new("install", "Install", "\uE896", C(0xFF9A7CFF), "Install, update and remove OptiScaler; its saved versions"),
+            new("plugins", "Plugins & DLLs", "\uEA86", C(0xFFE05CB8), "ASI plugins and custom upscaler or frame generation DLLs"),
+            new("quickpanel", "Quick Panel", "\uE945", C(0xFFF2B82E), "Frame rate cap, frame generation and ASI plugins, the settings changed most"),
             new("settings", "Settings", "\uE9E9", C(0xFF5FA8FF), "OptiScaler.ini as switches, sliders and choices"),
             new("wiki", "Wiki", "\uE736", C(0xFF22B8B0), "The game's entry on the OptiScaler compatibility list"),
             new("notes", "Release notes", "\uE8F2", C(0xFF3FC2A0), "What each stable and nightly OptiScaler release changed"),
         ],
         ["mods"] =
         [
+            // First what is in the folder (1.4.0-rc.18): each mod, its files, what loads them, conflicts; then each mod's own section.
+            new("installed", "Installed", "\uE8FD", C(0xFFF07F2A), "Every mod in the game folder, its files and what loads them, and conflicts between them"),
             new("reshade", "ReShade", "\uE790", C(0xFFF07F2A), "ReShade installers, and loading ReShade through OptiScaler"),
-            new("renodx", "RenoDX", "\uE706", C(0xFFF2B82E), "HDR mods for this game (ReShade add-ons)"),
-            new("luma", "Luma", "\uE793", C(0xFFFF8A3D), "Luma Framework mods: HDR and DLSS for DirectX 11 games"),
+            new("renodx", "RenoDX", "\uE706", C(0xFFF2B82E), "Mainly HDR mods for this game (ReShade add-ons)"),
+            new("luma", "Luma", "\uE793", C(0xFFFF8A3D), "Luma Framework mods for DirectX 11 games: reworked rendering, such as upscaling, HDR and fixes"),
+            new("dlss5", "DLSS 5", "\uE945", C(0xFF76B900), "DLSS 5 neural rendering: the PC's card, the model file, DLSSNR-AMD and F5 Multipass"),
+            new("dxvk", "DXVK", "\uE7F4", C(0xFFE84A5F), "DXVK and DXVK-gplasync: Direct3D 8 to 11 through Vulkan"),
+            new("vkd3d", "VKD3D-Proton", "\uE7F4", C(0xFFB84AE8), "VKD3D-Proton: Direct3D 12 through Vulkan"),
         ],
         ["ultra"] =
         [
@@ -71,9 +90,11 @@ public static class GameTabs
 
     /// <summary>
     /// Where an id lands: the tab it opens and the section to scroll to. Tabs that used to stand alone ("settings", "optiwiki",
-    /// "reshade", "renodx", "luma") resolve to the tab that holds them now; every other id is its own tab, with no section.
+    /// "reshade", "renodx", "luma", "dxvk", "dlss5") resolve to the tab that holds them now; "tab/section" names both; every other id is its own tab, with no section.
     /// </summary>
-    public static (string Tab, string? Section) Resolve(string id) => id.ToLowerInvariant() switch
+    public static (string Tab, string? Section) Resolve(string id) => id.Contains('/')
+        ? (id[..id.IndexOf('/')].ToLowerInvariant(), id[(id.IndexOf('/') + 1)..].ToLowerInvariant())
+        : id.ToLowerInvariant() switch
     {
         "settings" => ("opti", "settings"),
         "optiwiki" => ("opti", "wiki"),
@@ -81,9 +102,19 @@ public static class GameTabs
         "reshade" => ("mods", "reshade"),
         "renodx" => ("mods", "renodx"),
         "luma" => ("mods", "luma"),
+        "dxvk" => ("mods", "dxvk"),
+        "vkd3d" => ("mods", "vkd3d"),
+        "dlss5" => ("mods", "dlss5"),
+        "modfiles" or "installedmods" => ("mods", "installed"),
         "ultraplus" => ("ultra", null),
         _ => (id, null),
     };
+
+    /// <summary>
+    /// The game's own group, left of the bar's hairline (2.0.0-rc.10): its home (the Dashboard), the one-click setup and the
+    /// player's own things. The tabs after the hairline work on the game's mods and read about it.
+    /// </summary>
+    public static readonly HashSet<string> HomeGroup = new(StringComparer.OrdinalIgnoreCase) { "overview", "auto", "quick", "notes" };
 
     public static GameTab? Find(string id) => All.FirstOrDefault(t => t.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
 
@@ -129,15 +160,25 @@ public static class GameTabs
 public sealed partial class TabStrip : UserControl
 {
     readonly StackPanel _row = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
+    // The Dashboard is the game's home (rc.9): first, on its own, a hairline between it and the other tabs; it does not move.
+    readonly StackPanel _home = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
+    // The home group (Home, Auto, Quick access, Notes, 2.0.0-rc.10); since rc.11 without a plate of its own (see Restyle).
+    readonly Border _homePlate = new();
+    readonly Border _homeRule = new() { Width = 1, Height = 22, Margin = new Thickness(14, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+    readonly StackPanel _strip = new() { Orientation = Orientation.Horizontal };
     readonly Button _gear;
     readonly Dictionary<string, Button> _buttons = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Self-test (perf): the tabs' buttons, in order.</summary>
+    internal IEnumerable<Button> SelfTestButtons => _buttons.Values;
+
+    /// <summary>Demo walk: a tab's button (sub-tabs too), for the drawn pointer.</summary>
+    internal Button? DemoButton(string id) => _buttons.GetValueOrDefault(id) ?? _subButtons.GetValueOrDefault(id);
     string _selected = "";
 
-    // Sub-tabs: the sections of the open tab when it holds several (OptiScaler, ReShade & Mods), under the row of tabs.
+    // Sub-tabs: the sections of the open tab when it holds several (OptiScaler, Mods), under the row of tabs.
     readonly StackPanel _subRow = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
     // A recessed band of its own under the row, led by the open tab's name: the sections read as part of that tab, not as more tabs.
     readonly Border _subHost = new() { Margin = new Thickness(0, 5, 0, 0), Padding = new Thickness(4), CornerRadius = new CornerRadius(9), BorderThickness = new Thickness(0), Visibility = Visibility.Collapsed };
-    readonly FontIcon _subIcon = new() { FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
     readonly TextBlock _subTitle = new() { FontSize = 13, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
     readonly Dictionary<string, Button> _subButtons = new(StringComparer.OrdinalIgnoreCase);
     string _subSelected = "";
@@ -149,6 +190,17 @@ public sealed partial class TabStrip : UserControl
     /// <summary>(tab id, everywhere): hide it for this game, or for every game.</summary>
     public event Action<string, bool>? HideRequested;
     public event Action? CustomizeRequested;
+    // The Dashboard is the first tab (1.4.0-rc.7): while it is open the gear customizes its cards instead of the tabs.
+    bool _dashboard;
+
+    // A window too narrow for every tab's name (1.4.0-rc.9): the tabs other than the open one show their icon alone
+    // (their name is in the tooltip), instead of the last ones being cut off at the edge.
+    bool _compact;
+    double _fullWidth;
+    Grid? _tabGrid;
+
+    /// <summary>Whether the open tab is the Dashboard (the gear then customizes its cards).</summary>
+    public bool Dashboard => _dashboard;
 
     public TabStrip()
     {
@@ -166,17 +218,20 @@ public sealed partial class TabStrip : UserControl
         _gear.Click += (_, _) => CustomizeRequested?.Invoke();
 
         var grid = new Grid { ColumnSpacing = 4 };
-        // The tabs sit in the middle of the bar: an empty cell as wide as the gear on the left keeps them centred.
-        var spacer = new Border { Width = 0 };
+        // The tabs sit in the middle of the bar: the view switch on the left and the gear on the right get cells of the same
+        // width (the wider of the two), so the tabs stay centred.
+        var left = new Grid();
+        var right = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(spacer);
-        _gear.SizeChanged += (_, e) => spacer.Width = e.NewSize.Width;
+        grid.Children.Add(left);
+        // An empty cell on the left as wide as the gear's on the right keeps the tabs centred.
+        _gear.SizeChanged += (_, _) => { if (Math.Abs(left.MinWidth - _gear.ActualWidth) > 0.5) left.MinWidth = right.MinWidth = _gear.ActualWidth; };
         var scroller = new ScrollViewer
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Content = _row,
+            Content = _strip,
             HorizontalScrollMode = ScrollMode.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
             VerticalScrollMode = ScrollMode.Disabled,
@@ -184,8 +239,17 @@ public sealed partial class TabStrip : UserControl
         };
         Grid.SetColumn(scroller, 1);
         grid.Children.Add(scroller);
-        Grid.SetColumn(_gear, 2);
-        grid.Children.Add(_gear);
+        _tabGrid = grid;
+        grid.SizeChanged += (_, _) => UpdateCompact();
+        _homePlate.Child = _home;
+        _strip.Children.Add(_homePlate);
+        _strip.Children.Add(_homeRule);
+        _strip.Children.Add(_row);
+        _strip.SizeChanged += (_, _) => UpdateCompact();
+        _gear.HorizontalAlignment = HorizontalAlignment.Right;
+        right.Children.Add(_gear);
+        Grid.SetColumn(right, 2);
+        grid.Children.Add(right);
 
         var subScroller = new ScrollViewer
         {
@@ -197,7 +261,7 @@ public sealed partial class TabStrip : UserControl
         };
         // The open tab's name, then a chevron, then its sections.
         var lead = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, Padding = new Thickness(10, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
-        lead.Children.Add(_subIcon);
+        // No icon here: the open tab, right above, already shows it.
         lead.Children.Add(_subTitle);
         lead.Children.Add(new FontIcon { Glyph = "", FontSize = 10, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
         var subGrid = new Grid { ColumnSpacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
@@ -227,18 +291,53 @@ public sealed partial class TabStrip : UserControl
         Restyle();
     }
 
+    /// <summary>The open tab is the Dashboard (true): the gear customizes its cards; on the other tabs, the tabs.</summary>
+    public void SetView(bool dashboard)
+    {
+        _dashboard = dashboard;
+        ToolTipService.SetToolTip(_gear, dashboard
+            ? L.T("Customize the dashboard: which cards show, and their order")
+            : L.T("Customize tabs: order, and which ones show (everywhere or for this game)"));
+    }
+
     /// <summary>Shows these tabs (already filtered and ordered), the <paramref name="selected"/> one marked.</summary>
     public void SetTabs(IEnumerable<GameTab> tabs, string selected)
     {
         _row.Children.Clear();
+        _home.Children.Clear();
         _buttons.Clear();
         foreach (var t in tabs)
         {
             var b = CreateButton(t);
             _buttons[t.Id] = b;
-            _row.Children.Add(b);
+            if (!GameTabs.HomeGroup.Contains(t.Id)) _row.Children.Add(b);
+            // The home always first in its group.
+            else if (t.Id == "overview") _home.Children.Insert(0, b);
+            else _home.Children.Add(b);
         }
+        _homePlate.Visibility = _home.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _homeRule.Visibility = _home.Children.Count > 0 && _row.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Other tabs, another width with names: measured again from the full row.
+        _compact = false;
+        _fullWidth = 0;
         Select(selected);
+    }
+
+    /// <summary>
+    /// Whether the tabs fit with their names: the row's own width while every name shows (remembered while compact), against
+    /// the room between the bar's two side cells.
+    /// </summary>
+    void UpdateCompact()
+    {
+        if (_tabGrid is null || _tabGrid.ActualWidth <= 0 || _buttons.Count == 0) return;
+        if (!_compact && _strip.ActualWidth > 0) _fullWidth = _strip.ActualWidth;
+        if (_fullWidth <= 0) return;
+        double room = _tabGrid.ActualWidth - 2 * (_gear.ActualWidth + _tabGrid.ColumnSpacing);
+        // A little slack before going back to names, so a width right at the edge does not flip back and forth.
+        bool compact = !GameTabs.NoIcons && (_compact ? _fullWidth > room - 12 : _fullWidth > room + 0.5);
+        if (compact == _compact) return;
+        _compact = compact;
+        Restyle();
     }
 
     public void Select(string id)
@@ -262,7 +361,6 @@ public sealed partial class TabStrip : UserControl
         _subHost.Visibility = _subButtons.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (GameTabs.Find(_selected) is { } parent)
         {
-            _subIcon.Glyph = parent.Glyph;
             _subTitle.Text = parent.Name;
         }
         _subSelected = selected;
@@ -300,6 +398,26 @@ public sealed partial class TabStrip : UserControl
         return b;
     }
 
+    static SolidColorBrush? _clear, _subDark, _subLight, _onDark, _onLight;
+    static SolidColorBrush Clear => _clear ??= new(Microsoft.UI.Colors.Transparent);
+    static SolidColorBrush SubDark => _subDark ??= new(Color.FromArgb(0x59, 0, 0, 0));
+    static SolidColorBrush SubLight => _subLight ??= new(Color.FromArgb(0x0F, 0, 0, 0));
+    // The open tab: a pane of light, brighter at the top edge, as if lit from above (no outline).
+    static Brush? _onDarkLit;
+    static Brush OnDarkLit => _onDarkLit ??= new LinearGradientBrush
+    {
+        StartPoint = new Windows.Foundation.Point(0.5, 0),
+        EndPoint = new Windows.Foundation.Point(0.5, 1),
+        GradientStops =
+        {
+            new GradientStop { Color = Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF), Offset = 0 },
+            new GradientStop { Color = Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF), Offset = 0.6 },
+            new GradientStop { Color = Color.FromArgb(0x08, 0xFF, 0xFF, 0xFF), Offset = 1 },
+        },
+    };
+    static SolidColorBrush OnDark => _onDark ??= new(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+    static SolidColorBrush OnLight => _onLight ??= new(Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF));
+
     void RestyleSub()
     {
         if (_subButtons.Count == 0) return;
@@ -307,17 +425,16 @@ public sealed partial class TabStrip : UserControl
         var accent = (res["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(255, 0x9A, 0x5C, 0xFF);
         bool dark = ActualTheme == ElementTheme.Dark;
         // The band: darker than the tab bar (a step down into the open tab) a plain fill with no edge.
-        _subHost.Background = new SolidColorBrush(dark ? Color.FromArgb(0x59, 0, 0, 0) : Color.FromArgb(0x0F, 0, 0, 0));
-        _subHost.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        _subIcon.Foreground = _subTitle.Foreground = (Brush)res["AccentTextFillColorPrimaryBrush"];
-        _subIcon.Visibility = GameTabs.NoSubIcons ? Visibility.Collapsed : Visibility.Visible;
+        _subHost.Background = dark ? SubDark : SubLight;
+        _subHost.BorderBrush = Clear;
+        _subTitle.Foreground = (Brush)res["AccentTextFillColorPrimaryBrush"];
         foreach (var (id, b) in _subButtons)
         {
             bool on = id.Equals(_subSelected, StringComparison.OrdinalIgnoreCase);
             var tab = (GameTab)b.Tag;
-            b.Background = on ? new SolidColorBrush(Color.FromArgb(dark ? (byte)0x3A : (byte)0x2C, accent.R, accent.G, accent.B)) : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            b.Background = on ? new SolidColorBrush(Color.FromArgb(dark ? (byte)0x3A : (byte)0x2C, accent.R, accent.G, accent.B)) : Clear;
             // No outline on the open tab (a plain tinted fill, as in Steam): its fill, bold word and underline say which it is.
-            b.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            b.BorderBrush = Clear;
             var content = (StackPanel)b.Content;
             var icon = (IconElement)content.Children[0];
             icon.Visibility = GameTabs.NoSubIcons ? Visibility.Collapsed : Visibility.Visible;
@@ -337,9 +454,14 @@ public sealed partial class TabStrip : UserControl
     {
         RestyleSub();
         var res = HybridLauncher.Helpers.ThemeRes.Current;
+        _homeRule.Background = new SolidColorBrush(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF));
+        // No fill of its own (rc.11): a lighter plate made one group look lit and the other switched off. The hairline alone
+        // parts the two groups; both read the same.
+        _homePlate.Background = Clear;
         // Dark see-through glass like the launch bar above it (the art, blurred, under a smoky tint), as Steam's tab band.
-        _bar.Background = new HybridLauncher.Helpers.GlassBrush(Color.FromArgb(0x70, 0x0C, 0x0D, 0x11), 32);
-        _bar.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        // One glass brush for the bar's life: a new one at every restyle compiled its blur effect again.
+        _bar.Background ??= new HybridLauncher.Helpers.GlassBrush(Color.FromArgb(0x70, 0x0C, 0x0D, 0x11), 32);
+        _bar.BorderBrush = Clear;
         var accent = (res["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(255, 0x9A, 0x5C, 0xFF);
         bool dark = ActualTheme == ElementTheme.Dark;
         foreach (var (id, b) in _buttons)
@@ -348,39 +470,44 @@ public sealed partial class TabStrip : UserControl
             var tab = (GameTab)b.Tag;
             // Minimal, as Steam and Hydra: no tinted pill behind the open tab, only a faint lift; its bold white word, lit icon
             // and underline say which it is, and the others step back.
-            b.Background = on
-                ? new SolidColorBrush(Color.FromArgb(dark ? (byte)0x14 : (byte)0x10, 0xFF, 0xFF, 0xFF))
-                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            b.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            b.Background = on ? (dark ? (AppState.Settings.Shading ? OnDarkLit : OnDark) : OnLight) : Clear;
+            b.BorderBrush = Clear;
             if (b.Content is Grid g)
             {
-                // The icon sits in a small rounded square: the tab's colour at low alpha (one quiet grey in "mono"); the open tab's
-                // square is filled with the accent and the glyph turns white, so it reads on the tinted pill.
+                // The glyph alone: the accent on the open tab, the tab's own colour on the others (one quiet grey in "mono").
                 var square = (Border)g.Children[0];
                 var icon = (IconElement)square.Child;
                 square.Visibility = GameTabs.NoIcons ? Visibility.Collapsed : Visibility.Visible;
-                g.ColumnSpacing = GameTabs.NoIcons ? 0 : 9;
-                if (on)
-                {
-                    square.Background = new SolidColorBrush(accent);
-                    icon.Foreground = HybridLauncher.Helpers.Contrast.BrushOn(accent);
-                }
-                else if (GameTabs.Colored)
-                {
-                    square.Background = new SolidColorBrush(Color.FromArgb(0x26, tab.Tint.R, tab.Tint.G, tab.Tint.B));
-                    icon.Foreground = new SolidColorBrush(tab.Tint);
-                }
-                else
-                {
-                    square.Background = new SolidColorBrush(dark ? Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0x16, 0, 0, 0));
-                    icon.Foreground = (Brush)res["TextFillColorSecondaryBrush"];
-                }
+                // The home is its icon alone, larger (its name in the tooltip); with icons turned off it keeps its name.
+                bool home = id == "overview" && !GameTabs.NoIcons;
+                bool iconOnly = home || (_compact && !on && !GameTabs.NoIcons);
+                g.ColumnSpacing = GameTabs.NoIcons || iconOnly ? 0 : 8;
+                g.Children[1].Visibility = iconOnly ? Visibility.Collapsed : Visibility.Visible;
+                b.Padding = home ? new Thickness(13, 6, 13, 6) : iconOnly ? new Thickness(12, 8, 12, 8) : new Thickness(14, 8, 16, 8);
+                if (on) icon.Foreground = (Brush)res["AccentTextFillColorPrimaryBrush"];
+                else if (GameTabs.Colored) icon.Foreground = new SolidColorBrush(tab.Tint);
+                else icon.Foreground = (Brush)res["TextFillColorSecondaryBrush"];
                 var text = (TextBlock)g.Children[1];
                 text.FontWeight = on ? FontWeights.Bold : FontWeights.SemiBold;
                 // The others a step back, still clearly readable on the art behind the glass.
                 text.Opacity = on ? 1 : 0.85;
                 // The open tab's mark: a short accent bar under its name.
                 ((Border)g.Children[2]).Opacity = on ? 1 : 0;
+                if (g.Children.Count > 3 && g.Children[3] is Border glow)
+                {
+                    bool lit = on && dark && AppState.Settings.Shading;
+                    glow.Opacity = lit ? 1 : 0;
+                    if (lit) glow.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Windows.Foundation.Point(0.5, 0),
+                        EndPoint = new Windows.Foundation.Point(0.5, 1),
+                        GradientStops =
+                        {
+                            new GradientStop { Color = Color.FromArgb(0, accent.R, accent.G, accent.B), Offset = 0 },
+                            new GradientStop { Color = Color.FromArgb(0x48, accent.R, accent.G, accent.B), Offset = 1 },
+                        },
+                    };
+                }
             }
         }
     }
@@ -399,13 +526,14 @@ public sealed partial class TabStrip : UserControl
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        // The glyph alone, in the tab's colour (1.4.0-rc.8: no square behind it, so it reads as part of the tab's name).
+        bool home = t.Id == "overview";
         content.Children.Add(new Border
         {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(6),
+            Width = home ? 26 : 20,
+            Height = home ? 26 : 22,
             VerticalAlignment = VerticalAlignment.Center,
-            Child = Centered(HybridLauncher.Helpers.Icons.Make(t.Glyph, 13)),
+            Child = Centered(HybridLauncher.Helpers.Icons.Make(t.Glyph, home ? 22 : 16)),
         });
         var text = new TextBlock { Text = t.Name, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(text, 1);
@@ -422,6 +550,18 @@ public sealed partial class TabStrip : UserControl
         Grid.SetRow(bar, 1);
         Grid.SetColumnSpan(bar, 2);
         content.Children.Add(bar);
+        // Light rising from the underline into the open tab: a glow rather than a shadow (coloured in Restyle).
+        var glow = new Border
+        {
+            Height = 14,
+            Margin = new Thickness(-6, 0, -6, -4),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            IsHitTestVisible = false,
+            Opacity = 0,
+        };
+        Grid.SetRowSpan(glow, 2);
+        Grid.SetColumnSpan(glow, 2);
+        content.Children.Add(glow);
 
         var b = new Button
         {
@@ -434,7 +574,8 @@ public sealed partial class TabStrip : UserControl
             VerticalAlignment = VerticalAlignment.Stretch,
             RenderTransform = new TranslateTransform(),
         };
-        ToolTipService.SetToolTip(b, t.Info + "\n" + L.T("Drag to move it, right-click to hide it."));
+        // Its name first: on a narrow window the tabs other than the open one show their icon alone.
+        ToolTipService.SetToolTip(b, t.Name + "\n" + t.Info + "\n" + L.T("Drag to move it, right-click to hide it."));
         b.Click += (_, _) =>
         {
             // Click comes before the release handler: a drag set _dragged while moving.
@@ -446,6 +587,8 @@ public sealed partial class TabStrip : UserControl
         b.AddHandler(PointerMovedEvent, new PointerEventHandler(Moved), true);
         b.AddHandler(PointerReleasedEvent, new PointerEventHandler(Released), true);
         b.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(Released), true);
+        // Its name for screen readers and the self-test (the button shows an icon and the name as separate parts).
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, t.Name);
         return b;
     }
 
@@ -468,23 +611,35 @@ public sealed partial class TabStrip : UserControl
     // ---------- drag to reorder ----------
 
     Button? _drag;
+    // The group the dragged tab moves in (2.0.0-rc.11: the game's group too, not only the tabs after the hairline); a tab
+    // never leaves its group, and the Home stays first in its own.
+    StackPanel _dragRow = null!;
     double _startX, _grab;
     bool _dragging, _dragged;
     List<string>? _orderBefore;
 
+    /// <summary>The first place a tab of this group may take: after the Home in the game's group.</summary>
+    int FirstFree(StackPanel row) => ReferenceEquals(row, _home) && _home.Children.Count > 0 && _home.Children[0] is Button { Tag: GameTab { Id: "overview" } } ? 1 : 0;
+
     void Pressed(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not Button b || !e.GetCurrentPoint(b).Properties.IsLeftButtonPressed) return;
+        if (b.Parent is not StackPanel row || (!ReferenceEquals(row, _home) && !ReferenceEquals(row, _row))) return;
+        // The Home stays first.
+        if (b.Tag is GameTab { Id: "overview" }) return;
         _drag = b;
+        _dragRow = row;
         _dragging = false;
         _dragged = false;
-        _startX = e.GetCurrentPoint(_row).Position.X;
+        _startX = e.GetCurrentPoint(row).Position.X;
         _grab = _startX - Left(b);
     }
 
     void Moved(object sender, PointerRoutedEventArgs e)
     {
         if (_drag is null || !ReferenceEquals(sender, _drag)) return;
+        var _row = _dragRow;
+        int first = FirstFree(_row);
         double x = e.GetCurrentPoint(_row).Position.X;
         if (!_dragging)
         {
@@ -506,7 +661,7 @@ public sealed partial class TabStrip : UserControl
             int index = _row.Children.IndexOf(_drag);
             if (index + 1 < _row.Children.Count && _row.Children[index + 1] is FrameworkElement next && mid > Left(next) + next.ActualWidth / 2)
                 Swap(index + 1, index);
-            else if (index > 0 && _row.Children[index - 1] is FrameworkElement prev && mid < Left(prev) + prev.ActualWidth / 2)
+            else if (index > first && _row.Children[index - 1] is FrameworkElement prev && mid < Left(prev) + prev.ActualWidth / 2)
                 Swap(index - 1, index + 1);
             else break;
         }
@@ -548,7 +703,7 @@ public sealed partial class TabStrip : UserControl
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _dragged = false);
     }
 
-    List<string> Order() => _row.Children.OfType<Button>().Select(b => ((GameTab)b.Tag).Id).ToList();
+    List<string> Order() => _home.Children.Concat(_row.Children).OfType<Button>().Select(b => ((GameTab)b.Tag).Id).ToList();
 
-    double Left(UIElement e) => e.TransformToVisual(_row).TransformPoint(new Windows.Foundation.Point(0, 0)).X - (e.RenderTransform is TranslateTransform t ? t.X : 0);
+    double Left(UIElement e) => e.TransformToVisual(_dragRow ?? _row).TransformPoint(new Windows.Foundation.Point(0, 0)).X - (e.RenderTransform is TranslateTransform t ? t.X : 0);
 }

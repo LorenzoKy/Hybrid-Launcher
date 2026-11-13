@@ -17,7 +17,7 @@ public static class GogAchievements
 
     public static async Task<AchievementSet?> ReadAsync(string productId, CancellationToken ct)
     {
-        if (!GogAccount.SignedIn || GogAccount.UserId is not { } user) return null;
+        if (!SettingsStore.Current.ReadGogAchievements || !GogAccount.SignedIn || GogAccount.UserId is not { } user) return null;
         try
         {
             var json = await GogAccount.GetAuthorizedAsync($"https://gameplay.gog.com/clients/{productId}/users/{user}/achievements", ct);

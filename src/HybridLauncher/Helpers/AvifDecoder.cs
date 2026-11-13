@@ -19,7 +19,7 @@ public static class AvifDecoder
     static Task<CoreWebView2?>? _starting;
     static WebView2? _view;
     static readonly Dictionary<string, TaskCompletionSource<string?>> Waiting = [];
-    static readonly Dictionary<string, Task<string?>> InFlight = new(StringComparer.Ordinal);
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<string?>> InFlight = new(StringComparer.Ordinal);
     static DispatcherTimer? _idle;
     static bool _unavailable;
     static int _next;
@@ -38,11 +38,15 @@ public static class AvifDecoder
         var file = Path.Combine(Dir, key + ".png");
         if (File.Exists(file)) return Task.FromResult<string?>(file);
         if (_unavailable) return Task.FromResult<string?>(null);
-        if (InFlight.TryGetValue(key, out var running)) return running;
-        var task = ConvertAsync(url, file);
-        InFlight[key] = task;
-        _ = task.ContinueWith(_ => App.Window?.DispatcherQueue.TryEnqueue(() => InFlight.Remove(key)), TaskScheduler.Default);
-        return task;
+        // Asked from several threads at once (covers and descriptions load in parallel): one conversion per picture.
+        lock (InFlight)
+        {
+            if (InFlight.TryGetValue(key, out var running)) return running;
+            var task = ConvertAsync(url, file);
+            InFlight[key] = task;
+            _ = task.ContinueWith(_ => InFlight.TryRemove(key, out Task<string?>? _), TaskScheduler.Default);
+            return task;
+        }
     }
 
     static async Task<string?> ConvertAsync(string url, string file)

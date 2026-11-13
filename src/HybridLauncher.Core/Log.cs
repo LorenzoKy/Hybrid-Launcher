@@ -28,13 +28,19 @@ public static class Log
     public static void Warn(string message) => Write("WARN", message);
     public static void Error(string message, Exception? ex = null) => Write("ERROR", ex is null ? message : $"{message}: {ex}");
 
+    // Lines are written by a thread of their own: a log line never waits for the disk on the thread that writes it (the UI
+    // thread logs too, and a busy disk held it for 10-40 ms now and then). Warnings and errors are on disk before Write returns.
+    static readonly System.Collections.Concurrent.ConcurrentQueue<string> Pending = new();
+    static readonly AutoResetEvent Wake = new(false);
+    static Thread? _writer;
+
     static void Write(string level, string message)
     {
         try
         {
+            string line;
             lock (Gate)
             {
-                if (!_pruned) Prune();
                 if (_bytes > MaxBytes && level == "INFO")
                 {
                     if (_capped) return;
@@ -42,14 +48,54 @@ public static class Log
                     level = "WARN";
                     message = $"The log of this session passed {MaxBytes >> 20} MB: from here on only warnings and errors are written.";
                 }
-                var line = $"{DateTime.Now:HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
-                File.AppendAllText(CurrentFile, line, Encoding.UTF8);
+                line = $"{DateTime.Now:HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
                 _bytes += Encoding.UTF8.GetByteCount(line);
+                Pending.Enqueue(line);
+                if (_writer is null)
+                {
+                    _writer = new Thread(WriteLoop) { IsBackground = true, Name = "Log writer", Priority = ThreadPriority.BelowNormal };
+                    _writer.Start();
+                    AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush();
+                }
             }
+            if (level == "INFO") Wake.Set();
+            else Flush();
         }
         catch
         {
             // Logging must never take the app down.
+        }
+    }
+
+    static void WriteLoop()
+    {
+        while (true)
+        {
+            Wake.WaitOne();
+            try { Flush(); } catch { }
+        }
+    }
+
+    static readonly object FileGate = new();
+
+    /// <summary>Writes every line logged so far (at exit, before a bug report reads the file).</summary>
+    public static void Flush()
+    {
+        lock (FileGate)
+        {
+            if (Pending.IsEmpty) return;
+            try
+            {
+                if (!_pruned) Prune();
+                var sb = new StringBuilder();
+                while (Pending.TryDequeue(out var line)) sb.Append(line);
+                using var stream = new FileStream(CurrentFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+                // The file's first bytes are the UTF-8 mark, as File.AppendAllText wrote them.
+                if (stream.Length == 0) stream.Write(Encoding.UTF8.Preamble);
+                stream.Write(bytes);
+            }
+            catch { }
         }
     }
 

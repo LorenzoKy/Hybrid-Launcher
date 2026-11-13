@@ -12,7 +12,7 @@ namespace HybridLauncher.Views;
 /// of dlls under one name (the name OptiScaler's menu shows), switched on per game. Dlls can be added to any entry, renamed,
 /// given another kind or moved to another entry; entries can be renamed (the folder itself) and deleted, for every game at once.
 /// </summary>
-public sealed partial class GamePage
+public partial class GamePage
 {
     static Style Res(string key) => (Style)HybridLauncher.Helpers.ThemeRes.Current[key];
 

@@ -10,7 +10,7 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid x:Name="RootGrid">
+    <Grid x:Name="RootGrid" AllowDrop="True" DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
         <Grid.Resources>
             <!-- Hybrid Launcher's own minimize / maximize / close: as tall as the title bar (easy to hit, even at the top edge of a
                  maximized window), lined up with the logo, in the theme's colours; close turns red under the pointer. -->
@@ -216,7 +216,12 @@
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <Frame x:Name="ContentFrame" />
+            <!-- The pages (Frame), and over it the game pages (2.0.0-rc.4): one per recent game, always alive, shown or hidden
+                 (MainWindow.GameSlots). The Frame then holds an empty GameShellPage, for the history only. -->
+            <Grid x:Name="PageHost">
+                <Frame x:Name="ContentFrame" />
+                <Grid x:Name="GameHost" Visibility="Collapsed" />
+            </Grid>
         </NavigationView>
 
         <!-- Drag the game list's edge to make it wider or narrower (Expanded mode only; placed and clamped in code). -->

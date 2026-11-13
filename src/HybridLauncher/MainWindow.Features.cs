@@ -1,4 +1,4 @@
-using HybridLauncher.Controls;
+﻿using HybridLauncher.Controls;
 using HybridLauncher.Core;
 using HybridLauncher.Helpers;
 using HybridLauncher.Views;
@@ -16,7 +16,7 @@ namespace HybridLauncher;
 
 /// <summary>
 /// The feature picker: at the first start, before the welcome tour, a sheet over the window asks which tools to keep
-/// (Everything, No achievements, OptiScaler + ReShade, Only OptiScaler, Just a launcher, or a mix of the switches below).
+/// (Everything, No achievements, OptiScaler + Mods, Only OptiScaler, Just a launcher, or a mix of the switches below).
 /// Each choice has a card with its icons, and a live preview of a game's page shows the tabs and launch bar items that stay.
 /// Turning a feature off only hides it (see <see cref="Features"/>); Settings → Features opens the picker again.
 /// </summary>
@@ -57,28 +57,58 @@ public sealed partial class MainWindow
         _pickChips.Clear();
         _pickTabs.Clear();
 
-        var card = new StackPanel { Spacing = 28, MaxWidth = 1240, Padding = new Thickness(40, 36, 40, 36), HorizontalAlignment = HorizontalAlignment.Stretch };
+        // 1.4.0-rc.20 layout: the choices on the left (starting points as rows, then every feature in one list), the live
+        // preview of a game page on the right; one column on a narrow window, the preview after the choices.
+        var card = new StackPanel { Spacing = 26, MaxWidth = 1320, Padding = new Thickness(40, 36, 40, 36), HorizontalAlignment = HorizontalAlignment.Stretch };
         card.Children.Add(PickerHeader(firstStart));
 
-        var presets = new Grid { ColumnSpacing = 14, RowSpacing = 14 };
+        var presets = new StackPanel { Spacing = 8 };
         foreach (var p in Features.Presets) presets.Children.Add(PresetCard(p));
-        card.Children.Add(presets);
+        var tiles = new StackPanel();
+        foreach (var f in Features.All)
+        {
+            if (tiles.Children.Count > 0) tiles.Children.Add(new Border { Height = 1, Margin = new Thickness(16, 0, 16, 0), Background = new SolidColorBrush(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)) });
+            tiles.Children.Add(FeatureTile(f));
+        }
+        var list = new Border { CornerRadius = new CornerRadius(12), Background = new SolidColorBrush(CardFill), Child = tiles };
 
-        card.Children.Add(Section(L.T("Preview"), L.T("A game's page with this choice: the launch bar and the tabs that stay.")));
-        card.Children.Add(PickerPreview());
+        var choices = new StackPanel { Spacing = 12 };
+        choices.Children.Add(Section(L.T("Starting point")));
+        choices.Children.Add(presets);
+        var fine = new StackPanel { Spacing = 12, Margin = new Thickness(0, 14, 0, 0) };
+        fine.Children.Add(Section(L.T("Each feature")));
+        fine.Children.Add(list);
+        choices.Children.Add(fine);
 
-        card.Children.Add(Section(L.T("Fine-tune"), L.T("Turn single features on or off. A mix of your own works too.")));
-        var tiles = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
-        foreach (var f in Features.All) tiles.Children.Add(FeatureTile(f));
-        card.Children.Add(tiles);
+        var preview = new StackPanel { Spacing = 12 };
+        preview.Children.Add(Section(L.T("Preview")));
+        preview.Children.Add(PickerPreview());
+        preview.Children.Add(new TextBlock { Text = L.T("A game's page with this choice: the launch bar and the tabs that stay."), FontSize = 12.5, Opacity = 0.6, TextWrapping = TextWrapping.Wrap });
 
+        var columns = new Grid { ColumnSpacing = 32, RowSpacing = 26 };
+        columns.Children.Add(choices);
+        columns.Children.Add(preview);
+        card.Children.Add(columns);
 
-        // Cards in as many columns as fit: five on a wide window, fewer on a narrow one.
+        // Wide: two columns, the preview beside the choices. Narrow: one column, the preview after them.
         card.SizeChanged += (_, e) =>
         {
-            double w = e.NewSize.Width - 80;
-            Reflow(presets, w >= 1000 ? 5 : w >= 620 ? 3 : w >= 400 ? 2 : 1);
-            Reflow(tiles, w >= 900 ? 3 : w >= 540 ? 2 : 1);
+            bool wide = e.NewSize.Width - 80 >= 1000;
+            if (wide == (columns.ColumnDefinitions.Count == 2)) return;
+            columns.ColumnDefinitions.Clear();
+            columns.RowDefinitions.Clear();
+            if (wide)
+            {
+                columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
+                Grid.SetColumn(preview, 1); Grid.SetRow(preview, 0);
+            }
+            else
+            {
+                columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetColumn(preview, 0); Grid.SetRow(preview, 1);
+            }
         };
 
         var scroll = new ScrollViewer
@@ -92,7 +122,7 @@ public sealed partial class MainWindow
         var footer = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x99, 0x06, 0x07, 0x09)),
-            Child = new Border { MaxWidth = 1240, Padding = new Thickness(40, 14, 40, 14), Child = PickerFooter(firstStart) },
+            Child = new Border { MaxWidth = 1320, Padding = new Thickness(40, 14, 40, 14), Child = PickerFooter(firstStart) },
         };
         Grid.SetRow(footer, 1);
         var overlay = new Grid
@@ -141,7 +171,7 @@ public sealed partial class MainWindow
             Log.Info($"Features: {(Features.Matching(_pickOn)?.Id ?? "custom")} ({string.Join(", ", _pickOn.Order())})");
         }
         // The page behind shows the new set of tabs at once.
-        if (apply && ContentFrame.Content is GamePage page && page.GameId is { } id) ContentFrame.Navigate(typeof(GamePage), id);
+        if (apply && Shown is GamePage page && page.GameId is { } id) ReloadGame(id);
         Motion.Close(overlay, () =>
         {
             // The picker held the focus: gone from the tree, WinUI hands it to the search box without a GettingFocus event.
@@ -177,13 +207,9 @@ public sealed partial class MainWindow
         return head;
     }
 
-    static FrameworkElement Section(string title, string text)
-    {
-        var s = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, -14) };
-        s.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        s.Children.Add(new TextBlock { Text = text, Opacity = 0.65, FontSize = 13, TextWrapping = TextWrapping.Wrap });
-        return s;
-    }
+    /// <summary>A group label in the app's own style (small capitals, as on Settings and the Dashboard).</summary>
+    static FrameworkElement Section(string title) =>
+        new TextBlock { Text = title.ToUpper(System.Globalization.CultureInfo.CurrentCulture), Style = Ui.Style("GroupHeader") };
 
     /// <summary>Lays the children out row by row in <paramref name="columns"/> equal columns.</summary>
     static void Reflow(Grid grid, int columns)
@@ -237,9 +263,8 @@ public sealed partial class MainWindow
     static FrameworkElement Badge(string glyph, Color tint, double size, bool crossed = false)
     {
         var g = new Grid { Width = size, Height = size };
-        g.Children.Add(new Ellipse { Fill = new SolidColorBrush(Color.FromArgb(0xFF, 0x17, 0x18, 0x1C)) });
-        g.Children.Add(new Ellipse { Fill = new SolidColorBrush(WithAlpha(tint, 0x30)) });
-        var icon = glyph == Icons.TrophyGlyph ? Icons.Trophy(size * 0.5) : Icons.Colored(glyph, size * 0.44, tint);
+        // The glyph alone in its colour (1.4.0-rc.9: no disc behind it, as everywhere else in the app).
+        var icon = glyph == Icons.TrophyGlyph ? Icons.Trophy(size * 0.62) : Icons.Colored(glyph, size * 0.6, tint);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
         icon.VerticalAlignment = VerticalAlignment.Center;
         if (crossed) icon.Opacity = 0.55;
@@ -260,85 +285,84 @@ public sealed partial class MainWindow
         return g;
     }
 
+    /// <summary>
+    /// One starting point as a row: its icons on a wash of its main colour, its name and what it keeps, a small strip of the
+    /// features it keeps (lit) and leaves out (faint), and a round mark on the right that fills when it is the one chosen.
+    /// </summary>
     FrameworkElement PresetCard(Features.Preset p)
     {
         var lead = p.Hero.Select(Features.Find).FirstOrDefault(f => f is not null);
         var leadTint = lead is null ? Color.FromArgb(0xFF, 0x8A, 0x90, 0x9C) : Tint(lead.Tint);
 
-        // The picture: the preset's icons, overlapping, on a wash of its main colour.
-        var icons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = -12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var h in p.Hero)
+        var icons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = -4, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var h in p.Hero.Take(2))
         {
             var f = Features.Find(h);
-            icons.Children.Add(Badge(f?.Glyph ?? h, f is null ? Color.FromArgb(0xFF, 0xE8, 0xE8, 0xEC) : Tint(f.Tint), 54, p.CrossedOut));
+            icons.Children.Add(Badge(f?.Glyph ?? h, f is null ? Color.FromArgb(0xFF, 0xE8, 0xE8, 0xEC) : Tint(f.Tint), 34, p.CrossedOut));
         }
-        if (p.Id == "all")
-            icons.Children.Add(new Border
-            {
-                Width = 54, Height = 54, CornerRadius = new CornerRadius(27),
-                Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x22, 0x23, 0x28)),
-                Child = new TextBlock { Text = L.F("+{0}", Features.All.Length - 3), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Opacity = 0.85 },
-            });
         var hero = new Border
         {
-            Height = 104,
-            CornerRadius = new CornerRadius(8),
+            Width = 80, Height = 58,
+            CornerRadius = new CornerRadius(10),
             Background = new LinearGradientBrush
             {
                 StartPoint = new(0, 0),
                 EndPoint = new(1, 1),
                 GradientStops =
                 {
-                    new GradientStop { Color = WithAlpha(leadTint, 0x40), Offset = 0 },
-                    new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 0.9 },
+                    new GradientStop { Color = WithAlpha(leadTint, 0x4A), Offset = 0 },
+                    new GradientStop { Color = WithAlpha(leadTint, 0x10), Offset = 1 },
                 },
             },
             Child = icons,
+            VerticalAlignment = VerticalAlignment.Center,
         };
 
-        // What stays on a game page: one small icon per tab and launch bar item.
-        var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 4, 0, 0) };
+        var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, Margin = new Thickness(0, 6, 0, 0) };
         foreach (var f in Features.All)
         {
             bool on = p.On.Contains(f.Id);
             var mini = f.Glyph == Icons.TrophyGlyph ? Icons.Trophy(13) : Icons.Colored(f.Glyph, 12, Tint(f.Tint));
-            mini.Opacity = on ? 1 : 0.18;
+            mini.Opacity = on ? 1 : 0.16;
             ToolTipService.SetToolTip(mini, L.T(f.Name));
             strip.Children.Add(mini);
         }
 
-        var check = new Border
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
+        var name = new TextBlock { FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+        name.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = L.T(p.Name) });
+        name.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "   " + L.F("{0} of {1}", p.On.Length, Features.All.Length), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.Normal, Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)) });
+        text.Children.Add(name);
+        text.Children.Add(new TextBlock { Text = L.T(p.Description), FontSize = 12.5, Opacity = 0.66, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(strip);
+
+        // The mark: a faint ring, filled with the accent and a tick when chosen.
+        var dot = new Border
         {
-            Width = 24, Height = 24, CornerRadius = new CornerRadius(12),
+            Width = 22, Height = 22, CornerRadius = new CornerRadius(11),
             Background = new SolidColorBrush(AccentColor()),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 8, 8, 0),
-            Child = new FontIcon { Glyph = "", FontSize = 12, Foreground = new SolidColorBrush(Colors.White) },
+            Child = new FontIcon { Glyph = "\uE73E", FontSize = 11, Foreground = new SolidColorBrush(Colors.White) },
         };
+        var ring = new Grid { Width = 22, Height = 22, VerticalAlignment = VerticalAlignment.Center };
+        ring.Children.Add(new Ellipse { Width = 22, Height = 22, Fill = new SolidColorBrush(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF)) });
+        ring.Children.Add(dot);
 
-        var body = new Grid { Padding = new Thickness(10) , RowSpacing = 6 };
-        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var body = new Grid { ColumnSpacing = 16, Padding = new Thickness(12, 12, 18, 12) };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         body.Children.Add(hero);
-        body.Children.Add(check);
-        var title = new TextBlock { Text = L.T(p.Name), FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(4, 6, 4, 0), TextWrapping = TextWrapping.Wrap };
-        Grid.SetRow(title, 1);
-        body.Children.Add(title);
-        var text = new TextBlock { Text = L.T(p.Description), FontSize = 12.5, Opacity = 0.68, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 0, 4, 0) };
-        Grid.SetRow(text, 2);
+        Grid.SetColumn(text, 1);
         body.Children.Add(text);
-        strip.Margin = new Thickness(4, 6, 4, 2);
-        Grid.SetRow(strip, 3);
-        body.Children.Add(strip);
+        Grid.SetColumn(ring, 2);
+        body.Children.Add(ring);
 
-        var face = new Border { CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(CardFill), Child = body };
-        _pickCards.Add((p, face, check));
+        var face = new Border { CornerRadius = new CornerRadius(12), Background = new SolidColorBrush(CardFill), Child = body };
+        _pickCards.Add((p, face, dot));
         return Pressable(face, L.T(p.Name), () => { _pickOn = [.. p.On]; SyncPicker(); });
     }
 
+    /// <summary>One feature as a row of the list: its icon, name and what it does, and its switch. The whole row toggles it.</summary>
     FrameworkElement FeatureTile(Features.Feature f)
     {
         var tint = Tint(f.Tint);
@@ -349,34 +373,37 @@ public sealed partial class MainWindow
             if (sw.IsOn) _pickOn.Add(f.Id); else _pickOn.Remove(f.Id);
             SyncPicker();
         };
-        var row = new Grid { ColumnSpacing = 14, Padding = new Thickness(14, 12, 10, 12) };
+        var row = new Grid { ColumnSpacing = 14, Padding = new Thickness(16, 11, 8, 11) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var badge = Badge(f.Glyph, tint, 40);
+        var badge = Badge(f.Glyph, tint, 30);
         badge.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(badge);
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
         text.Children.Add(new TextBlock { Text = L.T(f.Name), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-        text.Children.Add(new TextBlock { Text = L.T(f.Description), FontSize = 12.5, Opacity = 0.65, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = L.T(f.Description), FontSize = 12.5, Opacity = 0.62, TextWrapping = TextWrapping.Wrap });
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
         Grid.SetColumn(sw, 2);
         row.Children.Add(sw);
-        var face = new Border { CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(CardFill), Child = row };
+        var face = new Border { CornerRadius = new CornerRadius(12), Background = new SolidColorBrush(Colors.Transparent), Child = row };
         _pickSwitches[f.Id] = (sw, face);
-        // The whole tile is the switch's target, not just the knob.
+        // The whole row is the switch's target, not just the knob.
         face.Tapped += (_, e) => { if (e.OriginalSource is not DependencyObject d || !d.IsDescendantOf(sw)) sw.IsOn = !sw.IsOn; };
         return face;
     }
 
-    /// <summary>A small model of a game's page: banner, launch bar, tab strip, a hint of content. It follows the switches.</summary>
+    /// <summary>
+    /// A small model of a game's page as it looks now: the banner with the title, the launch bar on its glass (Play drawn like
+    /// the real button, then the facts that stay), the tab bar, and the Dashboard's two columns. It follows the switches.
+    /// </summary>
     FrameworkElement PickerPreview()
     {
-        var accent = AccentColor();
+        var accent = PlayButton.Accent();
         var banner = new Grid
         {
-            Height = 168,
+            Height = 214,
             Background = new LinearGradientBrush
             {
                 StartPoint = new(0, 0),
@@ -389,7 +416,19 @@ public sealed partial class MainWindow
                 },
             },
         };
-        // A soft horizon line, so the banner reads as a picture rather than a flat block.
+        // A glow of the accent from the top right, and the foot darkened for the launch bar, as the real banner.
+        banner.Children.Add(new Border
+        {
+            Background = new RadialGradientBrush
+            {
+                Center = new(0.85, 0.1), GradientOrigin = new(0.85, 0.1), RadiusX = 0.6, RadiusY = 0.9,
+                GradientStops =
+                {
+                    new GradientStop { Color = WithAlpha(accent, 0x55), Offset = 0 },
+                    new GradientStop { Color = WithAlpha(accent, 0x00), Offset = 1 },
+                },
+            },
+        });
         banner.Children.Add(new Border
         {
             Background = new LinearGradientBrush
@@ -398,118 +437,163 @@ public sealed partial class MainWindow
                 EndPoint = new(0, 1),
                 GradientStops =
                 {
-                    new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 0.35 },
-                    new GradientStop { Color = Color.FromArgb(0xC8, 0x0B, 0x0C, 0x0F), Offset = 1 },
+                    new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 0.3 },
+                    new GradientStop { Color = Color.FromArgb(0xD0, 0x0B, 0x0C, 0x0F), Offset = 1 },
                 },
             },
         });
-        var bottom = new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(22, 0, 22, 16) };
-        bottom.Children.Add(new TextBlock { Text = L.T("Your game"), FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var bottom = new StackPanel { Spacing = 12, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(16, 0, 16, 14) };
+        bottom.Children.Add(new TextBlock { Text = L.T("Your game"), FontSize = 26, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(6, 0, 0, 0) });
+
+        // Play: the game page's face in small (its colour in two tones, its solid triangle, the word in capitals).
+        var face = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+        face.GradientStops.Add(new GradientStop { Color = PlayButton.Mix(accent, Colors.White, 0.08), Offset = 0 });
+        face.GradientStops.Add(new GradientStop { Color = PlayButton.Deepen(accent), Offset = 1 });
+        var ink = Contrast.BrushOn(accent);
+        var playIcon = new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Data = (Geometry)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(typeof(Geometry), PlayButton.PlayPath),
+            Fill = ink, Width = 14, Height = 14, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center,
+        };
         var play = new Border
         {
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(22, 9, 26, 9),
-            Background = new SolidColorBrush(accent),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(18, 0, 22, 0),
+            Height = 40,
+            Background = face,
             Child = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 8,
+                Spacing = 9,
+                VerticalAlignment = VerticalAlignment.Center,
                 Children =
                 {
-                    new FontIcon { Glyph = "", FontSize = 14, Foreground = new SolidColorBrush(Colors.White) },
-                    new TextBlock { Text = L.T("PLAY"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 80, Foreground = new SolidColorBrush(Colors.White) },
+                    playIcon,
+                    new TextBlock { Text = L.T("Play").ToUpper(System.Globalization.CultureInfo.CurrentCulture), FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 60, Foreground = ink, VerticalAlignment = VerticalAlignment.Center },
                 },
             },
         };
+        var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 18, VerticalAlignment = VerticalAlignment.Center };
         bar.Children.Add(play);
-        bar.Children.Add(Chip(null, "", L.T("2 h 14 min"), Color.FromArgb(0xFF, 0xC8, 0xC8, 0xD0)));
-        bar.Children.Add(Chip(Features.Hdr, "", L.T("HDR · Smart"), Tint(Features.Find(Features.Hdr)!.Tint)));
-        bar.Children.Add(Chip(Features.Cloud, "", L.T("Synced"), Tint(Features.Find(Features.Cloud)!.Tint)));
-        bar.Children.Add(Chip(Features.Achievements, Icons.TrophyGlyph, L.T("12 / 40"), Icons.Gold));
-        bottom.Children.Add(bar);
+        bar.Children.Add(Chip(null, "\uE916", L.T("Play time"), L.T("2 h 14 min"), Color.FromArgb(0xFF, 0xC8, 0xC8, 0xD0)));
+        bar.Children.Add(Chip(Features.Hdr, "\uE706", L.T("HDR"), L.T("Smart"), Tint(Features.Find(Features.Hdr)!.Tint)));
+        bar.Children.Add(Chip(Features.Cloud, "\uE753", L.T("Cloud"), L.T("Synced"), Tint(Features.Find(Features.Cloud)!.Tint)));
+        bar.Children.Add(Chip(Features.Achievements, Icons.TrophyGlyph, L.T("Achievements"), L.T("12 / 40"), Icons.Gold));
+        var launch = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(8),
+            Background = new GlassBrush(Color.FromArgb(0x8C, 0x0A, 0x0B, 0x0E), 20),
+            Child = new ScrollViewer
+            {
+                Content = bar,
+                HorizontalScrollMode = ScrollMode.Enabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollMode = ScrollMode.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            },
+        };
+        bottom.Children.Add(launch);
         banner.Children.Add(bottom);
 
-        // The tab strip, in the user's tab order, each tab tied to the feature that shows it.
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        // The tab bar, in the user's tab order, each tab tied to the feature that shows it; the first one open.
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
         bool first = true;
         foreach (var t in GameTabs.Ordered())
         {
             var owner = Features.All.FirstOrDefault(f => f.Tabs.Contains(t.Id));
             var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
-            var icon = Icons.Colored(t.Glyph, 13, t.Tint);
-            label.Children.Add(icon);
-            label.Children.Add(new TextBlock { Text = t.Name, FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
-            var tab = new Grid { Padding = new Thickness(12, 9, 12, 9) };
+            label.Children.Add(Icons.Colored(t.Glyph, 13, t.Tint));
+            label.Children.Add(new TextBlock { Text = t.Name, FontSize = 13, VerticalAlignment = VerticalAlignment.Center, FontWeight = first ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal });
+            var tab = new Grid { Padding = new Thickness(11, 8, 11, 8), CornerRadius = new CornerRadius(8) };
             tab.Children.Add(label);
             if (first)
             {
-                tab.Background = new SolidColorBrush(Color.FromArgb(0x16, 0xFF, 0xFF, 0xFF));
-                tab.CornerRadius = new CornerRadius(6);
-                tab.Children.Add(new Border { Height = 2, Width = 18, CornerRadius = new CornerRadius(1), Background = new SolidColorBrush(accent), VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, -6) });
+                tab.Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+                tab.Children.Add(new Border { Height = 2, Width = 22, CornerRadius = new CornerRadius(1), Background = new SolidColorBrush(accent), VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, -5) });
             }
             first = false;
             tabs.Children.Add(tab);
             if (owner is not null) _pickTabs[t.Id] = tab;
             else if (AppState.Settings.HiddenTabs.Contains(t.Id)) tab.Visibility = Visibility.Collapsed;
         }
-        var tabRow = new ScrollViewer
+        var tabRow = new Border
         {
-            Content = tabs,
-            HorizontalScrollMode = ScrollMode.Enabled,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            VerticalScrollMode = ScrollMode.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Padding = new Thickness(14, 10, 14, 6),
+            Margin = new Thickness(14, 12, 14, 0),
+            Padding = new Thickness(6),
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromArgb(0x0C, 0xFF, 0xFF, 0xFF)),
+            Child = new ScrollViewer
+            {
+                Content = tabs,
+                HorizontalScrollMode = ScrollMode.Enabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollMode = ScrollMode.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            },
         };
 
-        // A hint of the page under the tabs: grey bars where the overview would be.
-        var skeleton = new Grid { ColumnSpacing = 16, Padding = new Thickness(22, 10, 22, 20) };
-        skeleton.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        skeleton.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var lines = new StackPanel { Spacing = 8 };
-        foreach (var w in new[] { 0.92, 0.85, 0.6 })
-            lines.Children.Add(new Border { Height = 9, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(0x16, 0xFF, 0xFF, 0xFF)), HorizontalAlignment = HorizontalAlignment.Left, Width = 520 * w });
-        skeleton.Children.Add(lines);
-        var side = new Border { Height = 44, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF)) };
-        Grid.SetColumn(side, 1);
-        skeleton.Children.Add(side);
+        // A hint of the Dashboard under the tabs: the main column's picture and lines, the side cards with their colour wash.
+        var dash = new Grid { ColumnSpacing = 12, Padding = new Thickness(14, 12, 14, 16) };
+        dash.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.7, GridUnitType.Star) });
+        dash.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var main = new StackPanel { Spacing = 8 };
+        main.Children.Add(new Border { Height = 92, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)) });
+        foreach (var w in new[] { 0.9, 0.7 })
+            main.Children.Add(new Border { Height = 8, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)), HorizontalAlignment = HorizontalAlignment.Left, Width = 300 * w });
+        dash.Children.Add(main);
+        var sideCards = new StackPanel { Spacing = 8 };
+        foreach (var (tint, h) in new[] { (Icons.Gold, 62.0), (Tint(0xFF7C6CFF), 44.0) })
+            sideCards.Children.Add(new Border
+            {
+                Height = h,
+                CornerRadius = new CornerRadius(8),
+                Background = new LinearGradientBrush
+                {
+                    StartPoint = new(0, 0), EndPoint = new(1, 1),
+                    GradientStops = { new GradientStop { Color = WithAlpha(tint, 0x30), Offset = 0 }, new GradientStop { Color = Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF), Offset = 0.6 } },
+                },
+            });
+        Grid.SetColumn(sideCards, 1);
+        dash.Children.Add(sideCards);
 
         _pickMix = new TextBlock
         {
             FontSize = 12,
-            Opacity = 0.75,
             Margin = new Thickness(0, 12, 14, 0),
+            Padding = new Thickness(10, 3, 10, 4),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
         };
-
-        var page = new StackPanel { Children = { banner, tabRow, skeleton } };
-        var frame = new Grid
+        var mix = new Border
         {
-            CornerRadius = new CornerRadius(12),
-            Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x10, 0x11, 0x14)),
-            Children = { page, _pickMix },
+            CornerRadius = new CornerRadius(11),
+            Margin = new Thickness(0, 12, 12, 0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Background = new GlassBrush(Color.FromArgb(0x8C, 0x0A, 0x0B, 0x0E), 16),
+            Child = _pickMix,
         };
-        return frame;
+        _pickMix.Margin = new Thickness(0);
+
+        var page = new StackPanel { Children = { banner, tabRow, dash } };
+        return new Grid
+        {
+            CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x10, 0x11, 0x14)),
+            Children = { page, mix },
+        };
     }
 
-    /// <summary>One item of the preview's launch bar; <paramref name="feature"/> null = always there.</summary>
-    FrameworkElement Chip(string? feature, string glyph, string text, Color tint)
+    /// <summary>One item of the preview's launch bar, as the real one: its icon, a small label over its value. <paramref name="feature"/> null = always there.</summary>
+    FrameworkElement Chip(string? feature, string glyph, string label, string value, Color tint)
     {
-        var icon = glyph == Icons.TrophyGlyph ? Icons.Trophy(15) : Icons.Colored(glyph, 14, tint);
-        var chip = new Border
-        {
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(12, 8, 12, 8),
-            Background = new GlassBrush(Color.FromArgb(0x7A, 0x0A, 0x0B, 0x0E), 20),
-            Child = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children = { icon, new TextBlock { Text = text, FontSize = 13, VerticalAlignment = VerticalAlignment.Center } },
-            },
-        };
+        var icon = glyph == Icons.TrophyGlyph ? Icons.Trophy(16) : Icons.Colored(glyph, 15, tint);
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = label.ToUpper(System.Globalization.CultureInfo.CurrentCulture), FontSize = 10, CharacterSpacing = 60, Opacity = 0.6 });
+        text.Children.Add(new TextBlock { Text = value, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, Children = { icon, text } };
         if (feature is not null) _pickChips[feature] = chip;
         return chip;
     }
@@ -553,7 +637,7 @@ public sealed partial class MainWindow
         foreach (var (preset, face, check) in _pickCards)
         {
             bool on = ReferenceEquals(preset, match);
-            face.Background = new SolidColorBrush(on ? WithAlpha(accent, 0x38) : CardFill);
+            face.Background = new SolidColorBrush(on ? WithAlpha(accent, 0x2E) : CardFill);
             check.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         }
         _pickSync = true;
@@ -561,7 +645,7 @@ public sealed partial class MainWindow
         {
             bool on = _pickOn.Contains(id);
             sw.IsOn = on;
-            face.Background = new SolidColorBrush(on ? CardHover : CardFill);
+            face.Opacity = on ? 1 : 0.62;
         }
         _pickSync = false;
         foreach (var (id, chip) in _pickChips) Show(chip, _pickOn.Contains(id));

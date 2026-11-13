@@ -16,8 +16,8 @@ public static partial class SteamScanner
 
     public static string? SteamRoot()
     {
-        var path = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string
-                ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath", null) as string;
+        var path = RegistryValue.Read(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath") as string
+                ?? RegistryValue.Read(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath") as string;
         return path is null ? null : Path.GetFullPath(path.Replace('/', '\\'));
     }
 
@@ -58,12 +58,12 @@ public static partial class SteamScanner
 
     /// <summary>The running Steam client counts the game as installed (it keeps HKCU\…\Steam\Apps\&lt;id&gt;\Installed).</summary>
     public static bool ClientKnows(string appId) =>
-        Registry.GetValue($@"HKEY_CURRENT_USER\Software\Valve\Steam\Apps\{appId}", "Installed", 0) is int i && i == 1;
+        RegistryValue.Read($@"HKEY_CURRENT_USER\Software\Valve\Steam\Apps\{appId}", "Installed") is int i && i == 1;
 
     /// <summary>Steam is busy: a game of its own is running or it is updating one, so it should not be restarted now.</summary>
     public static bool ClientBusy()
     {
-        if (Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "RunningAppID", 0) is int run && run != 0) return true;
+        if (RegistryValue.Read(@"HKEY_CURRENT_USER\Software\Valve\Steam", "RunningAppID") is int run && run != 0) return true;
         try
         {
             using var apps = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam\Apps");
@@ -195,7 +195,7 @@ public static class EpicScanner
 
     public static IEnumerable<Game> Scan()
     {
-        var dataPath = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher", "AppDataPath", null) as string;
+        var dataPath = RegistryValue.Read(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher", "AppDataPath") as string;
         var manifestsDir = dataPath is not null
             ? Path.Combine(dataPath, "Manifests")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Epic\EpicGamesLauncher\Data\Manifests");
@@ -447,5 +447,15 @@ public static class XboxScanner
         var sb = new StringBuilder(13);
         for (int i = 0; i < 65; i += 5) sb.Append(alphabet[Convert.ToInt32(bits.ToString(i, 5), 2)]);
         return sb.ToString();
+    }
+}
+
+/// <summary>A registry value read without throwing: a key that policy forbids (SecurityException) or a broken one reads as missing.</summary>
+public static class RegistryValue
+{
+    public static object? Read(string key, string name)
+    {
+        try { return Registry.GetValue(key, name, null); }
+        catch (Exception ex) { Log.Warn($"Registry {key} {name}:{ex.Message}"); return null; }
     }
 }

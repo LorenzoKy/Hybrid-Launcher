@@ -1,4 +1,4 @@
-using HybridLauncher.Core;
+﻿using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Helpers;
 using Microsoft.UI.Dispatching;
@@ -26,15 +26,52 @@ public static class OwnedLibrary
 
     public static bool IsLoaded => Lists.Count > 0;
 
-    public static readonly GameStore[] Stores = [GameStore.Steam, GameStore.Epic, GameStore.Gog, GameStore.Xbox];
+    // Only the launchers Hybrid Launcher downloads from itself (1.4.0-rc.20): Xbox, Ubisoft Connect, EA app and Rockstar can only
+    // install through their own app, and listed here they showed just the games already installed.
+    public static readonly GameStore[] Stores = [GameStore.Steam, GameStore.Epic, GameStore.Gog];
 
     public static bool Linked(GameStore store) => store switch
     {
         GameStore.Steam => AppState.Settings.Accounts.Steam,
         GameStore.Epic => AppState.Settings.Accounts.Epic,
         GameStore.Gog => AppState.Settings.Accounts.Gog,
+        GameStore.Ubisoft => AppState.Settings.Accounts.Ubisoft,
+        GameStore.Ea => AppState.Settings.Accounts.Ea,
+        GameStore.Rockstar => AppState.Settings.Accounts.Rockstar,
         _ => AppState.Settings.Accounts.Xbox,
     };
+
+    public static void SetLinked(GameStore store, bool on)
+    {
+        var a = AppState.Settings.Accounts;
+        switch (store)
+        {
+            case GameStore.Steam: a.Steam = on; break;
+            case GameStore.Epic: a.Epic = on; break;
+            case GameStore.Gog: a.Gog = on; break;
+            case GameStore.Ubisoft: a.Ubisoft = on; break;
+            case GameStore.Ea: a.Ea = on; break;
+            case GameStore.Rockstar: a.Rockstar = on; break;
+            default: a.Xbox = on; break;
+        }
+    }
+
+    /// <summary>
+    /// A launcher whose library cannot be read (Xbox, Ubisoft Connect, EA app, Rockstar): its installed games, as owned games
+    /// with the cover the Library already found, so they show under its chip like any other launcher's.
+    /// </summary>
+    static async Task<OwnedList> InstalledOnlyAsync(OwnedList list)
+    {
+        var games = new List<OwnedGame>();
+        foreach (var g in AppState.Games.Where(g => g.Store == list.Store && !g.Installing && !g.NotInstalled).ToList())
+        {
+            string? cover = null;
+            try { cover = AppState.Settings.Games.TryGetValue(g.Id, out var gs) && gs.CustomCover is { } c && File.Exists(c) ? c : await HybridLauncher.Core.Media.GameInfo.GetCoverAsync(g); }
+            catch { }
+            games.Add(new OwnedGame(g.Store, g.Id, g.Title, cover, null, "", null));
+        }
+        return list with { Games = games };
+    }
 
     /// <summary>Loads every linked launcher's list (once; again with <paramref name="force"/>).</summary>
     public static Task LoadAsync(bool force = false)
@@ -49,6 +86,8 @@ public static class OwnedLibrary
         var accounts = AppState.Settings.Accounts;
         var tasks = Stores.Where(Linked).Select(s => OwnedGames.LoadAsync(s, accounts, CancellationToken.None)).ToList();
         var results = await Task.WhenAll(tasks);
+        for (int i = 0; i < results.Length; i++)
+            if (OwnedGames.InstalledOnly(results[i].Store)) results[i] = await InstalledOnlyAsync(results[i]);
         Lists.Clear();
         foreach (var r in results) Lists[r.Store] = r;
         Loaded?.Invoke();
@@ -116,6 +155,16 @@ public static class OwnedLibrary
     /// A cover for a game you own, in the library's style: the art, the launcher's tile in a corner, and on hover a dark veil
     /// with Install (Open for installed games). A download in progress shows its bar over the bottom of the cover.
     /// </summary>
+    // The covers whose picture is on screen (or that have none to load). A cover that left the screen before its picture came
+    // in never got it (the image does not finish without being in the tree), stayed at its fade's start, and the Downloads
+    // page's cache kept giving that empty tile back: every cover blank but its name (1.4.0-rc.20).
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FrameworkElement, object> Drawn = new();
+    static readonly object Done = new();
+
+    /// <summary>Whether the tile made by <see cref="Tile"/> shows its picture (or has none): only then is it worth keeping.</summary>
+    public static bool IsDrawn(FrameworkElement tile) =>
+        tile is Panel { Children.Count: > 0 } p && p.Children[0] is FrameworkElement art && Drawn.TryGetValue(art, out _);
+
     public static FrameworkElement Tile(OwnedGame game, double width, Action? started = null)
     {
         var installedGame = AppState.Find(game.Id) is { Installing: false } g ? g : null;
@@ -127,8 +176,9 @@ public static class OwnedLibrary
             // A missing vertical cover (old Steam games) falls back to the wide header.
             bmp.ImageFailed += (_, _) => { if (game.Wide is { } w && Uri.TryCreate(w, UriKind.Absolute, out var wu) && bmp.UriSource != wu) bmp.UriSource = wu; };
             bmp.UriSource = uri;
-            art.Children.Add(Smooth.Art(bmp, art.CornerRadius, fadeMs: 200));
+            art.Children.Add(Smooth.Art(bmp, art.CornerRadius, fadeMs: 200, opened: () => Drawn.AddOrUpdate(art, Done)));
         }
+        else Drawn.AddOrUpdate(art, Done);
         var logo = StoreLogos.Tile(game.Store, size: 22);
         logo.HorizontalAlignment = HorizontalAlignment.Left;
         logo.VerticalAlignment = VerticalAlignment.Top;
@@ -302,7 +352,7 @@ public sealed partial class DownloadsPage : Page
     const double MinTile = 150, MaxTile = 230, Gap = 16;
 
     readonly StackPanel _root = new() { Spacing = 22, Padding = new Thickness(0, 8, 0, 40), HorizontalAlignment = HorizontalAlignment.Center };
-    readonly ScrollViewer _scroller;
+    readonly ScrollView _scroller;
     readonly TextBlock _count = Ui.Muted("");
     readonly StackPanel _active = new() { Spacing = 10 };
     // The covers: virtualized, so only the ones on screen (and a little around) exist; hundreds of games stay smooth.
@@ -426,13 +476,15 @@ public sealed partial class DownloadsPage : Page
         _root.Children.Add(head);
         _root.Children.Add(_active);
         _root.Children.Add(library);
-        _scroller = new ScrollViewer { Content = _root, HorizontalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        _scroller = new ScrollView { Content = _root, HorizontalScrollMode = ScrollingScrollMode.Disabled, VerticalScrollBarVisibility = ScrollingScrollBarVisibility.Auto, ContentOrientation = ScrollingContentOrientation.Vertical };
         _scroller.SizeChanged += (_, e) => Layout(e.NewSize.Width);
+        CompositorWheel.Attach(_scroller);
         Content = _scroller;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
+        using var __perf = UiPerf.Scope("DownloadsPage.NavigatedTo");
         base.OnNavigatedTo(e);
         Downloads.Changed += OnJobsChanged;
         OwnedLibrary.Loaded += OnLoaded;
@@ -507,7 +559,7 @@ public sealed partial class DownloadsPage : Page
         var owned = OwnedLibrary.Owned().ToList();
         var installedIds = OwnedLibrary.InstalledIds();
         int installed = owned.Count(g => installedIds.Contains(g.Id));
-        int launchers = OwnedLibrary.All.Keys.Count(s => OwnedLibrary.Linked(s) && s != GameStore.Xbox);
+        int launchers = OwnedLibrary.All.Keys.Count(s => OwnedLibrary.Linked(s) && (!OwnedGames.InstalledOnly(s) || OwnedLibrary.All[s].Games.Count > 0));
         int active = Downloads.ActiveCount;
         _count.Text = !OwnedLibrary.IsLoaded ? L.T("Reading your launchers…")
             : L.F("{0} games on {1} launchers", owned.Count, launchers) + "  ·  " + L.F("{0} installed", installed)
@@ -537,11 +589,11 @@ public sealed partial class DownloadsPage : Page
             text.Children.Add(new TextBlock { Text = StoreLogos.Label(store) + (list?.Account is { } who ? $"  ·  {who}" : ""), FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             string detail = !linked ? L.T("Not linked: its games are not listed here.")
                 : list is null ? L.T("Reading…")
-                : store == GameStore.Xbox ? L.F("{0} installed", installed) + (list.Problem is { } xp ? $". {xp}" : "")
+                : OwnedGames.InstalledOnly(store) ? L.F("{0} installed", installed) + (list.Problem is { } xp ? $". {xp}" : "")
                 : L.F("{0} owned, {1} installed", list.Games.Count, installed) + $"  ·  {list.Source}" + (list.Problem is { } p ? $"  ·  {p}" : "");
             text.Children.Add(new TextBlock { Text = detail, Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap });
             var links = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(-8, 2, 0, 0) };
-            if (store != GameStore.Xbox)
+            if (!OwnedGames.InstalledOnly(store))
             {
                 // Signed in, Hybrid Launcher lists the whole library and downloads and uninstalls games itself, with no launcher.
                 bool signedIn = OwnedGames.Direct(store);
@@ -559,10 +611,17 @@ public sealed partial class DownloadsPage : Page
                 links.Children.Add(sign);
                 if (signedIn) text.Children.Insert(1, new TextBlock { Text = L.T("Signed in: Hybrid Launcher downloads and uninstalls these games itself."), Style = Ui.Style("RowDescription"), Foreground = Ui.Brush("SystemFillColorSuccessBrush") });
             }
-            if (store == GameStore.Xbox && linked)
+            var (appLabel, appUri) = store switch
             {
-                var app = new HyperlinkButton { Content = L.T("Open the Xbox app"), Padding = new Thickness(8, 2, 8, 2), FontSize = 12 };
-                app.Click += (_, _) => Ui.Open("msxbox://");
+                GameStore.Xbox => (L.T("Open the Xbox app"), "msxbox://"),
+                GameStore.Ubisoft => (L.T("Open Ubisoft Connect"), "uplay://"),
+                GameStore.Ea => (L.T("Open the EA app"), "link2ea://"),
+                _ => ("", ""),
+            };
+            if (linked && appUri.Length > 0)
+            {
+                var app = new HyperlinkButton { Content = appLabel, Padding = new Thickness(8, 2, 8, 2), FontSize = 12 };
+                app.Click += (_, _) => Ui.Open(appUri);
                 links.Children.Add(app);
             }
             if (links.Children.Count > 0) text.Children.Add(links);
@@ -570,13 +629,7 @@ public sealed partial class DownloadsPage : Page
             ToolTipService.SetToolTip(toggle, linked ? L.T("Linked") : L.T("Off"));
             toggle.Toggled += (_, _) =>
             {
-                switch (store)
-                {
-                    case GameStore.Steam: a.Steam = toggle.IsOn; break;
-                    case GameStore.Epic: a.Epic = toggle.IsOn; break;
-                    case GameStore.Gog: a.Gog = toggle.IsOn; break;
-                    default: a.Xbox = toggle.IsOn; break;
-                }
+                OwnedLibrary.SetLinked(store, toggle.IsOn);
                 SettingsStore.Save();
                 _ = ReloadAsync(true);
             };
@@ -1178,7 +1231,8 @@ public sealed partial class DownloadsPage : Page
     {
         _storeChips.Children.Clear();
         var owned = OwnedLibrary.Owned().ToList();
-        var stores = OwnedLibrary.All.Keys.Where(s => OwnedLibrary.Linked(s) && s != GameStore.Xbox).OrderBy(s => s).ToList();
+        // Every linked launcher has its chip; one whose library cannot be read lists its installed games and says why.
+        var stores = OwnedLibrary.All.Keys.Where(OwnedLibrary.Linked).OrderBy(s => s).ToList();
         if (_store != "all" && !stores.Any(s => s.ToString() == _store)) _store = "all";
         _storeChips.Children.Add(Chip("all", null, L.T("All"), owned.Count));
         foreach (var s in stores) _storeChips.Children.Add(Chip(s.ToString(), s, StoreLogos.Label(s), owned.Count(g => g.Store == s)));
@@ -1235,7 +1289,7 @@ public sealed partial class DownloadsPage : Page
     FrameworkElement CachedTile(OwnedGame g)
     {
         var key = $"{_tile:0}|{TileState(g.Id)}|{Downloads.Find(g.Id)?.State}";
-        if (_tileCache.TryGetValue(g.Id, out var hit) && hit.Key == key && hit.Tile.Parent is null)
+        if (_tileCache.TryGetValue(g.Id, out var hit) && hit.Key == key && hit.Tile.Parent is null && OwnedLibrary.IsDrawn(hit.Tile))
         {
             _tileOrder.Remove(g.Id);
             _tileOrder.AddLast(g.Id);
@@ -1278,6 +1332,8 @@ public sealed partial class DownloadsPage : Page
         _empty.Visibility = OwnedLibrary.IsLoaded && list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         _empty.Text = !anyLinked ? L.T("No launcher is linked: open Accounts at the top right and turn on Steam, Epic Games or GOG.")
             : q.Length > 0 ? L.T("No game matches the search.")
+            : Enum.TryParse<GameStore>(_store, out var picked) && OwnedGames.InstalledOnly(picked) && OwnedLibrary.All.TryGetValue(picked, out var only) && only.Problem is { } why
+                ? (_showIndex == 0 ? why : L.F("No {0} game is installed. {1}", StoreLogos.Label(picked), why))
             : _showIndex == 0 ? L.T("Every game you own is installed.")
             : L.T("No games to show.");
     }

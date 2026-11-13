@@ -81,6 +81,7 @@ public static partial class BugReport
     /// <summary>A log the app is still writing: opened alongside it.</summary>
     static string Read(string file)
     {
+        Log.Flush();
         try
         {
             using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

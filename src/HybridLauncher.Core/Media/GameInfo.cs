@@ -57,7 +57,7 @@ public static class GameInfo
     // looked at while offline is asked again later. Bounded: the oldest go first.
     static readonly Dictionary<string, GameArt> Known = new(StringComparer.OrdinalIgnoreCase);
     static readonly Queue<string> KnownOrder = new();
-    const int KnownMax = 96;
+    const int KnownMax = 1024;
 
     /// <summary>The art of a game: from this session's memory when it was already found, else from the cache or the store.</summary>
     public static async Task<GameArt> GetAsync(Game game, CancellationToken ct = default)

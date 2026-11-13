@@ -17,7 +17,8 @@ namespace HybridLauncher.Controls;
 /// gradient of its colour, a crisp edge (lighter at the top, darker at the bottom), a faint gloss on the top half, a glow of
 /// its own colour under it, a light veil and a small lift on hover, a press on click. Its look follows the game: Play,
 /// Starting…, Stop (while the game runs), Closing…, Download, Downloading. Every mode is drawn the same way (one solid icon,
-/// one word in capitals, Segoe UI Variable Display) and the button is only as wide as its word.
+/// one word in capitals, Segoe UI Variable Display) and the button hugs its icon and word: the two are centred as one block
+/// with the same room on both sides (2.0.0-rc.5; rc.4 kept an icon-wide blank on the right to centre the word alone).
 /// </summary>
 public sealed partial class PlayButton : UserControl
 {
@@ -27,24 +28,26 @@ public sealed partial class PlayButton : UserControl
     readonly Button _button;
     readonly Border _surface = new() { CornerRadius = new CornerRadius(Corner) };
     // The gloss on the top half (always there) and the hover veil over the whole face (faded on the compositor).
-    readonly Border _gloss = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
+    // The layers over the face sit 1 px inside it (2.0.0-rc.5): stacked on the same rounded edge, their soft edge pixels added
+    // up into a dark (or, on Stop, green) fringe at the corners. Now only the face draws the outline.
+    static readonly Thickness Inset = new(1);
+    static readonly CornerRadius InnerCorner = new(Corner - 1);
+    readonly Border _gloss = new() { CornerRadius = InnerCorner, Margin = Inset, IsHitTestVisible = false };
     // The foot of the face: a soft darkening towards the bottom edge, which gives the flat colour its depth.
-    readonly Border _shade = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
+    readonly Border _shade = new() { CornerRadius = InnerCorner, Margin = Inset, IsHitTestVisible = false };
     // A thin line of light just inside the top edge, fading out before the corners (no outline: it never reaches them).
     readonly Border _edge = new() { Height = 1, Margin = new Thickness(Corner + 4, 1, Corner + 4, 0), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
-    readonly Border _veil = new() { CornerRadius = new CornerRadius(Corner), IsHitTestVisible = false };
+    readonly Border _veil = new() { CornerRadius = InnerCorner, Margin = Inset, IsHitTestVisible = false };
     readonly Grid _glowHost = new() { IsHitTestVisible = false };
     readonly Grid _back = new() { IsHitTestVisible = false };
-    // While the game starts: a small stop square after the word says a click cancels the start (closes the game for good).
-    readonly Microsoft.UI.Xaml.Shapes.Path _cancel = new() { Width = 15, Height = 15, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed, Opacity = 0.9 };
     // The icons are paths of one weight in a 16 px box (the icon font mixes outline Play with solid Stop).
-    readonly Microsoft.UI.Xaml.Shapes.Path _icon = new() { Width = 22, Height = 22, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
-    readonly ProgressRing _ring = new() { Width = 22, Height = 22, MinWidth = 22, MinHeight = 22, IsActive = false, Visibility = Visibility.Collapsed };
+    readonly Microsoft.UI.Xaml.Shapes.Path _icon = new() { Width = 18, Height = 18, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
     readonly TextBlock _text = new()
     {
-        // The 0.14 face (Windows 11's display font), larger: the button is the page's main action.
-        FontSize = 21, FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI"), FontWeight = FontWeights.SemiBold,
-        CharacterSpacing = 60, VerticalAlignment = VerticalAlignment.Center, TextLineBounds = TextLineBounds.Tight,
+        // Windows 11's display font at 24, medium weight with a little air between the capitals (2.0.0-rc.5: the user's
+        // reference, a large calm word rather than a heavy one).
+        FontSize = 24, FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI"), FontWeight = FontWeights.Medium,
+        CharacterSpacing = 40, VerticalAlignment = VerticalAlignment.Center, TextLineBounds = TextLineBounds.Tight,
     };
     SpriteVisual? _glow;
     DropShadow? _shadow;
@@ -57,21 +60,35 @@ public sealed partial class PlayButton : UserControl
 
     public Mode Current => _mode;
 
-    static readonly string PlayPath = "M4,2.3 C4,1.5 4.9,1 5.6,1.5 L14.1,7.2 C14.7,7.6 14.7,8.4 14.1,8.8 L5.6,14.5 C4.9,15 4,14.5 4,13.7 Z";
-    static readonly string StopPath = "M2.5,3.5 C2.5,2.9 2.9,2.5 3.5,2.5 L12.5,2.5 C13.1,2.5 13.5,2.9 13.5,3.5 L13.5,12.5 C13.5,13.1 13.1,13.5 12.5,13.5 L3.5,13.5 C2.9,13.5 2.5,13.1 2.5,12.5 Z";
+    internal static readonly string PlayPath = "M4,2.3 C4,1.5 4.9,1 5.6,1.5 L14.1,7.2 C14.7,7.6 14.7,8.4 14.1,8.8 L5.6,14.5 C4.9,15 4,14.5 4,13.7 Z";
+    internal static readonly string StopPath = "M2.5,3.5 C2.5,2.9 2.9,2.5 3.5,2.5 L12.5,2.5 C13.1,2.5 13.5,2.9 13.5,3.5 L13.5,12.5 C13.5,13.1 13.1,13.5 12.5,13.5 L3.5,13.5 C2.9,13.5 2.5,13.1 2.5,12.5 Z";
     static readonly string DownloadPath = "M6.9,1 H9.1 V8.3 L11.7,5.7 L13.2,7.2 L8,12.4 L2.8,7.2 L4.3,5.7 L6.9,8.3 Z M2,13.6 H14 V15.6 H2 Z";
 
-    // Play, Stop, Downloading… share one width range: a long word gets a smaller size instead of stretching the button.
-    const double MinFace = 168, MaxFace = 196, SidePad = 30, TextSize = 21;
+    // Every mode is set exactly like Play (same size, same spacing). The face is about 3.3 times as wide as it is tall (the
+    // user's reference, 2.0.0-rc.5) with the icon and word centred as one block; a word that needs more room (a long
+    // translation) widens it, keeping SidePad on each side. The word is never made smaller, squeezed, spread or cut.
+    const double MinFace = 192, SidePad = 26, TextSize = 24, IconGap = 14;
     readonly StackPanel _content;
+    readonly Border _pad;
 
     public PlayButton()
     {
-        var content = _content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        content.Children.Add(_ring);
+        var content = _content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = IconGap, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(_icon);
         content.Children.Add(_text);
-        content.Children.Add(_cancel);
+        // The face is painted in code from the theme's accent: a new theme or palette paints it again (2.0: since the game page
+        // is kept between games, the button kept the colour of the theme it was first drawn in).
+        void Repaint()
+        {
+            if (_mode < 0) return;
+            var mode = _mode;
+            _mode = (Mode)(-1);
+            SetMode(mode);
+        }
+        Action applied = () => DispatcherQueue.TryEnqueue(Repaint);
+        Loaded += (_, _) => { HybridLauncher.Helpers.ThemeRes.Applied -= applied; HybridLauncher.Helpers.ThemeRes.Applied += applied; Repaint(); };
+        Unloaded += (_, _) => HybridLauncher.Helpers.ThemeRes.Applied -= applied;
+        ActualThemeChanged += (_, _) => Repaint();
 
         // The spring scales the face only: scaling the word with it redrew the text as a stretched bitmap (soft, ringing edges).
         _back.Children.Add(_glowHost);
@@ -82,8 +99,8 @@ public sealed partial class PlayButton : UserControl
         _back.Children.Add(_veil);
         var face = new Grid();
         face.Children.Add(_back);
-        // Icon and word centred with even sides; the width stays between MinFace and MaxFace whatever the word (see FitLabel).
-        face.Children.Add(new Border { Child = content, Padding = new Thickness(SidePad, 0, SidePad, 0) });
+        // Icon and word centred as one block with even sides (see FitLabel).
+        face.Children.Add(_pad = new Border { Child = content, Padding = new Thickness(SidePad, 0, SidePad, 0) });
 
         // A Button for focus, keyboard and screen readers; its template draws nothing but the face above.
         _button = new Button
@@ -111,9 +128,7 @@ public sealed partial class PlayButton : UserControl
         _button.AddHandler(PointerReleasedEvent, new PointerEventHandler((_, _) => { _down = false; Animate(); }), true);
         _button.AddHandler(PointerCaptureLostEvent, new PointerEventHandler((_, _) => { _down = false; Animate(); }), true);
         Content = _button;
-        MinWidth = MinFace;
-        MaxWidth = MaxFace;
-        MinHeight = 58;
+        MinHeight = 56;
 
         SizeChanged += (_, e) =>
         {
@@ -131,16 +146,43 @@ public sealed partial class PlayButton : UserControl
     }
 
     /// <summary>
-    /// A word too long for the widest face (Downloading, Stopping, a longer translation) is drawn smaller, so the button keeps
-    /// nearly the same width in every state instead of stretching the launch bar.
+    /// Fits the face to the icon and word: MinFace wide, or the icon and word with SidePad on each side when they need more;
+    /// the room left is split evenly on both sides. The word itself never changes.
     /// </summary>
     void FitLabel()
     {
         _text.FontSize = TextSize;
         _content.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-        double room = MaxFace - 2 * SidePad, need = _content.DesiredSize.Width, word = _text.DesiredSize.Width;
-        if (need <= room || word <= 0) return;
-        _text.FontSize = Math.Max(13, Math.Floor(TextSize * Math.Max(0, word - (need - room)) / word));
+        double need = Math.Ceiling(_content.DesiredSize.Width);
+        double face = Math.Max(MinFace, need + 2 * SidePad);
+        double pad = Math.Floor((face - need) / 2);
+        _pad.Padding = new Thickness(pad, 0, pad, 0);
+        MinWidth = MaxWidth = face;
+    }
+
+    /// <summary>
+    /// Self-test: the word's size, and whether all of it shows: a fresh copy of the word, measured with no limit, is no wider
+    /// than the word as laid out, and the icon and word fit inside the face's padding.
+    /// </summary>
+    internal (double Size, bool Whole, string Detail) SelfTestLabel()
+    {
+        var copy = new TextBlock
+        {
+            Text = _text.Text, FontSize = _text.FontSize, FontFamily = _text.FontFamily, FontWeight = _text.FontWeight,
+            CharacterSpacing = _text.CharacterSpacing, TextLineBounds = _text.TextLineBounds,
+        };
+        copy.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        double ideal = copy.DesiredSize.Width, shown = _text.ActualWidth;
+        double room = ActualWidth - _pad.Padding.Left - _pad.Padding.Right;
+        bool whole = shown + 1 >= ideal && _content.ActualWidth <= room + 1;
+        return (_text.FontSize, whole, $"word {shown:F1} of {ideal:F1} px, icon and word {_content.ActualWidth:F1} in {room:F1} px (button {ActualWidth:F1}, max {MaxWidth:F1})");
+    }
+
+    /// <summary>Self-test: how far the middle of the icon and word is from the button's middle (0 = centred).</summary>
+    internal double SelfTestWordOffCentre()
+    {
+        var at = _content.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(_content.ActualWidth / 2, 0));
+        return at.X - ActualWidth / 2;
     }
 
     /// <summary>The glow: a blurred shadow of a sprite tucked under the face (its corners never show), in the button's colour.</summary>
@@ -177,7 +219,7 @@ public sealed partial class PlayButton : UserControl
         var blue = Color.FromArgb(0xFF, 0x2F, 0x8C, 0xF0);
         (string path, string text, Color color, bool busy) = mode switch
         {
-            // Starting keeps its ring but takes clicks: one forces the game closed (the stop square after the word says so).
+            // Starting takes clicks: one forces the game closed (the tooltip says so). Its Play icon breathes meanwhile.
             Mode.Starting => (PlayPath, Labels[0], play, true),
             Mode.Stop => (StopPath, Labels[1], stop, false),
             // A static arrow, not a spinner: the download may be paused or queued, the bar beside it says which.
@@ -188,19 +230,15 @@ public sealed partial class PlayButton : UserControl
         };
         // White on deep colours, dark on bright ones (a yellow or cyan accent): the word always reads.
         var ink = HybridLauncher.Helpers.Contrast.BrushOn(color);
-        _icon.Fill = _ring.Foreground = _text.Foreground = ink;
+        _icon.Fill = _text.Foreground = ink;
         _color = color;
         _icon.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), path);
-        // Each icon as tall as the capitals beside it, so icon and word read as one line (the square looks bigger: a little smaller).
-        _icon.Height = _icon.Width = path == StopPath ? 19 : 22;
-        _icon.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
-        _ring.IsActive = busy;
-        _ring.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        // Each icon a little smaller than the capitals beside it, like the reference (the square looks bigger: smaller still).
+        _icon.Height = _icon.Width = path == StopPath ? 16 : 18;
+        // The busy modes (Starting…, Closing…) keep their icon, drawn like Play's, and it breathes faster than Stop's.
+        _icon.Visibility = Visibility.Visible;
         _text.Text = text.ToUpper();
         _busy = busy && mode != Mode.Starting;
-        _cancel.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), StopPath);
-        _cancel.Fill = ink;
-        _cancel.Visibility = mode == Mode.Starting ? Visibility.Visible : Visibility.Collapsed;
         FitLabel();
         var name = mode == Mode.Starting ? L.T("Starting… Click to force the game closed") : text;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_button, name);
@@ -259,21 +297,21 @@ public sealed partial class PlayButton : UserControl
         _veil.Background = new SolidColorBrush(Color.FromArgb(light ? (byte)0x14 : (byte)0x22, 0xFF, 0xFF, 0xFF));
         if (_glow?.Brush is CompositionColorBrush b) b.Color = color;
         ApplyGlow();
-        Pulse(mode == Mode.Stop);
+        Pulse();
     }
 
-    void OnPolicyChanged() => Pulse(_mode == Mode.Stop);
+    void OnPolicyChanged() => Pulse();
 
     /// <summary>The words of the modes, in the order of <see cref="SetMode"/>: Starting, Stop, Downloading, Closing, Download, Play.</summary>
     static readonly string[] Labels = [L.T("Starting…"), L.T("Stop"), L.T("Downloading"), L.T("Closing…"), L.T("Download"), L.T("Play")];
 
     /// <summary>The theme's own accent (not the lightened fill WinUI uses for controls): a deep, saturated face for the main button.</summary>
-    static Color Accent() =>
+    internal static Color Accent() =>
         HybridLauncher.Helpers.ThemeRes.Current.TryGetValue("SystemAccentColor", out var v) && v is Color c ? c
         : (HybridLauncher.Helpers.ThemeRes.Current["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(0xFF, 0x9A, 0x5C, 0xFF);
 
     /// <summary>The colour of the face's foot: darker and a little more saturated, so the shade keeps the hue's richness.</summary>
-    static Color Deepen(Color c)
+    internal static Color Deepen(Color c)
     {
         double max = Math.Max(c.R, Math.Max(c.G, c.B)), min = Math.Min(c.R, Math.Min(c.G, c.B));
         double mid = (max + min) / 2;
@@ -281,7 +319,7 @@ public sealed partial class PlayButton : UserControl
         return Color.FromArgb(c.A, Push(c.R), Push(c.G), Push(c.B));
     }
 
-    static Color Mix(Color a, Color b, double t) => Color.FromArgb(a.A,
+    internal static Color Mix(Color a, Color b, double t) => Color.FromArgb(a.A,
         (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
 
     void ApplyGlow()
@@ -313,11 +351,13 @@ public sealed partial class PlayButton : UserControl
     }
 
     /// <summary>
-    /// While the game runs, the Stop square breathes slowly (on the compositor: no layout, smooth at any refresh rate). A forever
+    /// While the game starts or closes its icon breathes quickly; while it runs, the Stop square breathes slowly (on the compositor: no layout, smooth at any refresh rate). A forever
     /// animation makes the window draw every frame, so it waits while the effects are paused for the game (Settings → Graphics).
     /// </summary>
-    void Pulse(bool on)
+    void Pulse()
     {
+        bool busy = _mode is Mode.Starting or Mode.Stopping;
+        bool on = busy || _mode == Mode.Stop;
         var icon = ElementCompositionPreview.GetElementVisual(_icon);
         if (!on || !HybridLauncher.Helpers.MediaPolicy.Effects)
         {
@@ -329,7 +369,7 @@ public sealed partial class PlayButton : UserControl
         anim.InsertKeyFrame(0f, 1f);
         anim.InsertKeyFrame(0.5f, 0.35f);
         anim.InsertKeyFrame(1f, 1f);
-        anim.Duration = TimeSpan.FromMilliseconds(1600);
+        anim.Duration = TimeSpan.FromMilliseconds(busy ? 900 : 1600);
         anim.IterationBehavior = AnimationIterationBehavior.Forever;
         icon.StartAnimation("Opacity", anim);
     }

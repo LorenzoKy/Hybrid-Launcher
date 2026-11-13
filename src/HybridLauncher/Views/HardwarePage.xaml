@@ -5,7 +5,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+    <ScrollView x:Name="PageScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" ContentOrientation="Vertical">
         <StackPanel x:Name="Root" MaxWidth="2600" Padding="20,4,20,32" Spacing="12">
 
             <!-- Header strip, in the banner's style. -->
@@ -62,5 +62,5 @@
                 </Grid>
             </StackPanel>
         </StackPanel>
-    </ScrollViewer>
+    </ScrollView>
 </Page>

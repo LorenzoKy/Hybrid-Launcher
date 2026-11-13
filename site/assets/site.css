@@ -129,9 +129,9 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 
 /* Features: a bento of tiles, each a picture on top and one bold-led sentence at the bottom */
 .bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-top: 44px; }
-.tile { --mx: 50%; --my: 50%; position: relative; grid-column: span 4; min-height: 420px; border-radius: var(--radius); overflow: hidden; isolation: isolate;
+.tile { --mx: 50%; --my: 50%; position: relative; grid-column: span 4; border-radius: var(--radius); overflow: hidden; isolation: isolate;
   background: linear-gradient(180deg, rgba(22, 20, 23, .9), rgba(11, 10, 12, .92)); box-shadow: inset 0 0 0 1px var(--line);
-  display: flex; flex-direction: column; justify-content: flex-end; transition: transform .35s var(--ease), box-shadow .35s ease; }
+  display: flex; flex-direction: column; transition: transform .35s var(--ease), box-shadow .35s ease; }
 .tile.s4 { grid-column: span 4; } .tile.s5 { grid-column: span 5; } .tile.s6 { grid-column: span 6; } .tile.s7 { grid-column: span 7; } .tile.s8 { grid-column: span 8; }
 .tile::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background: radial-gradient(70% 60% at 100% 0%, rgba(246, 244, 241, .08), transparent 70%); }
@@ -142,9 +142,12 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; padding: 1px; }
 .tile:hover { transform: translateY(-4px); box-shadow: inset 0 0 0 1px rgba(246,244,241,.1), 0 30px 80px rgba(0,0,0,.45); }
 .tile:hover::after { opacity: 1; }
-.vis { position: absolute; inset: 0 0 96px; z-index: 0; }
-.say { position: relative; z-index: 2; margin: 0; padding: 70px 28px 26px; font-size: 18px !important; line-height: 1.45; color: var(--muted);
-  background: linear-gradient(to bottom, transparent, rgba(10, 9, 11, .92) 46%); }
+/* The picture has its own box and the sentence sits under it on a solid floor: a long sentence makes the tile taller, it never climbs over the picture. */
+.vis { position: relative; flex: 1 0 310px; z-index: 0; }
+/* The pop-ups picture is fitted, not cropped: in a 310px box its cards were too small to read. */
+.vis.tall { flex-basis: 560px; }
+.say { position: relative; z-index: 2; margin: -48px 0 0; padding: 48px 28px 26px; font-size: 17px !important; line-height: 1.5; color: var(--muted);
+  background: linear-gradient(to bottom, rgba(12, 11, 13, 0), rgba(12, 11, 13, .97) 44px); }
 .say b { color: var(--text); font-weight: 700; }
 .say code { font-size: .8em; }
 
@@ -154,14 +157,15 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 .shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: var(--pos, 50% 50%); }
 .shot.tilt { left: 8%; right: -18%; top: 34px; height: 300px; transform: perspective(1100px) rotateX(38deg) rotateZ(-14deg) translateY(10px); transform-origin: 40% 30%; }
 .tile:hover .shot.tilt { transform: perspective(1100px) rotateX(30deg) rotateZ(-10deg) translateY(0); }
-.shot.bleed { left: 22%; right: -8%; top: 36px; height: 330px; transform: translateX(14px); }
+.shot.bleed { left: 22%; right: -8%; top: 36px; bottom: -12px; transform: translateX(14px); }
 .shot.bleed.low { left: 6%; right: -14%; }
 .tile:hover .shot.bleed { transform: translateX(0) scale(1.01); }
-.shot.side { left: 12%; right: -30%; top: 40px; height: 300px; transform: rotate(-3deg); }
+.shot.side { left: 12%; right: -30%; top: 40px; bottom: -12px; transform: rotate(-3deg); }
 .tile:hover .shot.side { transform: rotate(-1deg) translateY(-4px); }
 /* A whole picture, not cropped (the pop-up looks). */
-.shot.fit { left: 6%; right: 6%; top: 30px; height: auto; aspect-ratio: 1165 / 869; transform: rotate(-2deg); }
-.tile:hover .shot.fit { transform: rotate(0deg) translateY(-4px); }
+.shot.fit { left: 50%; top: 28px; bottom: 6px; width: auto; height: auto; aspect-ratio: 1165 / 869; max-width: 88%; transform: translateX(-50%) rotate(-2deg); }
+.tile:hover .shot.fit { transform: translateX(-50%) rotate(0deg) translateY(-4px); }
+.shot.fit img { object-fit: contain; }
 .chip { position: absolute; z-index: 1; display: flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: 10px; font: 600 13.5px/1 "Segoe UI", sans-serif;
   background: rgba(14, 13, 15, .82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 12px 30px rgba(0,0,0,.5), inset 0 0 0 1px rgba(246,244,241,.1); }
 .chip .ico { width: 16px; height: 16px; color: var(--red-soft); }
@@ -369,8 +373,10 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 @media (max-width: 720px) {
   .hero { padding-top: 56px; }
   .bento, .grid, .grid.two-up { grid-template-columns: 1fr; }
-  .tile, .tile.s7, .tile.s8 { grid-column: span 1; min-height: 380px; }
-  .say { font-size: 16.5px !important; padding: 60px 20px 22px; }
+  .tile, .tile.s7, .tile.s8 { grid-column: span 1; }
+  .vis { flex-basis: 250px; }
+  .vis.tall { flex-basis: 300px; }
+  .say { font-size: 16px !important; padding: 44px 20px 22px; }
   .band { padding: 80px 0; }
   .logos .sep { display: none; }
   .disclaimer { padding: 28px 22px; }

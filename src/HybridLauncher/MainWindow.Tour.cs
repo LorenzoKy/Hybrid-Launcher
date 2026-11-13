@@ -28,7 +28,7 @@ public sealed partial class MainWindow
     /// <param name="Prepare">Opens the page the tip is about, before the tip shows.</param>
     sealed record TourStep(string Title, string Text, Func<FrameworkElement?> Target, Action? Prepare = null);
 
-    GamePage? TourGame => ContentFrame.Content as GamePage;
+    GamePage? TourGame => Shown as GamePage;
 
     TourStep[] BuildTourSteps()
     {
@@ -54,9 +54,9 @@ public sealed partial class MainWindow
             // The tools the feature picker left out are not talked about.
             bool opti = !GameTabs.HiddenEverywhere("opti"), mods = !GameTabs.HiddenEverywhere("mods");
             list.Add(new(L.T("Tools for this game"),
-                opti && mods ? L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS; ReShade & Mods adds ReShade, RenoDX and Luma; PCGamingWiki lists the game's known fixes. Drag a tab to reorder it.")
+                opti && mods ? L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS; Mods lists what is in the game folder and adds ReShade, RenoDX, Luma, DLSS 5 and DXVK; PCGamingWiki lists the game's known fixes. Drag a tab to reorder it.")
                 : opti ? L.T("Game has the overview, trailer and controller support. OptiScaler installs in one click and swaps DLSS, FSR and XeSS. Drag a tab to reorder it.")
-                : mods ? L.T("Game has the overview, trailer and controller support. ReShade & Mods adds ReShade, RenoDX and Luma. Drag a tab to reorder it.")
+                : mods ? L.T("Game has the overview, trailer and controller support. Mods lists what is in the game folder and adds ReShade, RenoDX, Luma, DLSS 5 and DXVK. Drag a tab to reorder it.")
                 : L.T("Game has the overview, trailer and controller support. Drag a tab to reorder it; Settings → Features turns the mod tools on."),
                 () => TourGame?.TourTabs));
             list.Add(new(L.T("Game settings"),

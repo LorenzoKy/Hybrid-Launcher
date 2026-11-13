@@ -24,6 +24,31 @@ public static class OptiDetector
         return null;
     }
 
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime Written, long Length, string Hash)> Hashes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when the OptiScaler dll Hybrid Launcher installed was replaced since (by hand, another tool or a test build dropped
+    /// over it): its SHA-256 no longer matches the one recorded at install. The record's version is then stale and the dll's own
+    /// version resource is the truth. Hashes are cached per file and write time, so asking often costs nothing.
+    /// </summary>
+    public static bool ReplacedSince(InstallManifest m)
+    {
+        if (!m.Files.TryGetValue(m.DllName, out var recorded) || recorded.Length == 0) return false;
+        try
+        {
+            var file = new FileInfo(Path.Combine(m.TargetDir, m.DllName));
+            if (!file.Exists) return false;
+            if (!Hashes.TryGetValue(file.FullName, out var known) || known.Written != file.LastWriteTimeUtc || known.Length != file.Length)
+            {
+                using var stream = file.OpenRead();
+                known = (file.LastWriteTimeUtc, file.Length, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)));
+                Hashes[file.FullName] = known;
+            }
+            return !string.Equals(known.Hash, recorded, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception) { return false; }
+    }
+
     public static bool IsOptiScaler(string path)
     {
         try

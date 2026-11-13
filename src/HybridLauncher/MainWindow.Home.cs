@@ -33,6 +33,8 @@ public sealed partial class MainWindow
     /// <summary>The Home button (also the self-test's way in).</summary>
     public void HomePressed()
     {
+        // On purpose: the focus guard lets Hybrid Launcher come forward.
+        Helpers.FocusGuard.Allow();
         try
         {
             var c = AppState.Settings.Controller;
@@ -47,7 +49,7 @@ public sealed partial class MainWindow
                 ToFront(me);
                 Log.Info($"Home button: achievement {key} of {gameId}");
                 OpenGame(gameId);
-                (ContentFrame.Content as Views.GamePage)?.ShowAchievement(key);
+                (Shown as Views.GamePage)?.ShowAchievement(key);
                 NotePadPress();
                 return;
             }

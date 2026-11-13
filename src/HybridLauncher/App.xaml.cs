@@ -7,6 +7,9 @@ public partial class App : Application
 {
     public static MainWindow? Window { get; private set; }
 
+    /// <summary>UI exceptions caught so far (self-test: a step that shows "Something went wrong" fails).</summary>
+    internal static int UiErrors;
+
     public App()
     {
         InitializeComponent();
@@ -15,6 +18,7 @@ public partial class App : Application
         UnhandledException += (_, e) =>
         {
             Log.Error("Unhandled UI exception", e.Exception);
+            UiErrors++;
             e.Handled = true;
             Window?.ShowError(L.T("Something went wrong"), e.Exception.Message);
         };
@@ -35,6 +39,7 @@ public partial class App : Application
     public static void Restart()
     {
         SettingsStore.Save();
+        SettingsStore.Flush();
         // The new instance must not find this one's lock and hand over to it.
         try { _singleInstance?.ReleaseMutex(); } catch { }
         _singleInstance?.Dispose();
@@ -66,16 +71,21 @@ public partial class App : Application
     static int _watching;
 
     /// <summary>The window has closed (or the app is ending): delayed UI work must not start any more.</summary>
+    /// <summary>Started with --selftest: work the page would spread over several frames is done at once, as the steps expect.</summary>
+    public static bool SelfTesting { get; } = Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase);
+
     public static bool ShuttingDown => Volatile.Read(ref _watching) == 1 || Volatile.Read(ref _exiting) == 1;
 
     public static void ExitForSure()
     {
         WatchShutdown();
         if (Interlocked.Exchange(ref _exiting, 1) == 1) return;
+        SettingsStore.Flush();
         new Thread(() =>
         {
             Thread.Sleep(3000);
             Log.Warn("Exit: still running 3 s after the window closed, ending the process");
+            Log.Flush();
             Environment.Exit(0);
         }) { IsBackground = true, Name = "Hybrid Launcher exit guard" }.Start();
         try { Current.Exit(); }
@@ -109,6 +119,8 @@ public partial class App : Application
                 Exit();
                 return;
             }
+            // Started by Windows at sign-in a second time (two start-up entries, a scheduled task): nothing to show.
+            if (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase)) { Exit(); return; }
             // The other Hybrid Launcher may be hidden in the notification area (no window to find): ask it to show itself.
             if (EventWaitHandle.TryOpenExisting(name + "-show", out var show)) using (show) show.Set();
             else Helpers.SingleInstance.FocusOther();
@@ -121,14 +133,17 @@ public partial class App : Application
         Log.Info($"{AppInfo.Name} {AppUpdates.DisplayVersion} starting, data in {AppInfo.DataRoot}");
         Log.Info($"Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, {System.Globalization.CultureInfo.CurrentUICulture.Name}");
         SettingsStore.Load();
+        // Vsync for the app's own motion: always on, no setting (Helpers.FrameSync).
+        Helpers.FrameSync.Init();
         L.Init(AppState.Settings.Language);
         Helpers.Startup.CarryOver(AppState.Settings);
+        AchievementPopup.MoveOldSettings();
         Window = new MainWindow();
         // Started with Windows: only the icon in the notification area, the window opens from there.
         // From a desktop shortcut: the game starts, Hybrid Launcher stays in the notification area to watch it.
         bool tray = launch is not null || (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase) && !AppState.Settings.StartOpensWindow);
         if (tray) Window.StartInTray();
-        else Window.Activate();
+        else Window.ShowAtStart();
         Helpers.MediaPolicy.Attach(Window, hidden: tray);
         var ui = Window.DispatcherQueue;
         var signal = _showSignal;

@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
+using HybridLauncher.Core.Achievements;
 using HybridLauncher.Core.Steam;
 using HybridLauncher.Helpers;
 using Microsoft.UI;
@@ -34,7 +35,7 @@ public static class AchievementWatcher
         try
         {
             _ui = ui;
-            StartEmulators();
+            StartLocal();
             StartGog();
             StartFeed();
             var dir = SteamAchievements.StatsDir;
@@ -80,11 +81,21 @@ public static class AchievementWatcher
     {
         try { _watcher?.Dispose(); } catch { }
         _watcher = null;
-        foreach (var w in EmuWatchers) try { w.Dispose(); } catch { }
-        EmuWatchers.Clear();
+        StopLocal();
         try { _feed?.Dispose(); } catch { }
         _feed = null;
         _gogTimer?.Stop();
+    }
+
+    /// <summary>Raises <see cref="Changed"/> a couple of seconds from now (after a pop-up's entrance).</summary>
+    static void ChangedLater(string key)
+    {
+        if (_ui is null) { Changed?.Invoke(key); return; }
+        var t = _ui.CreateTimer();
+        t.Interval = TimeSpan.FromSeconds(2.5);
+        t.IsRepeating = false;
+        t.Tick += (_, _) => { t.Stop(); Changed?.Invoke(key); };
+        t.Start();
     }
 
     // Watcher thread: hop to the UI thread at once, everything else happens there.
@@ -101,7 +112,7 @@ public static class AchievementWatcher
         if (!Pending.TryGetValue(appId, out var timer))
         {
             timer = _ui.CreateTimer();
-            timer.Interval = TimeSpan.FromMilliseconds(1200);
+            timer.Interval = TimeSpan.FromMilliseconds(700);
             timer.IsRepeating = false;
             timer.Tick += (_, _) => _ = appId.StartsWith("emu:", StringComparison.Ordinal) ? CheckEmulatorAsync(appId[4..]) : CheckAsync(appId);
             Pending[appId] = timer;
@@ -112,6 +123,8 @@ public static class AchievementWatcher
 
     static async Task CheckAsync(string appId)
     {
+        // Settings → Achievements → Sources → Steam off: no Steam pop-ups.
+        if (!SettingsStore.Current.ReadSteamAchievements) return;
         try
         {
             var (unlocked, schema) = await Task.Run(() => (SteamAchievements.ReadUnlocked(appId), SteamAchievements.Schema(appId)));
@@ -122,19 +135,24 @@ public static class AchievementWatcher
                 Known.TryGetValue(appId, out before);
                 Known[appId] = now;
             }
-            Changed?.Invoke(appId);
-            // First read (the game has just started): the pictures of what is still locked are fetched now, so a pop-up shows its
-            // picture at once instead of downloading it while it is on screen.
+            // First read (the game has just started): the pictures of what is still locked, and the rarities, are fetched now, so
+            // a pop-up shows at once instead of downloading them while the player waits.
             if (before is null && schema is not null && AppState.Settings.AchievementPopups)
+            {
                 AchievementPopup.Prefetch(schema.Where(a => !now.Contains(a.Key)).Select(a => a.IconUrl));
+                if (AppState.Settings.Popup.ShowRarity)
+                    _ = Task.Run(async () => { try { await SteamAchievements.GlobalPercentagesAsync(appId, CancellationToken.None); } catch { } });
+            }
 
-            if (before is null || schema is null || !AppState.Settings.AchievementPopups) return;
-            var fresh = schema.Where(a => now.Contains(a.Key) && !before.Contains(a.Key)).ToList();
-            if (fresh.Count == 0) return;
+            var fresh = before is null || schema is null || !AppState.Settings.AchievementPopups ? [] : schema.Where(a => now.Contains(a.Key) && !before.Contains(a.Key)).ToList();
+            if (fresh.Count == 0) { Changed?.Invoke(appId); return; }
+            // The pages that show the game's achievements read them again after the pop-up has come in, not while it does: their
+            // work on the UI thread (pictures, lists) made the toast's first frames late and its slide halting.
+            ChangedLater(appId);
             var found = AppState.Find($"steam:{appId}");
             var game = found?.Name;
             Log.Info($"New achievements in {game ?? appId}: {string.Join(", ", fresh.Select(a => a.ApiName))}");
-            await AnnounceAsync(fresh, game, GameStore.Steam, appId, PlatinumAchievement.Find(schema)?.Key, found?.Id);
+            await AnnounceAsync(fresh, game, GameStore.Steam, appId, PlatinumAchievement.Find(schema!)?.Key, found?.Id);
         }
         catch (Exception ex)
         {
@@ -156,6 +174,8 @@ public static class AchievementWatcher
             Log.Info($"{game}: platinum {platinum.ApiName}");
             fresh = [.. fresh.Where(a => a != platinum), platinum];
         }
+        foreach (var a in fresh)
+            AchievementHistory.Add(new UnlockEntry(a.UnlockedAt ?? DateTime.Now, gameId, game ?? "", store.ToString(), a.Key, a.Name, a.Description, a.IconUrl, a.GlobalPercent, a.Points, null));
         if (fresh.Count > 3)
         {
             var rest = fresh.Where(a => a != platinum).ToList();
@@ -167,13 +187,13 @@ public static class AchievementWatcher
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1.2));
                 percents = await SteamAchievements.GlobalPercentagesAsync(steamAppId, cts.Token);
             }
             catch (Exception ex) { Log.Warn($"Rarity for {steamAppId}: {ex.Message}"); }
         }
         foreach (var a in fresh)
-            AchievementPopup.Show(new Toast(a.Name, a.Description, a.IconUrl, game, a.GlobalPercent ?? (percents.TryGetValue(a.ApiName, out var p) ? p : null), store, Completion: a == platinum, GameId: gameId, AchievementKey: a.Key));
+            AchievementPopup.Show(new Toast(a.Name, a.Description, a.IconUrl, game, a.GlobalPercent ?? (percents.TryGetValue(a.ApiName, out var p) ? p : null), store, a.Points, Completion: a == platinum, GameId: gameId, AchievementKey: a.Key));
     }
 
     /// <summary>
@@ -181,7 +201,13 @@ public static class AchievementWatcher
     /// new, so a game's older unlocks never pop up) and announces what is new.
     /// </summary>
     /// <param name="firstWindow">On the first read, how far back an unlock still counts as new (at least the time between two reads).</param>
-    static async Task DiffAsync(string key, AchievementSet set, Game game, GameStore store, string? steamAppId = null, TimeSpan? firstWindow = null)
+    static Task DiffAsync(string key, AchievementSet set, Game game, GameStore store, string? steamAppId = null, TimeSpan? firstWindow = null) =>
+        DiffAsync(key, set, game.Id, game.Name, store, steamAppId, firstWindow);
+
+    // Progress last seen per set and achievement (0..1), for the progress pop-ups.
+    static readonly Dictionary<string, Dictionary<string, double>> KnownProgress = new();
+
+    static async Task DiffAsync(string key, AchievementSet set, string? gameId, string gameName, GameStore store, string? steamAppId = null, TimeSpan? firstWindow = null)
     {
         var now = set.Items.Where(a => a.Unlocked).Select(a => a.Key).ToHashSet();
         HashSet<string>? before;
@@ -191,6 +217,8 @@ public static class AchievementWatcher
             Known[key] = now;
         }
         if (!AppState.Settings.AchievementPopups) return;
+        if (before is not null) ShowProgress(key, set, gameId, gameName, store);
+        else lock (KnownProgress) KnownProgress[key] = Shares(set);
         if (before is null) AchievementPopup.Prefetch(set.Items.Where(a => !a.Unlocked).Select(a => a.IconUrl));
         List<Achievement> fresh;
         if (before is not null) fresh = set.Items.Where(a => a.Unlocked && !before.Contains(a.Key)).ToList();
@@ -200,8 +228,38 @@ public static class AchievementWatcher
             fresh = set.Items.Where(a => a.Unlocked && a.UnlockedAt is { } t && t > cutoff).ToList();
         }
         if (fresh.Count == 0) return;
-        Log.Info($"New achievements in {game.Name}: {string.Join(", ", fresh.Select(a => a.ApiName))}");
-        await AnnounceAsync(fresh, game.Name, store, steamAppId, set.Platinum?.Key, game.Id);
+        Log.Info($"New achievements in {gameName}: {string.Join(", ", fresh.Select(a => a.ApiName))}");
+        await AnnounceAsync(fresh, gameName, store, steamAppId, set.Platinum?.Key, gameId);
+    }
+
+    static Dictionary<string, double> Shares(AchievementSet set) =>
+        set.Items.Where(a => !a.Unlocked && a.ProgressMax is > 0).ToDictionary(a => a.Key, a => Math.Clamp((a.ProgressNow ?? 0) / a.ProgressMax!.Value, 0, 1));
+
+    /// <summary>
+    /// Settings → Achievements → Progress pop-ups: a locked achievement with steps that passed the next mark (every 10, 25 or 50% of
+    /// the way) since the last read shows how far along it is. Never for the last step: that one is the unlock.
+    /// </summary>
+    static void ShowProgress(string key, AchievementSet set, string? gameId, string gameName, GameStore store)
+    {
+        var shares = Shares(set);
+        Dictionary<string, double>? old;
+        lock (KnownProgress)
+        {
+            KnownProgress.TryGetValue(key, out old);
+            KnownProgress[key] = shares;
+        }
+        if (old is null || !AppState.Settings.AchProgressPopupsOn) return;
+        double step = Math.Clamp(AppState.Settings.AchProgressStep, 5, 100) / 100.0;
+        foreach (var a in set.Items)
+        {
+            if (!shares.TryGetValue(a.Key, out var share) || share >= 1) continue;
+            double was = old.GetValueOrDefault(a.Key);
+            if (Math.Floor(share / step + 1e-9) <= Math.Floor(was / step + 1e-9)) continue;
+            var max = a.ProgressMax!.Value;
+            string progress = max == 100 && a.ProgressNow is { } pc && pc <= 100 ? $"{pc:0}%" : $"{a.ProgressNow:0.##} / {max:0.##}";
+            Log.Info($"Progress in {gameName}: {a.ApiName} {progress}");
+            AchievementPopup.Show(new Toast(a.Name, a.Description, a.IconGrayUrl ?? a.IconUrl, gameName, a.GlobalPercent, store, a.Points, GameId: gameId, AchievementKey: a.Key, Progress: progress));
+        }
     }
 
     // ---------- preview with a real game ----------
@@ -210,9 +268,10 @@ public static class AchievementWatcher
     public static List<Game> PreviewGames() => AppState.Games
         .Where(g => g switch
         {
-            { Store: GameStore.Steam, SteamAppId: { } id } => SteamAchievements.HasSchema(id),
-            { EmulatorAppId: not null, EmulatorSettingsDir: not null } => SettingsStore.Current.ReadSteamEmulator,
-            _ => GogAccount.SignedIn && GogAchievements.ProductId(g) is not null,
+            { Store: GameStore.Steam, SteamAppId: { } id } => SettingsStore.Current.ReadSteamAchievements && SteamAchievements.HasSchema(id),
+            { EmulatorAppId: not null } => SettingsStore.Current.ReadSteamEmulator,
+            _ when XboxAchievements.Applies(g) => XboxAchievements.CacheFile is not null || XboxAccount.SignedIn,
+            _ => SettingsStore.Current.ReadGogAchievements && GogAccount.SignedIn && GogAchievements.ProductId(g) is not null,
         })
         .OrderBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase)
         .ToList();
@@ -242,6 +301,35 @@ public static class AchievementWatcher
     }
 
     /// <summary>
+    /// A progress pop-up of <paramref name="game"/>, as a step towards one of its achievements would show it: a locked achievement
+    /// that counts progress (its real count, or the next step of it), else a locked one with a sample count. Nothing changes.
+    /// False when the game's achievements cannot be read.
+    /// </summary>
+    public static async Task<bool> PreviewProgressAsync(Game game)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var set = await SteamAchievements.LoadForAsync(game, cts.Token);
+        if (set is not { Items.Count: > 0 }) return false;
+        var counted = set.Items.Where(a => !a.Unlocked && a.ProgressMax is > 0).ToList();
+        var locked = set.Items.Where(a => !a.Unlocked && a != set.Platinum).ToList();
+        var pool = counted.Count > 0 ? counted : locked.Count > 0 ? locked : set.Items.ToList();
+        var a = pool[Pick.Next(pool.Count)];
+        string progress;
+        if (a.ProgressMax is { } max and > 0)
+        {
+            // The real count, one step on (a preview of the next pop-up this achievement would give).
+            double now = Math.Min(max - 1, Math.Max(1, (a.ProgressNow ?? 0) + Math.Max(1, Math.Round(max / 10))));
+            progress = max == 100 ? $"{now:0}%" : $"{now:0.##} / {max:0.##}";
+        }
+        else progress = "3 / 10";
+        var store = game.Store is GameStore.Custom && game.EmulatorAppId is not null ? GameStore.Steam : game.Store;
+        Log.Info($"Progress preview: {game.Name}, {a.ApiName} {progress}");
+        AchievementPopup.ShowReplacing(new Toast(a.Name, a.Description, a.IconGrayUrl ?? a.IconUrl, game.Name,
+            AppState.Settings.Popup.ShowRarity ? a.GlobalPercent : null, store, a.Points, Progress: progress));
+        return true;
+    }
+
+    /// <summary>
     /// The platinum of <paramref name="game"/>: its own achievement for unlocking all the others, shown as its unlock would be
     /// (name, picture, rarity, the platinum tier), in its store's look. A preview: nothing changes. False when the game has no
     /// such achievement or its achievements cannot be read.
@@ -257,46 +345,82 @@ public static class AchievementWatcher
         return true;
     }
 
-    // ---------- Steam emulators (Goldberg / GSE) ----------
+    // ---------- local achievement files ----------
 
     static readonly List<FileSystemWatcher> EmuWatchers = [];
 
-    static void StartEmulators()
+    /// <summary>Watches every folder local achievement files live in (the known ones and the user's own).</summary>
+    static void StartLocal()
     {
         try
         {
-            foreach (var root in SteamEmulator.SaveRoots().Where(Directory.Exists))
+            foreach (var root in LocalAchievements.Roots())
             {
-                var w = new FileSystemWatcher(root, "achievements.json") { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size };
+                var w = new FileSystemWatcher(root) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size };
                 void OnEvent(string path)
                 {
-                    // <root>\<appid>\achievements.json
-                    var id = Path.GetFileName(Path.GetDirectoryName(path));
-                    if (id is { Length: > 0 } && id.All(char.IsAsciiDigit)) _ui?.TryEnqueue(() => Debounce("emu:" + id));
+                    if (!LocalAchievements.IsStateFile(path)) return;
+                    if (LocalAchievements.AppIdOf(path) is { } id) _ui?.TryEnqueue(() => Debounce("emu:" + id));
                 }
                 w.Changed += (_, e) => OnEvent(e.FullPath);
                 w.Created += (_, e) => OnEvent(e.FullPath);
                 w.Renamed += (_, e) => OnEvent(e.FullPath);
+                w.Error += (_, e) => Log.Warn($"Local achievement watcher: {e.GetException().Message}");
                 w.EnableRaisingEvents = true;
                 EmuWatchers.Add(w);
             }
-            if (EmuWatchers.Count > 0) Log.Info("Watching Steam emulator achievements");
+            if (EmuWatchers.Count > 0) Log.Info($"Watching local achievements in {EmuWatchers.Count} folders");
         }
-        catch (Exception ex) { Log.Warn($"Could not watch emulator achievements: {ex.Message}"); }
+        catch (Exception ex) { Log.Warn($"Could not watch local achievements: {ex.Message}"); }
     }
+
+    static void StopLocal()
+    {
+        foreach (var w in EmuWatchers) try { w.Dispose(); } catch { }
+        EmuWatchers.Clear();
+    }
+
+    /// <summary>The folders changed (Settings → Achievements → Sources): watched again.</summary>
+    public static void RestartLocal()
+    {
+        StopLocal();
+        StartLocal();
+    }
+
+    /// <summary>How many folders with local achievement files are watched.</summary>
+    public static int LocalFolderCount => EmuWatchers.Count;
 
     static async Task CheckEmulatorAsync(string appId)
     {
         try
         {
             if (!SettingsStore.Current.ReadSteamEmulator) return;
-            var game = AppState.Games.FirstOrDefault(g => g.EmulatorAppId == appId && g.EmulatorSettingsDir is not null);
-            if (game is null) return;
-            var set = await Task.Run(() => SteamEmulator.ReadAchievements(appId, game.EmulatorSettingsDir!));
-            if (set is not null) await DiffAsync("emu:" + appId, set, game, GameStore.Steam, appId);
+            var game = AppState.Games.FirstOrDefault(g => g.EmulatorAppId == appId && g.Store != GameStore.Steam);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var set = await LocalAchievements.LoadAsync(appId, game?.EmulatorSettingsDir, cts.Token);
+            if (set is not null)
+            {
+                // A game outside the library still gets its pop-up, under its Steam name.
+                var name = game?.Name ?? await SteamAppNameAsync(appId) ?? $"Steam app {appId}";
+                await DiffAsync("emu:" + appId, set, game?.Id, name, GameStore.Steam, appId);
+            }
             Changed?.Invoke(appId);
         }
-        catch (Exception ex) { Log.Warn($"Emulator achievement check {appId}: {ex.Message}"); }
+        catch (Exception ex) { Log.Warn($"Local achievement check {appId}: {ex.Message}"); }
+    }
+
+    static async Task<string?> SteamAppNameAsync(string appId)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+            var json = await HybridLauncher.Core.Net.Http.GetCachedAsync($"https://store.steampowered.com/api/appdetails?appids={appId}&filters=basic",
+                Path.Combine("steam", $"app-name-{appId}.json"), TimeSpan.FromDays(60), ct: cts.Token);
+            if (json is null) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(appId, out var app) && app.TryGetProperty("data", out var data) && data.TryGetProperty("name", out var n) ? n.GetString() : null;
+        }
+        catch { return null; }
     }
 
     // ---------- GOG ----------
@@ -310,7 +434,7 @@ public static class AchievementWatcher
         if (_ui is null) return;
         _gogTimer = _ui.CreateTimer();
         _gogTimer.Interval = TimeSpan.FromSeconds(40);
-        _gogTimer.Tick += (_, _) => _ = PollGogAsync();
+        _gogTimer.Tick += (_, _) => { _ = PollGogAsync(); _ = PollXboxAsync(); PollLocal(); };
         _gogTimer.Start();
     }
 
@@ -335,6 +459,41 @@ public static class AchievementWatcher
         }
         catch (Exception ex) { Log.Warn($"GOG achievement poll: {ex.Message}"); }
         finally { _gogBusy = false; }
+    }
+
+    // Running games with local achievements are read again now and then too: a change the watcher missed, or one kept in the
+    // registry (no file to watch).
+    static void PollLocal()
+    {
+        if (!AppState.Settings.AchievementPopups || !SettingsStore.Current.ReadSteamEmulator) return;
+        foreach (var game in AppState.Games.Where(g => g.EmulatorAppId is not null && g.Store != GameStore.Steam && GameSessions.IsActive(g.Id)).ToList())
+            Debounce("emu:" + game.EmulatorAppId);
+    }
+
+    // ---------- Xbox ----------
+
+    static bool _xboxBusy;
+
+    // Signed in to Xbox: while an Xbox game runs, its achievements are asked for with the GOG poll (every 40 s).
+    static async Task PollXboxAsync()
+    {
+        if (_xboxBusy || !AppState.Settings.AchievementPopups || !AppState.Settings.XboxLivePopups || !XboxAccount.SignedIn) return;
+        _xboxBusy = true;
+        try
+        {
+            foreach (var game in AppState.Games.Where(g => XboxAchievements.Applies(g) && GameSessions.IsActive(g.Id)).ToList())
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                if (await XboxAchievements.LoadAsync(game, cts.Token) is { } set)
+                {
+                    var key = XboxAchievements.Key(game);
+                    await DiffAsync(key, set, game, GameStore.Xbox, null, TimeSpan.FromMinutes(2));
+                    Changed?.Invoke(key);
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"Xbox achievement poll: {ex.Message}"); }
+        finally { _xboxBusy = false; }
     }
 
     // ---------- the feed: any tool can announce an unlock ----------

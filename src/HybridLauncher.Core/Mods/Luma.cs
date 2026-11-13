@@ -170,7 +170,7 @@ public static partial class Luma
                 if (tested.Game is not null)
                     hits.Add(new LumaMatch(m, L.F("Tested with {0}: upscaling {1}, HDR {2}", tested.Game, Mark(tested.Upscaling), Mark(tested.Hdr)) + (tested.Notes.Length > 0 ? ". " + tested.Notes : ""), 80));
                 else if (engine == m.Engine)
-                    hits.Add(new LumaMatch(m, L.F("Generic mod for {0} games: not tested with this one yet", engine), 30));
+                    hits.Add(new LumaMatch(m, L.F("Generic mod for {0} games: not tested with this one yet", AutoSetup.EngineName(engine)), 30));
                 continue;
             }
             var mk = RenoDx.Key(m.Name);
@@ -189,7 +189,7 @@ public static partial class Luma
     public static async Task<List<LumaBuild>> GetBuildsAsync(bool force = false, CancellationToken ct = default)
     {
         var json = await Http.GetCachedAsync("https://api.github.com/repos/Filoppi/Luma-Framework/releases?per_page=30", "luma-releases.json",
-            TimeSpan.FromHours(6), force, accept: "application/vnd.github+json", ct: ct);
+            TimeSpan.FromHours(6), force, accept: "application/vnd.github+json", ct: ct).ConfigureAwait(false);
         var list = new List<LumaBuild>();
         if (json is null) return list;
         using var doc = JsonDocument.Parse(json);

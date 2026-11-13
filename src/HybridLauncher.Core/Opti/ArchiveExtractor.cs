@@ -5,7 +5,7 @@ namespace HybridLauncher.Core.Opti;
 
 public static class ArchiveExtractor
 {
-    /// <summary>Extracts a 7z/zip/rar archive into an empty <paramref name="destination"/>. Uses SharpCompress,
+    /// <summary>Extracts a 7z/zip/rar archive (or a compressed tar) into an empty <paramref name="destination"/>. Uses SharpCompress,
     /// falling back to Windows' bsdtar (tar.exe) when SharpCompress cannot decode the archive.</summary>
     public static async Task ExtractAsync(string archive, string destination, CancellationToken ct)
     {
@@ -29,6 +29,26 @@ public static class ArchiveExtractor
     public static void ExtractManaged(string archive, string destination, CancellationToken ct)
     {
         var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
+        // A compressed tar (DXVK's .tar.gz, VKD3D-Proton's .tar.zst) opened as an archive is one compressed file holding the tar:
+        // read as a stream instead, the reader looks inside.
+        if (IsCompressedTar(archive))
+        {
+            using var stream = File.OpenRead(archive);
+            using var tar = SharpCompress.Readers.ReaderFactory.Open(stream);
+            int files = 0;
+            while (tar.MoveToNextEntry())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (Place(root, destination, tar.Entry.Key, tar.Entry.IsDirectory) is { } file)
+                {
+                    using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
+                    tar.WriteEntryTo(fs);
+                    files++;
+                }
+            }
+            if (files == 0) throw new InvalidDataException($"No files read from {Path.GetFileName(archive)}");
+            return;
+        }
         using var a = ArchiveFactory.Open(archive, null);
         // Solid archives and 7z are read front to back (ExtractAllEntries); zip and the rest entry by entry. ExtractAllEntries
         // on an ordinary zip throws, which sent every zip release to tar.exe.
@@ -57,6 +77,9 @@ public static class ArchiveExtractor
             }
         }
     }
+
+    static bool IsCompressedTar(string archive) =>
+        new[] { ".tar.gz", ".tgz", ".tar.zst", ".tar.xz", ".tar.bz2" }.Any(e => archive.EndsWith(e, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Where an entry goes (its folders made), or null for a folder entry; throws for one that would land outside.</summary>
     static string? Place(string root, string destination, string? key, bool isDirectory)

@@ -10,7 +10,7 @@
 <meta property="og:description" content="Your games with tech mods, and the Hybrid launcher that manages them. Free for Windows.">
 <meta property="og:image" content="assets/logo.png">
 <link rel="icon" href="assets/favicon.ico">
-<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="assets/site.css?v=21">
 </head>
 <body>
 <canvas id="bg" aria-hidden="true"></canvas>
@@ -53,7 +53,7 @@
 <section id="home" class="hero">
   <div class="wrap hero-grid">
   <div class="hero-text">
-    <div class="pill-row reveal"><a class="pill new" href="#features">New in 1.3.2 · achievement pop-ups, Home button, settings search</a></div>
+    <div class="pill-row reveal"><a class="pill new" href="#features">New in 2.0 · DLSS 5 on Radeon (experimental), Mods tab, Dashboard, Xbox achievements</a></div>
     <h1 class="reveal">The <span class="glow red">Hybrid</span> Launcher</h1>
     <p class="lede reveal"><span class="lede-lead">A modern game launcher that properly manages popular mods, built with customization and tons of quality of life options in mind.</span></p>
     <div class="cta reveal">
@@ -69,7 +69,7 @@
   <div class="stage reveal" id="stage" aria-label="The real app, on a sample game">
     <div class="stage-glow"></div>
     <figure class="app">
-      <img src="assets/shots/overview.webp?v=14" alt="Hybrid Launcher showing a game page: the library sidebar, the banner with the installed mods, the Play button with play time, HDR and cloud status, and the tabs Game, OptiScaler, ReShade &amp; Mods, PCGamingWiki, Achievements, Quick access, Notes and Links." width="2000" height="1089">
+      <img src="assets/shots/overview.webp?v=21" alt="Hybrid Launcher showing a game page: the library sidebar, the banner with its upscalers, the Play button with play time, HDR and cloud status, the tabs Dashboard, OptiScaler, Mods, Ultra+, PCGamingWiki, Quick access, Notes and Links, and the Dashboard with the trailer and the side cards." width="2000" height="1088">
     </figure>
     <a class="discord-banner" href="https://discord.com/invite/yjXsQehpaR">
       <svg class="discord-logo" aria-hidden="true"><use href="#i-discord"/></svg>
@@ -81,7 +81,7 @@
 
   <div class="wrap">
     <ul class="logos reveal" aria-label="Works with">
-      <li>Steam</li><li>Epic Games</li><li>GOG</li><li>Xbox / Game Pass</li><li class="sep" aria-hidden="true"></li><li>OptiScaler</li><li>ReShade</li><li>RenoDX</li><li>Luma</li><li>Ultra+</li>
+      <li>Steam</li><li>Epic Games</li><li>GOG</li><li>Xbox / Game Pass</li><li>Ubisoft Connect</li><li>EA app</li><li>Rockstar</li><li class="sep" aria-hidden="true"></li><li>OptiScaler</li><li>ReShade</li><li>RenoDX</li><li>Luma</li><li>DXVK</li><li>VKD3D-Proton</li><li>Ultra+</li>
     </ul>
   </div>
 </section>
@@ -107,20 +107,20 @@
   <div class="wrap">
     <div class="eyebrow reveal">Features</div>
     <h2 class="reveal">A launcher and a mod tool in one program.</h2>
-    <p class="reveal muted section-sub">Every picture below is the real app, running on sample games.</p>
+    <p class="reveal muted section-sub">Every picture below is the real app, on real games.</p>
 
     <div class="bento">
       <article class="tile s5 reveal">
         <div class="vis">
           <svg class="deco arcs" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="60"/><circle cx="100" cy="100" r="90"/></svg>
-          <figure class="shot tilt" style="--pos: 0% 0%"><img src="assets/shots/library.webp?v=13" alt="The library: every game as a cover, grouped by launcher, with search, filters and a size slider." loading="lazy"></figure>
+          <figure class="shot tilt" style="--pos: 0% 0%"><img src="assets/shots/library.webp?v=21" alt="The library: the game played last on its own banner with Play, the latest achievements beside it, then every game as a cover with its play time and upscalers, a size slider and filters." loading="lazy"></figure>
         </div>
-        <p class="say"><b>One library.</b> Games from Steam, Epic Games, GOG and Xbox / Game Pass sit in one list with any exe or folder you add. Each one has its cover and play time, and you can pin and filter them.</p>
+        <p class="say"><b>One library.</b> Steam, Epic Games, GOG, Xbox / Game Pass, Ubisoft Connect, EA and Rockstar games in one list with any exe or folder you add, each with its cover, play time and a Play button.</p>
       </article>
 
       <article class="tile s7 hot reveal">
         <div class="vis">
-          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/optiscaler.webp?v=13" alt="The OptiScaler tab: choose Stable, Nightly, a fork or a custom build, get notified on updates, then install; ASI plugins, custom DLLs and release notes on the side." loading="lazy"></figure>
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/optiscaler.webp?v=21" alt="The OptiScaler tab: choose Stable, Nightly, a fork or a custom build, get notified on updates, set it up and install; the OptiScaler wiki entry, saved versions and links on the side." loading="lazy"></figure>
           <div class="chip c-a"><svg class="ico"><use href="#i-upscale"/></svg>DLSS → FSR 4</div>
         </div>
         <p class="say"><b>OptiScaler.</b> Install the Stable or Nightly build, a community fork or a build of your own. When a newer build is out the game page says <i>Update available</i>, and you can get a notification for it. The settings you change most have their own panel, profiles keep different configurations, and every version you installed is saved so you can go back to it.</p>
@@ -128,9 +128,9 @@
 
       <article class="tile s7 reveal">
         <div class="vis">
-          <figure class="shot bleed low" style="--pos: 55% 30%"><img src="assets/shots/reshade.webp?v=13" alt="The ReShade &amp; Mods tab: ReShade's own installer in standard or full add-on edition, its settings, presets, and RenoDX and Luma next to it." loading="lazy"></figure>
+          <figure class="shot bleed low" style="--pos: 55% 30%"><img src="assets/shots/reshade.webp?v=21" alt="The Mods tab: the table of installed mods with conflicts and problems, then ReShade's own installer in standard or full add-on edition, its settings and presets, and RenoDX under it." loading="lazy"></figure>
         </div>
-        <p class="say"><b>ReShade, RenoDX, Luma, Ultra+.</b> ReShade installs with its official installer. RenoDX HDR mods and Luma mods are offered when the game has one. Ultra+ <i>(experimental)</i> installs and updates itself on the Unreal Engine games it supports.</p>
+        <p class="say"><b>Mods tab.</b> Every mod in the game folder, what loads it and whether it works, with a warning and a fix when a game update removed or replaced one. ReShade (standard or add-on build), RenoDX, Luma, DXVK and VKD3D-Proton install from here.</p>
       </article>
 
       <article class="tile s5 reveal">
@@ -145,6 +145,55 @@
         <p class="say"><b>Smart HDR.</b> Windows HDR turns on when a game starts and off when it closes.</p>
       </article>
 
+      <article class="tile s7 hot reveal">
+        <div class="vis">
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/dlss5.webp?v=21" alt="The DLSS 5 section of the Mods tab: what the graphics card and driver can run, the recommended method, the model file, and one card with each part's state." loading="lazy"></figure>
+          <div class="chip c-a"><svg class="ico"><use href="#i-upscale"/></svg>DLSS 5 on Radeon</div>
+        </div>
+        <p class="say"><b>DLSS 5 neural rendering</b> <i>(experimental)</i>. On Radeon RX 9000, mochizuki0323's DLSSNR-AMD goes in as an OptiScaler plugin, or through ReShade in any 64-bit game without OptiScaler. On RTX, janblade's F5 Multipass build. Hybrid Launcher says what your card can run and sets it up step by step; your own copy of NVIDIA's model file is used, nothing from NVIDIA is downloaded.</p>
+      </article>
+
+      <article class="tile s5 reveal">
+        <div class="vis">
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/achievements.webp?v=21" alt="A game's Achievements tab: unlocked achievements with their date and how rare they are, and the ones still locked." loading="lazy"></figure>
+        </div>
+        <p class="say"><b>Achievements from every store.</b> Steam, GOG, Xbox and Game Pass, and local files on your PC. Search them, see how rare each one is, and keep a history of every unlock with a screenshot of the moment, exportable as CSV or JSON.</p>
+      </article>
+
+      <article class="tile s7 reveal">
+        <div class="vis tall">
+          <figure class="shot fit"><img src="assets/shots/popups.webp?v=1312" alt="Achievement pop-ups in Hybrid Launcher's looks: its own card, Steam-, GOG- and Epic-like cards, Minimal, PlayStation 5-, PlayStation 4- (white and black) and Xbox-like, and a game's platinum." loading="lazy"></figure>
+        </div>
+        <p class="say"><b>Achievement pop-ups.</b> Nine looks: Hybrid Launcher's own card, store-like, PlayStation-like and Xbox-like. Common achievements show as bronze, rare ones as silver or gold, and a game's platinum has its own. Place, size, time on screen, colours and sounds are yours to set.</p>
+      </article>
+
+      <article class="tile s5 reveal">
+        <div class="vis">
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/themes.webp?v=21" alt="A game page in the Venom Violet colour theme: the Play button, tabs and accents follow it." loading="lazy"></figure>
+        </div>
+        <p class="say"><b>Themes and colours.</b> Colour themes such as the warm <i>Cozy</i> or <i>Venom Violet</i> (in the picture), your own accent, glow, background and icon colours, shading on or off and an interface size from 50 to 200%. The whole app follows, game pages included.</p>
+      </article>
+
+      <article class="tile s6 reveal">
+        <div class="vis">
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/auto.webp?v=21" alt="The Auto tab: what was read about the game, then the mods that fit it, each with its build, ticked for one install." loading="lazy"></figure>
+        </div>
+        <p class="say"><b>Auto tab</b> <i>(experimental)</i>. It reads the game and proposes the mods that fit, each with its build, then installs them together in the right order. Installing each mod from its own tab is still the recommended way.</p>
+      </article>
+
+      <article class="tile s6 reveal">
+        <div class="vis notif-vis" aria-hidden="true">
+          <div class="nlist">
+            <div class="nhead"><b>Notifications</b><span>2 new</span></div>
+            <div class="nrow"><i style="--c:#9b7cff"></i><div><b>OptiScaler Nightly: a new build is out</b><span>On the game's OptiScaler tab, Update available installs it.</span></div></div>
+            <div class="nrow"><i style="--c:#3ddc97"></i><div><b>Ultra+ updated by itself</b><span>Your settings were kept.</span></div></div>
+            <div class="nrow old"><i style="--c:#5fa8ff"></i><div><b>Hybrid Launcher: a new version is available</b><span>Click to see what is new and update.</span></div></div>
+          </div>
+          <div class="wtoast"><img src="assets/logo.png" alt=""><div><small>HYBRID LAUNCHER</small><b>OptiScaler Nightly is out</b><span>Click to open the game</span></div></div>
+        </div>
+        <p class="say"><b>Notifications.</b> New builds of the OptiScaler versions you follow, new Ultra+ versions and Hybrid Launcher updates are listed beside the Minimize button. Each source can also show a Windows notification, which waits until you stop playing.</p>
+      </article>
+
       <article class="tile s4 reveal">
         <div class="vis cloud-vis" aria-hidden="true">
           <svg class="deco arcs" viewBox="0 0 200 200"><circle cx="100" cy="100" r="70"/><circle cx="100" cy="100" r="96"/></svg>
@@ -157,16 +206,9 @@
 
       <article class="tile s8 hot reveal">
         <div class="vis">
-          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/downloads.webp?v=13" alt="The Downloads page: the game downloading now with speed and time left, the queue below and the finished ones." loading="lazy"></figure>
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/downloads.webp?v=15" alt="The Downloads page: the game downloading now with speed and time left, the queue below and the finished ones." loading="lazy"></figure>
         </div>
         <p class="say"><b>Direct downloads.</b> Sign in to Steam, Epic or GOG to download, pause, resume and update your games inside Hybrid Launcher.</p>
-      </article>
-
-      <article class="tile s4 reveal">
-        <div class="vis">
-          <figure class="shot fit"><img src="assets/shots/popups.webp?v=1312" alt="Achievement pop-ups in Hybrid Launcher's looks: its own card, Steam-, GOG- and Epic-like cards, Minimal, PlayStation 5-, PlayStation 4- (white and black) and Xbox-like, and a game's platinum." loading="lazy"></figure>
-        </div>
-        <p class="say"><b>Achievement pop-ups.</b> Pop-ups that look like a PlayStation, Xbox or store notification, or Hybrid Launcher's own card. Rare achievements show as silver or gold, common ones as bronze, and the game's platinum gets its own. You can set your own sounds. Steam, GOG and <b>local achievements</b> are read. The controller's Home button opens the achievement you just earned.</p>
       </article>
 
       <article class="tile s4 reveal">
@@ -190,32 +232,11 @@
         <p class="say"><b>My PC.</b> Your processor, graphics card and displays, Windows' gaming settings, and the upscaler versions your graphics driver includes.</p>
       </article>
 
-      <article class="tile s6 reveal">
-        <div class="vis notif-vis" aria-hidden="true">
-          <div class="nlist">
-            <div class="nhead"><b>Notifications</b><span>2 new</span></div>
-            <div class="nrow"><i style="--c:#9b7cff"></i><div><b>OptiScaler Nightly: a new build is out</b><span>On the game's OptiScaler tab, Update available installs it.</span></div></div>
-            <div class="nrow"><i style="--c:#3ddc97"></i><div><b>Ultra+ updated by itself</b><span>Your settings were kept.</span></div></div>
-            <div class="nrow old"><i style="--c:#5fa8ff"></i><div><b>Hybrid Launcher: a new version is available</b><span>Click to see what is new and update.</span></div></div>
-          </div>
-          <div class="wtoast"><img src="assets/logo.png" alt=""><div><small>HYBRID LAUNCHER</small><b>OptiScaler Nightly is out</b><span>Click to open the game</span></div></div>
+      <article class="tile s4 reveal">
+        <div class="vis">
+          <figure class="shot bleed" style="--pos: 0% 0%"><img src="assets/shots/dashboard.webp?v=21" alt="A game's Dashboard: trailer and screenshots, news and updates with the version history, how long to beat, Steam and Metacritic scores, details and languages." loading="lazy"></figure>
         </div>
-        <p class="say"><b>Notifications.</b> New builds of the OptiScaler versions you follow, new Ultra+ versions and Hybrid Launcher updates are listed beside the Minimize button. Each source can also show a Windows notification, which waits until you stop playing.</p>
-      </article>
-
-      <article class="tile s6 reveal">
-        <div class="vis glance-vis" aria-hidden="true">
-          <div class="banner">
-            <div class="badges">
-              <span style="--c:#9b7cff">OptiScaler 0.9.4 · Stable</span>
-              <span style="--c:#f2b84b">ReShade · add-on</span>
-              <span style="--c:#3ddc97">Ultra+ · experimental</span>
-              <span style="--c:#ff8a5c">RenoDX · HDR</span>
-            </div>
-            <div class="bar"><span class="play">PLAY</span><span class="up">Update available</span></div>
-          </div>
-        </div>
-        <p class="say"><b>Installed mods on the banner.</b> The game's banner lists the mods in its folder and their versions. Click one to open its tab; <i>Update available</i> appears when a newer build is out.</p>
+        <p class="say"><b>Dashboard.</b> Each game opens on its trailer, its latest update with the patch notes, news read inside the app, Steam's version history, how long it takes to beat and its scores.</p>
       </article>
     </div>
   </div>
@@ -228,7 +249,7 @@
     <ol class="steps">
       <li class="reveal"><span class="n">1</span><h3>Download the zip</h3><p>Get the latest <code>HybridLauncher-…-win-x64.zip</code> and extract it anywhere you can write, for example <code>C:\Games\Hybrid Launcher</code>.</p></li>
       <li class="reveal"><span class="n">2</span><h3>Run it</h3><p>Start <code>HybridLauncher.exe</code>. It finds the games of your launchers by itself, and a short tour shows you around.</p></li>
-      <li class="reveal"><span class="n">3</span><h3>Pick a game, add a mod</h3><p>Open its page, choose OptiScaler or a mod, and press Install. Remove it any time and the folder goes back as it was.</p></li>
+      <li class="reveal"><span class="n">3</span><h3>Pick a game, add a mod</h3><p>Open its page, choose OptiScaler or a mod in its tab, and press Install. Remove it any time and the folder goes back as it was; the Mods tab shows what is in the folder at any moment.</p></li>
     </ol>
   </div>
 </section>
@@ -241,12 +262,13 @@
       <p class="reveal muted">At the first start you choose what you need: a starting point, a live preview of a game's page, a switch per feature. What you leave out is only hidden, and <b>Settings → Features</b> brings it back any time.</p>
       <ul class="modes">
         <li class="reveal"><svg class="ico"><use href="#i-download"/></svg><div><b>Your stores in one launcher</b>Sign in and download, update and play your Steam, Epic and GOG games from one place.</div></li>
-        <li class="reveal"><svg class="ico"><use href="#i-upscale"/></svg><div><b>Just a mod manager</b>Skip accounts and downloads, and use it only for OptiScaler, ReShade, RenoDX and Luma on the games you already have.</div></li>
-        <li class="reveal"><svg class="ico"><use href="#i-layout"/></svg><div><b>Your layout</b>Game page tabs, banner and launch bar parts, launcher groups, colour themes (the warm <i>Cozy</i> one too), the achievement pop-up, every controller button, tray mode: much of it can be toggled, dragged and hidden, and <i>Search all settings</i> finds any option. With another window in front it rests and uses next to nothing.</div></li>
+        <li class="reveal"><svg class="ico"><use href="#i-upscale"/></svg><div><b>Just a mod manager</b>Skip accounts and downloads, and use it only for OptiScaler, ReShade, RenoDX, Luma and DXVK on the games you already have.</div></li>
+        <li class="reveal"><svg class="ico"><use href="#i-layout"/></svg><div><b>Your layout</b>Game page tabs and their order, the Dashboard's cards, banner and launch bar parts, launcher groups, tags on the covers, every controller button, tray mode: much of it can be toggled, dragged and hidden, and <i>Search all settings</i> finds any option. With another window in front it rests and uses next to nothing, the mouse wheel glides, and what it moves follows your display's refresh (vsync, always on).</div></li>
+        <li class="reveal"><svg class="ico"><use href="#i-sun"/></svg><div><b>Your look</b>Colour themes, your own accent, glow, background and icon colours, shading, interface size and scroll bars. Achievement pop-ups in nine looks, placed where you want them, with your own sounds and a preview on one of your real games.</div></li>
       </ul>
     </div>
     <figure class="picker reveal">
-      <img src="assets/shots/features.webp?v=13" width="956" height="1038" loading="lazy" alt="Choose what you need: five starting points (Everything, No achievements, OptiScaler + ReShade, Only OptiScaler, Just a launcher), a preview of a game's page with the tabs that stay, and a switch for each feature: OptiScaler, ReShade &amp; Mods, Achievements, Smart HDR, Cloud saves, PCGamingWiki, Notes &amp; shortcuts.">
+      <img src="assets/shots/features.webp?v=15" width="991" height="1038" loading="lazy" alt="Choose what you need: five starting points (Everything, No achievements, OptiScaler + ReShade, Only OptiScaler, Just a launcher), a preview of a game's page with the tabs that stay, and a switch for each feature: OptiScaler, Mods, Ultra+, Achievements, Smart HDR, Cloud saves, PCGamingWiki, Notes &amp; shortcuts.">
       <figcaption>Choose what you need, at the first start or in Settings → Features.</figcaption>
     </figure>
   </div>
@@ -338,6 +360,6 @@
   </div>
 </footer>
 
-<script src="assets/site.js"></script>
+<script src="assets/site.js?v=20"></script>
 </body>
 </html>

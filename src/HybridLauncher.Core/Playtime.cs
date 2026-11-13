@@ -31,7 +31,11 @@ public static class Playtime
         {
             var stats = new PlayStats(s.Minutes, s.LastPlayed > 0 ? DateTimeOffset.FromUnixTimeSeconds(s.LastPlayed).LocalDateTime : null, "Steam");
             // Hybrid Launcher's record when it knows more (hours from another store's copy of the game, or Steam's count lost).
-            return own.Minutes > stats.Minutes ? own : stats;
+            var best = own.Minutes > stats.Minutes ? own : stats;
+            // Last played: the newer of the two. Steam writes localconfig.vdf late (often only when it closes), so a session
+            // just ended is only known here (1.4.0-rc.20: the Library's Last played did not move after a Steam game).
+            var last = Max(own.LastPlayed, stats.LastPlayed);
+            return last == best.LastPlayed ? best : best with { LastPlayed = last };
         }
         return own;
     }

@@ -11,9 +11,17 @@ public sealed record OptiRelease(OptiChannel Channel, string Tag, string Title, 
     public string PageUrl { get; init; } = "";
     /// <summary>For a fork's release: its repository ("owner/name").</summary>
     public string? Repo { get; init; }
+    /// <summary>
+    /// A fork's optional downloads beside the build (janblade's F5: the vendor-neutral DLSS 5 forwarder, a newer F5Low): put
+    /// in with the build when the install asks for them (<see cref="InstallRequest.Addons"/>).
+    /// </summary>
+    public IReadOnlyList<OptiAddon> Addons { get; init; } = [];
 
     public string Display => $"{Tag}  ·  {Published.ToLocalTime():yyyy-MM-dd}";
 }
+
+/// <summary>An optional archive published beside a fork's build ("Optional-Vendor-Neutral-DLSS5-Forwarder.zip").</summary>
+public sealed record OptiAddon(string Name, string Url, long Size, string? Sha256);
 
 /// <summary>Reads OptiScaler releases from GitHub (stable: optiscaler/OptiScaler, nightly: optiscaler/OptiScaler-nightly).</summary>
 public static class OptiReleases
@@ -45,7 +53,8 @@ public static class OptiReleases
         // GitHub names are case-insensitive: one cache (and one request) per fork, however its name was written. The update
         // checks ask with the lower-case key, the OptiScaler tab with the name as listed: both used to fetch it apart.
         var cache = channel == OptiChannel.Fork ? $"releases-fork-{Safe(repo).ToLowerInvariant()}.json" : $"releases-{channel.ToString().ToLowerInvariant()}.json";
-        var json = await Http.GetCachedAsync(url, cache, TimeSpan.FromMinutes(30), force, "application/vnd.github+json", ct);
+        // Read and parsed off the UI thread (2.0.0-rc.9): thirty releases with their notes held it 20-40 ms on a game switch.
+        var json = await Http.GetCachedAsync(url, cache, TimeSpan.FromMinutes(30), force, "application/vnd.github+json", ct).ConfigureAwait(false);
         if (json is null) throw new InvalidOperationException(Http.GitHubLimitedUntil is { } until
             ? L.F("GitHub's limit of requests without sign-in is used up until {0:HH:mm}, and these releases are not cached yet.", until.ToLocalTime())
             : L.T("Could not reach GitHub to list OptiScaler releases (and nothing is cached yet)."));
@@ -74,12 +83,19 @@ public static class OptiReleases
             string? sha = null;
             if (a.TryGetProperty("digest", out var d) && d.GetString() is { } digest && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
                 sha = digest[7..].ToLowerInvariant();
+            // The optional ones (not the troubleshooting notes, sources or symbols): offered by what they are for.
+            var addons = archives.Where(e => e.GetProperty("name").GetString() is { } f && !f.Equals(name, StringComparison.OrdinalIgnoreCase)
+                    && (f.Contains("optional", StringComparison.OrdinalIgnoreCase) || f.Contains("forwarder", StringComparison.OrdinalIgnoreCase)))
+                .Select(e => new OptiAddon(e.GetProperty("name").GetString()!, e.GetProperty("browser_download_url").GetString()!, e.GetProperty("size").GetInt64(),
+                    e.TryGetProperty("digest", out var dg) && dg.GetString() is { } ds && ds.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ? ds[7..].ToLowerInvariant() : null))
+                .ToList();
             list.Add(new OptiRelease(channel, tag, title, published, name,
                 a.GetProperty("browser_download_url").GetString()!, a.GetProperty("size").GetInt64(), sha)
             {
                 Notes = r.TryGetProperty("body", out var body) ? (body.GetString() ?? "").Replace("﻿", "") : "",
                 PageUrl = r.TryGetProperty("html_url", out var page) ? page.GetString() ?? "" : "",
                 Repo = channel == OptiChannel.Fork ? repo : null,
+                Addons = addons,
             });
         }
         var sorted = list.OrderByDescending(r => r.Published).ToList();

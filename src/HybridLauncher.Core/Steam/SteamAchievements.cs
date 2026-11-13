@@ -20,6 +20,13 @@ public sealed class Achievement
 
     /// <summary>Share of all Steam players who have it (0..100), when Steam's public stats are reachable.</summary>
     public double? GlobalPercent { get; set; }
+
+    /// <summary>Points the store gives for it (Xbox gamerscore).</summary>
+    public int? Points { get; init; }
+
+    /// <summary>How far along a locked achievement with steps is (both set, or neither): 3 of 10, 40 of 100 percent.</summary>
+    public double? ProgressNow { get; set; }
+    public double? ProgressMax { get; set; }
 }
 
 public sealed record AchievementSet(string AppId, IReadOnlyList<Achievement> Items)
@@ -148,18 +155,22 @@ public static class SteamAchievements
     /// </summary>
     public static AchievementSet? ReadFor(Game game) => game switch
     {
-        { Store: GameStore.Steam, SteamAppId: { } id } => Read(id),
-        { EmulatorAppId: { } emu, EmulatorSettingsDir: { } dir } when SettingsStore.Current.ReadSteamEmulator =>
-            SteamEmulator.ReadAchievements(emu, dir) is { Total: > 0 } set ? set : null,
+        { Store: GameStore.Steam, SteamAppId: { } id } => SettingsStore.Current.ReadSteamAchievements ? Read(id) : null,
+        { EmulatorAppId: { } emu } when SettingsStore.Current.ReadSteamEmulator =>
+            Achievements.LocalAchievements.Read(emu, game.EmulatorSettingsDir) is { Total: > 0 } set ? set : null,
+        _ when Achievements.XboxAchievements.Applies(game) => Achievements.XboxAchievements.ReadCache(game)?.Set,
         _ => null,
     };
 
     /// <summary><see cref="ReadFor"/>, plus Steam's global percentages when online.</summary>
     public static async Task<AchievementSet?> LoadForAsync(Game game, CancellationToken ct = default)
     {
-        if (game is { Store: GameStore.Steam, SteamAppId: { } id }) return await LoadAsync(id, ct);
+        if (game is { Store: GameStore.Steam, SteamAppId: { } id }) return SettingsStore.Current.ReadSteamAchievements ? await LoadAsync(id, ct) : null;
+        if (Achievements.XboxAchievements.Applies(game)) return await Achievements.XboxAchievements.LoadAsync(game, ct);
         if (Accounts.GogAchievements.ProductId(game) is { } gogId && await Accounts.GogAchievements.ReadAsync(gogId, ct) is { } gogSet) return gogSet;
-        var set = await Task.Run(() => ReadFor(game), ct);
+        var set = game is { EmulatorAppId: { } emu } && SettingsStore.Current.ReadSteamEmulator
+            ? await Achievements.LocalAchievements.LoadAsync(emu, game.EmulatorSettingsDir, ct)
+            : await Task.Run(() => ReadFor(game), ct);
         if (set is null) return null;
         try
         {
@@ -174,7 +185,10 @@ public static class SteamAchievements
     /// <summary>The game's achievements, unlocked state from the user stats file, plus global percentages when online.</summary>
     public static async Task<AchievementSet?> LoadAsync(string appId, CancellationToken ct = default)
     {
-        var set = await Task.Run(() => Read(appId), ct);
+        // Steam caches a game's achievements on this PC only once its own client has loaded them (2.0.0-rc.14: Cyberpunk 2077
+        // and others showed none): without that file, the account's public achievements page is read instead.
+        // All of it on a worker: the page's download continues where it was awaited, and its parse must not land on the UI thread.
+        var set = await Task.Run(async () => HasSchema(appId) ? Read(appId) : await CommunityAsync(appId, ct).ConfigureAwait(false) ?? Read(appId), ct);
         if (set is null || set.Items.Count == 0) return set;
         try
         {
@@ -186,11 +200,14 @@ public static class SteamAchievements
         return set;
     }
 
-    /// <summary>Schema + unlocked state, no network. Null when Steam has no schema for the game on this PC.</summary>
+    /// <summary>
+    /// Schema + unlocked state, no network. Without Steam's schema on this PC, the achievements last read from the account's
+    /// community page (<see cref="CommunityAsync"/>), if any; null otherwise.
+    /// </summary>
     public static AchievementSet? Read(string appId)
     {
         var schema = Schema(appId);
-        if (schema is null) return null;
+        if (schema is null) return ReadCommunity(appId);
         var unlocked = ReadUnlocked(appId);
         var items = schema.Select(s => new Achievement
         {
@@ -290,6 +307,83 @@ public static class SteamAchievements
         if (node is null) return null;
         if (node.Value is string s) return s;
         return node.Str("english") ?? node.Children.FirstOrDefault(c => c.Value is string && c.Name != "token")?.Value as string;
+    }
+
+    // ---------- the account's community page (games Steam has not cached here) ----------
+
+    static string CommunityCacheName(string appId) => Path.Combine("steam", $"achievements-{appId}.xml");
+
+    /// <summary>
+    /// The signed-in Steam account's achievements for the game from its community page
+    /// (steamcommunity.com/profiles/&lt;id&gt;/stats/&lt;app&gt;/achievements/?xml=1): names, descriptions, icons, unlocks and their
+    /// dates. Works when the profile's game details are public; a private profile gives null (logged once). Cached ten minutes.
+    /// </summary>
+    public static async Task<AchievementSet?> CommunityAsync(string appId, CancellationToken ct)
+    {
+        if (CurrentAccountId() is not { } account || !long.TryParse(account, out var id32)) return null;
+        try
+        {
+            var url = $"https://steamcommunity.com/profiles/{SteamId64Base + id32}/stats/{appId}/achievements/?xml=1&l=english";
+            var xml = await Http.GetCachedAsync(url, CommunityCacheName(appId), TimeSpan.FromMinutes(10), ct: ct);
+            return xml is null ? null : ParseCommunity(appId, xml);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn($"Steam achievements of {appId} from the community page: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>The community page read last for the game, no network (null when never read or not usable).</summary>
+    public static AchievementSet? ReadCommunity(string appId)
+    {
+        var file = Path.Combine(AppInfo.CacheDir, CommunityCacheName(appId));
+        try { return File.Exists(file) ? ParseCommunity(appId, File.ReadAllText(file), quiet: true) : null; }
+        catch (Exception ex) { Log.Warn($"{file}: {ex.Message}"); return null; }
+    }
+
+    // Read from several workers at once (one per game): added to under a lock.
+    static readonly HashSet<string> CommunityWarned = [];
+    static bool FirstWarning(string appId) { lock (CommunityWarned) return CommunityWarned.Add(appId); }
+
+    public static AchievementSet? ParseCommunity(string appId, string xml, bool quiet = false)
+    {
+        System.Xml.Linq.XDocument doc;
+        try { doc = System.Xml.Linq.XDocument.Parse(xml); }
+        catch (System.Xml.XmlException)
+        {
+            // An HTML page instead of the XML (Steam's error or sign-in page).
+            if (!quiet && FirstWarning(appId)) Log.Warn($"Steam achievements of {appId}: the community page is not readable");
+            return null;
+        }
+        var root = doc.Root;
+        if (root is null) return null;
+        if (root.Element("error")?.Value is { Length: > 0 } error)
+        {
+            if (!quiet && FirstWarning(appId)) Log.Info($"Steam achievements of {appId}: {error.Trim()} (the profile's game details must be public)");
+            return null;
+        }
+        var items = new List<Achievement>();
+        foreach (var a in root.Element("achievements")?.Elements("achievement") ?? [])
+        {
+            var api = a.Element("apiname")?.Value?.Trim();
+            if (string.IsNullOrEmpty(api)) continue;
+            bool unlocked = a.Attribute("closed")?.Value == "1";
+            DateTime? at = long.TryParse(a.Element("unlockTimestamp")?.Value, out var unix) && unix > 0 ? DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime : null;
+            items.Add(new Achievement
+            {
+                Key = api,
+                ApiName = api,
+                Name = a.Element("name")?.Value?.Trim() is { Length: > 0 } name ? name : api,
+                Description = a.Element("description")?.Value?.Trim() ?? "",
+                // The page's "closed" icon is the one of an unlocked achievement, "open" the grey one.
+                IconUrl = a.Element("iconClosed")?.Value?.Trim(),
+                IconGrayUrl = a.Element("iconOpen")?.Value?.Trim(),
+                Unlocked = unlocked,
+                UnlockedAt = unlocked ? at : null,
+            });
+        }
+        return items.Count == 0 ? null : new AchievementSet(appId, items);
     }
 
     static string? Icon(string appId, string? file) => string.IsNullOrWhiteSpace(file) ? null : $"{IconBase}{appId}/{file}";

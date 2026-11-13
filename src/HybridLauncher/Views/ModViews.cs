@@ -1,4 +1,4 @@
-using HybridLauncher.Core;
+﻿using HybridLauncher.Core;
 using HybridLauncher.Core.Mods;
 using HybridLauncher.Core.Opti;
 using HybridLauncher.Helpers;
@@ -21,11 +21,19 @@ public sealed class ModContext
     public required GameData Data { get; init; }
     /// <summary>The folder mods go in (next to the game exe), or null when no exe is known.</summary>
     public required Func<string?> TargetDir { get; init; }
-    public required CancellationToken Token { get; init; }
+    /// <summary>
+    /// The page's token now (2.0.0-rc.12): read each time, never kept. A game page shown again after another page (Resume) has a
+    /// new token while its mod sections stay; one kept at creation was the cancelled one, so every later read or install of the
+    /// Auto tab, ReShade, RenoDX, Luma, DXVK and Ultra+ stopped at once (the Auto tab never followed an uninstall).
+    /// </summary>
+    public required Func<CancellationToken> TokenOf { get; init; }
+    public CancellationToken Token => TokenOf();
     /// <summary>OptiScaler.ini or the folder changed: the page redraws its OptiScaler parts.</summary>
     public required Action OptiChanged { get; init; }
     public required Action<string> ShowTab { get; init; }
     public required Action ReinstallOpti { get; init; }
+    /// <summary>The Steam app id the page found for the game (its own, or a match by name), for lookups by id.</summary>
+    public Func<string?> SteamAppId { get; init; } = () => null;
 
     public XamlRoot? Root { get; set; }
 
@@ -33,7 +41,8 @@ public sealed class ModContext
     {
         var dialog = new ContentDialog
         {
-            XamlRoot = owner.XamlRoot,
+            // A section made for the Auto tab's bin may sit in a host that was never shown: the window's root then.
+            XamlRoot = owner.XamlRoot ?? Root ?? App.Window?.Content?.XamlRoot,
             Title = title,
             Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primary,
@@ -48,6 +57,34 @@ public sealed class ModContext
 /// <summary>Small pieces shared by the mod tabs.</summary>
 static class ModUi
 {
+    /// <summary>
+    /// A mod section with nothing for this game (no mod in its list matches, none installed) shrinks to one line (rc.5): its
+    /// icon, what it is, why it is folded, and a button that shows the whole section (search, manual install, tips) anyway.
+    /// Keeps the ReShade &amp; Mods tab short: the sections that can do something for the game are the ones that take room.
+    /// </summary>
+    public static void Compact(UserControl view, FrameworkElement full, string glyph, Color tint, string title, string why, string listUrl)
+    {
+        var grid = new Grid { ColumnSpacing = 14 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(Ui.Badge(glyph, tint, 34));
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = title, FontSize = 16, FontWeight = FontWeights.SemiBold });
+        text.Children.Add(new TextBlock { Text = why, Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        buttons.Children.Add(Ui.LinkButton(L.T("Mod list"), "\uE8A7", () => Ui.Open(listUrl)));
+        var show = new Button { Content = L.T("Show anyway"), Padding = new Thickness(12, 5, 12, 6) };
+        ToolTipService.SetToolTip(show, L.T("Search the whole list or install a downloaded file"));
+        show.Click += (_, _) => view.Content = full;
+        buttons.Children.Add(show);
+        Grid.SetColumn(buttons, 2);
+        grid.Children.Add(buttons);
+        view.Content = Ui.Card(grid, 14);
+    }
+
     /// <summary>
     /// Puts an X in the top right corner of a mod card: a click takes the card out of the list (<paramref name="removed"/> says
     /// what happens next: remembered for the game, or just gone).
@@ -127,9 +164,9 @@ static class ModUi
         {
             open = !open;
             Motion.Turn(chevron, open);
-            if (open) Motion.Open(content); else Motion.Close(content);
+            Motion.Fold(content, open);
             if (open) AppState.Settings.CollapsedCards.Remove(key); else AppState.Settings.CollapsedCards.Add(key);
-            SettingsStore.Save();
+            hit.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, SettingsStore.Save);
         };
         return panel;
     }
@@ -644,7 +681,7 @@ public sealed partial class ReShadeView : UserControl
         timer.Start();
     }
 
-    async Task RemoveAsync()
+    internal async Task RemoveAsync()
     {
         if (GameJobs.InTheWay(_ctx.Game.Id, _ctx.Game.Title)) return;
         var dir = _ctx.TargetDir();
@@ -849,6 +886,10 @@ public sealed partial class RenoDxView : UserControl
                 + " " + L.T("Search the list above if it goes by another name.")));
         _hits = hits.Take(5).ToList();
         FillMatches();
+        var dir = _ctx.TargetDir();
+        bool installedAny = dir is not null && await Task.Run(() => RenoDx.Installed(dir).Count > 0);
+        if (hits.Count == 0 && !installedAny && Content is FrameworkElement full)
+            ModUi.Compact(this, full, "\uE706", Ui.Gold, L.T("RenoDX"), L.F("No RenoDX mod is listed for {0} yet.", _ctx.Game.Title), RenoDx.WikiPage);
     }
 
     List<RenoDxMatch> _hits = [];
@@ -880,6 +921,14 @@ public sealed partial class RenoDxView : UserControl
         if (_hits.Any(h => h.Mod.Name == name)) FillMatches();
     });
 
+    /// <summary>A generic RenoDX or Luma mod (one for every game of an engine), flagged on its card (2.0.0-rc.18).</summary>
+    internal static FrameworkElement GenericPill(string engine)
+    {
+        var pill = Ui.Pill(L.T("Generic"), Ui.Tone.Partial);
+        ToolTipService.SetToolTip(pill, L.F("Made for every {0} game, not for this one: it may not work here or may not be needed.", Core.Mods.AutoSetup.EngineName(engine)));
+        return pill;
+    }
+
     Border ModCard(RenoDxMatch hit)
     {
         var mod = hit.Mod;
@@ -889,6 +938,7 @@ public sealed partial class RenoDxView : UserControl
         var title = new WrapPanel(8, []);
         title.Children.Add(new TextBlock { Text = mod.Name, FontWeight = FontWeights.SemiBold, FontSize = 16, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
         title.Children.Add(Ui.Pill(mod.Working ? L.T("Working") : L.T("In progress"), mod.Working ? Ui.Tone.Good : Ui.Tone.Partial));
+        if (mod.Engine is { } engine) title.Children.Add(GenericPill(engine));
         panel.Children.Add(title);
         panel.Children.Add(Ui.Muted(hit.Reason + (mod.Maintainer.Length > 0 ? "  ·  " + L.F("by {0}", mod.Maintainer) : "")));
         if (mod.Note is { Length: > 0 } note) panel.Children.Add(new TextBlock { Text = note, TextWrapping = TextWrapping.Wrap, FontSize = 13 });
@@ -1039,6 +1089,30 @@ public sealed partial class RenoDxView : UserControl
             grid.Children.Add(bin);
             _installed.Children.Add(new Border { Style = Ui.Style("RowStyle"), Child = grid });
         }
+    }
+
+    /// <summary>Removes every RenoDX add-on from the game folder, after asking (the Mods tab's Installed table).</summary>
+    internal async Task RemoveAllAsync()
+    {
+        if (_ctx.TargetDir() is not { } dir || RenoDx.Installed(dir) is not { Count: > 0 } files) { Refresh(); return; }
+        if (OptiInstaller.RunningGameProcess(dir) is { } running)
+        {
+            App.Window?.ShowError(L.T("Close the game first"), L.F("{0} is running from this folder.", running));
+            return;
+        }
+        var names = string.Join(", ", files.Select(Path.GetFileName));
+        if (!await _ctx.ConfirmAsync(this, L.T("Remove RenoDX from this game?"), L.F("Deletes {0} from\n{1}", names, dir), L.T("Remove"))) return;
+        Ui.Safe(() =>
+        {
+            foreach (var f in files)
+            {
+                File.Delete(f);
+                _ctx.Settings.RenoDxFiles.Remove(Path.GetFileName(f));
+            }
+            SettingsStore.Save();
+        });
+        Refresh();
+        _ctx.OptiChanged();
     }
 
     bool CanInstall(out string dir)
@@ -1194,7 +1268,7 @@ public sealed partial class QuickAccessView : UserControl
         add.Flyout = menu;
 
         var panel = new StackPanel { Spacing = 14 };
-        panel.Children.Add(Ui.Heading("", L.T("Quick access"), add, subtitle: L.F("Your shortcuts for {0}: right-click a tile to rename, move or remove it", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0x00, 0xC2, 0xD8)));
+        panel.Children.Add(Ui.Heading("", L.T("Quick access"), add, subtitle: L.F("Your shortcuts for {0}: right-click a tile to rename, move or remove it", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0x00, 0xC2, 0xD8)));
         panel.Children.Add(_tiles);
         _suggestedPanel.Children.Add(new TextBlock { Text = L.T("SUGGESTED"), Style = Ui.Style("GroupHeader") });
         _suggestedPanel.Children.Add(_suggested);
@@ -1600,7 +1674,7 @@ public sealed partial class NotesView : UserControl
         };
 
         var panel = new StackPanel { Spacing = 16 };
-        panel.Children.Add(Ui.Heading("", L.T("Notes"), subtitle: L.F("Only for {0}, kept on this PC", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0xB9, 0xA3, 0xFF)));
+        panel.Children.Add(Ui.Heading("", L.T("Notes"), subtitle: L.F("Only for {0}, kept on this PC", ctx.Game.Title), tint: Color.FromArgb(0xFF, 0xB9, 0xA3, 0xFF)));
         panel.Children.Add(grid);
         // A card like the other tabs' (Quick access, RenoDX, ReShade).
         Content = Ui.Card(panel, 20);
@@ -1743,7 +1817,7 @@ public sealed partial class LumaView : UserControl
     {
         _ctx = ctx;
         var head = new StackPanel { Spacing = 10 };
-        head.Children.Add(Ui.Heading("", L.T("Luma: HDR and DLSS for this game"), Ui.LinkButton(L.T("Luma mod list"), "", () => Ui.Open(Luma.WikiPage)),
+        head.Children.Add(Ui.Heading("", L.T("Luma: graphics mods for this game"), Ui.LinkButton(L.T("Luma mod list"), "", () => Ui.Open(Luma.WikiPage)),
             subtitle: L.T("Per-game ReShade add-on mods for DirectX 11 games, by Pumbo and friends"), tint: Color.FromArgb(0xFF, 0xFF, 0x8A, 0x3D)));
         head.Children.Add(_state);
 
@@ -1774,7 +1848,7 @@ public sealed partial class LumaView : UserControl
         tips.Children.Add(Ui.Heading("", L.T("Good to know"), tint: Ui.Slate));
         foreach (var t in new[]
         {
-            "• Each Luma mod is made for one game (or one engine): it rewrites the game's post-processing for real HDR, and many add DLSS / FSR.",
+            "• Each Luma mod is made for one game (or, the generic ones, for one engine): it reworks the game's rendering, and what it adds depends on the mod (upscaling such as DLSS or FSR, HDR, fixes). A generic mod may not work in a game, or may not be needed.",
             "• The package brings its own ReShade with add-on support: no separate ReShade install is needed.",
             "• With OptiScaler in the folder, Hybrid Launcher installs Luma's ReShade as ReShade64.dll and OptiScaler loads it (LoadReshade = true): both work together. Use one upscaler at a time: Luma's DLSS or OptiScaler's.",
             "• Turn on HDR in Windows (or Smart HDR on the launch bar). Turn off Auto HDR / RTX HDR for the game: they would tone map twice.",
@@ -1825,6 +1899,8 @@ public sealed partial class LumaView : UserControl
         _hits = hits.Take(4).ToList();
         FillMatches();
         Refresh();
+        if (hits.Count == 0 && _ctx.Settings.Luma is null && Content is FrameworkElement full)
+            ModUi.Compact(this, full, "\uE793", Color.FromArgb(0xFF, 0xFF, 0x8A, 0x3D), L.T("Luma"), L.F("No Luma mod is listed for {0} yet.", _ctx.Game.Title), Luma.WikiPage);
     }
 
     List<LumaMatch> _hits = [];
@@ -1906,6 +1982,7 @@ public sealed partial class LumaView : UserControl
         title.Children.Add(Ui.Pill(mod.Status switch { LumaStatus.Working => L.T("Working"), LumaStatus.InProgress => L.T("In progress"), _ => L.T("Planned") },
             mod.Status switch { LumaStatus.Working => Ui.Tone.Good, LumaStatus.InProgress => Ui.Tone.Partial, _ => Ui.Tone.Unknown }));
         if (mod.MoreComing) title.Children.Add(Ui.Chip(L.T("more coming")));
+        if (mod.Engine is { } engine) title.Children.Add(RenoDxView.GenericPill(engine));
         panel.Children.Add(title);
         panel.Children.Add(Ui.Muted(hit.Reason + (mod.Author.Length > 0 ? "  ·  " + L.F("by {0}", mod.Author) : "")));
         if (mod.Notes is { Length: > 0 } notes) panel.Children.Add(Ui.Callout("", notes, Ui.Tone.Partial));
@@ -2032,7 +2109,7 @@ public sealed partial class LumaView : UserControl
         }
     }
 
-    async Task UninstallAsync()
+    internal async Task UninstallAsync()
     {
         var state = _ctx.Settings.Luma;
         if (state is null || _busy || !CanInstall(out var dir)) return;

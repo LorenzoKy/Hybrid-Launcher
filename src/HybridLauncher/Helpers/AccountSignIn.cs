@@ -296,6 +296,26 @@ static class AccountSignIn
 
     // ---------- Epic and GOG: their own sign-in page, in its own window ----------
 
+    /// <summary>A Microsoft account for Xbox achievements (Settings → Achievements); returns the gamertag, or null when cancelled.</summary>
+    public static async Task<string?> XboxAsync(ElementTheme theme)
+    {
+        try
+        {
+            var tag = await WebAsync(theme, "Xbox", HybridLauncher.Core.Achievements.XboxAccount.LoginUrl,
+                web => Task.FromResult(HybridLauncher.Core.Achievements.XboxAccount.CodeFromUrl(web.Source)),
+                HybridLauncher.Core.Achievements.XboxAccount.SignInAsync);
+            if (tag is not null) Log.Info("Signed in to Xbox");
+            return tag;
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex)
+        {
+            Log.Warn($"Xbox sign-in: {ex.Message}");
+            App.Window?.ShowError(L.F("Could not sign in to {0}", "Xbox"), ex.Message, ex);
+            return null;
+        }
+    }
+
     static async Task<string?> WebAsync(ElementTheme theme, string label, string url,
         Func<CoreWebView2, Task<string?>> codeOf, Func<string, CancellationToken, Task<string>> signIn)
     {

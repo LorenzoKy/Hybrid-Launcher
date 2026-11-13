@@ -40,6 +40,14 @@ public static class SavedVersions
         Log.Info($"Deleted saved OptiScaler version {v.ChannelLabel} {v.Name}");
     }
 
+    /// <summary>
+    /// Nightly builds pile up (one a day): the ones older than the newest <paramref name="keep"/> that no game's install
+    /// came from. Deleting them never breaks a game (installs don't point back at the saved copy).
+    /// </summary>
+    public static List<SavedVersion> OldNightlies(IEnumerable<SavedVersion> list, AppSettings settings, int keep = 3) =>
+        list.Where(v => v.Channel == OptiChannel.Nightly).OrderByDescending(v => v.Date).Skip(keep)
+            .Where(v => UsedBy(v, settings, _ => null).Count == 0).ToList();
+
     /// <summary>The games (names) whose current OptiScaler install came from this version.</summary>
     public static List<string> UsedBy(SavedVersion v, AppSettings settings, Func<string, string?> gameName) =>
         settings.Games.Where(g => g.Value.Install is { } m && m.Channel == v.Channel

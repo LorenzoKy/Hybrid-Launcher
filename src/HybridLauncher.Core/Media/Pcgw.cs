@@ -74,6 +74,17 @@ public static partial class Pcgw
     static string Key(string name, string? steamAppId) => steamAppId is not null ? $"app-{steamAppId}" : $"name-{Hash(name)}";
     static string Dir => Path.Combine(AppInfo.CacheDir, "pcgw");
 
+    /// <summary>
+    /// A cache file read so that a page being saved at the same moment can still replace it (2.0.0-rc.6: two pages looking up
+    /// the same game at once failed with "The process cannot access the file").
+    /// </summary>
+    static string ReadShared(string file)
+    {
+        using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
     /// <summary>The page's title and wikitext, or null when the wiki has no page for the game.</summary>
     public static async Task<(string Title, string Wikitext)?> GetPageAsync(string name, string? steamAppId, CancellationToken ct = default)
     {
@@ -158,7 +169,7 @@ public static partial class Pcgw
 
         static (string, string) Read(string file)
         {
-            var text = File.ReadAllText(file);
+            var text = ReadShared(file);
             var nl = text.IndexOf('\n');
             return nl < 0 ? (text, "") : (text[..nl], text[(nl + 1)..]);
         }
@@ -214,7 +225,7 @@ public static partial class Pcgw
         try
         {
             if (File.Exists(file) && DateTime.UtcNow - File.GetLastWriteTimeUtc(file) < MaxAge)
-                return (await File.ReadAllTextAsync(file, ct)).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+                return ReadShared(file).Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
             var page = await GetPageAsync(game.Name, steamAppId, ct);
             var tags = page is null ? [] : UpscalerTags(Field(page.Value.Wikitext, "upscaling tech"), GraphicsApi.ParseWikitext(page.Value.Wikitext))
                 .Concat(FrameGenTags(SplitList(Field(page.Value.Wikitext, "framegen tech")))).Distinct().ToList();
@@ -461,6 +472,9 @@ public static partial class Pcgw
             GameStore.Xbox => ["Microsoft Store", "Xbox", "Windows"],
             GameStore.Epic => ["Epic Games Store", "Epic Games Launcher", "Windows"],
             GameStore.Gog => ["GOG.com", "Windows"],
+            GameStore.Ubisoft => ["Ubisoft Connect", "Uplay", "Windows"],
+            GameStore.Ea => ["EA app", "Origin", "Windows"],
+            GameStore.Rockstar => ["Rockstar Games Launcher", "Windows"],
             _ => ["Windows"],
         };
         var ordered = paths.OrderBy(p => Array.FindIndex(preferred, x => p.Platform.Equals(x, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : 99);

@@ -1,4 +1,4 @@
-using Microsoft.Graphics.Canvas;
+﻿using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
@@ -61,9 +61,17 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
         return Color.FromArgb(Math.Max(Tint.A, (byte)0xEB), Mix(Tint.R, 0x14), Mix(Tint.G, 0x15), Mix(Tint.B, 0x18));
     }
 
+    /// <summary>
+    /// Flat when hardware acceleration is off, or when effects are paused for a game and nobody sees the window (hidden or in
+    /// the background). Paused but in front (a game starting, the window opened over it) it stays glass: the flat colour is
+    /// nearly opaque, and the launch bar and tab bar turned black under the user's eyes (1.4.0-rc.20). A few blurred
+    /// surfaces of a window in front cost the game nothing it would notice.
+    /// </summary>
+    static bool WantFlat() => !HybridLauncher.AppState.Settings.HardwareAcceleration || (!MediaPolicy.Effects && MediaPolicy.Quiet);
+
     void OnPolicyChanged()
     {
-        if (CompositionBrush is null || _flat == !MediaPolicy.Effects) return;
+        if (CompositionBrush is null || _flat == WantFlat()) return;
         CompositionBrush.Dispose();
         CompositionBrush = null;
         OnConnected();
@@ -77,7 +85,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
         try
         {
             var compositor = CompositionTarget.GetCompositorForCurrentThread();
-            _flat = !MediaPolicy.Effects;
+            _flat = WantFlat();
             if (_flat)
             {
                 CompositionBrush = compositor.CreateColorBrush(FlatColor());

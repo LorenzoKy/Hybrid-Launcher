@@ -1,7 +1,7 @@
 namespace HybridLauncher.Core;
 
 /// <summary>
-/// The app's big features as the first-start picker shows them (OptiScaler, ReShade &amp; Mods, achievements...), each one the
+/// The app's big features as the first-start picker shows them (OptiScaler, Mods, achievements...), each one the
 /// game page tabs and page parts it stands for. Turning a feature off only hides it (tabs, launch bar items, pop-ups): nothing
 /// is uninstalled, and Settings turns it back on. The presets are ready-made sets of them.
 /// </summary>
@@ -17,7 +17,7 @@ public static class Features
     public static readonly Feature[] All =
     [
         new(Opti, "OptiScaler", "Swap DLSS, FSR and XeSS in one click, with frame generation and a quick panel.", "", 0xFF9A7CFF, ["opti"], [], ["optiwiki"]),
-        new(Mods, "ReShade & Mods", "ReShade effects, plus RenoDX and Luma for HDR.", "", 0xFFF07F2A, ["mods"], []),
+        new(Mods, "Mods", "Every mod in the game folder, plus ReShade, RenoDX and Luma for HDR, DLSS 5 and DXVK.", "", 0xFFF07F2A, ["mods"], []),
         new(UltraPlus, "Ultra+", "Better lighting, shadows and ray tracing for Unreal Engine games, with updates and presets.", "", 0xFF4FD6B0, ["ultra"], []),
         new(Achievements, "Achievements", "Trophies on the game page, and pop-ups while you play.", "trophy", 0xFFF2B82E, ["ach"], [PageParts.Achievements]),
         new(Hdr, "Smart HDR", "Windows HDR turns on with the game and off when it closes.", "", 0xFFFFC857, [], [PageParts.Hdr]),
@@ -35,7 +35,7 @@ public static class Features
             [.. All.Select(f => f.Id)], [Opti, Mods, Achievements]),
         new("no-ach", "No achievements", "Everything except trophies and achievement pop-ups.",
             [.. All.Select(f => f.Id).Where(id => id != Achievements)], [Achievements], CrossedOut: true),
-        new("opti-reshade", "OptiScaler + ReShade", "The two big mod tools, nothing else on the game page.",
+        new("opti-reshade", "OptiScaler + Mods", "The OptiScaler and Mods tabs, nothing else on the game page.",
             [Opti, Mods], [Opti, Mods]),
         new("opti", "Only OptiScaler", "Upscaling and frame generation, the rest stays out of the way.",
             [Opti], [Opti]),

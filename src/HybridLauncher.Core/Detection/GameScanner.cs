@@ -13,6 +13,10 @@ public static class GameScanner
         if (settings.ScanEpic) sources.Add(("Epic", EpicScanner.Scan));
         if (settings.ScanGog) sources.Add(("GOG", GogScanner.Scan));
         if (settings.ScanXbox) sources.Add(("Xbox", XboxScanner.Scan));
+        // After the others: Ubisoft and Rockstar also record copies bought on Steam or Epic, which keep their own launcher (same folder).
+        if (settings.ScanUbisoft) sources.Add(("Ubisoft Connect", UbisoftScanner.Scan));
+        if (settings.ScanEa) sources.Add(("EA app", EaScanner.Scan));
+        if (settings.ScanRockstar) sources.Add(("Rockstar Games Launcher", RockstarScanner.Scan));
         var libraries = settings.GameLibraries.ToList();
         var customs = settings.CustomGames.ToList();
         var directs = settings.DirectInstalls.ToList();
@@ -50,6 +54,8 @@ public static class GameScanner
                 g.EmulatorSettingsDir = emu;
                 g.EmulatorAppId = Steam.SteamEmulator.AppId(emu);
             }
+            // Other layers that keep achievements in local files name the app id in a file of their own beside the exe.
+            if (g.Store != GameStore.Steam && g.EmulatorAppId is null) g.EmulatorAppId = Achievements.LocalAchievements.DetectAppId(g.InstallDir, g.MainExe);
             return ValueTask.CompletedTask;
         });
 

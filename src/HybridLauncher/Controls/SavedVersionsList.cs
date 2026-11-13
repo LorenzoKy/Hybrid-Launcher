@@ -43,6 +43,8 @@ public sealed partial class SavedVersionsList : UserControl
             _summary.Text = list.Count == 0
                 ? L.T("None yet. Versions are saved here when you install them, and custom builds when you import them.")
                 : L.N(list.Count, "{0} version", "{0} versions") + "  ·  " + L.F("{0} in total. Deleting one never breaks a game: installs don't depend on it.", DiskUsage.Format(list.Sum(v => v.Bytes)));
+            var old = SavedVersions.OldNightlies(list, AppState.Settings);
+            if (old.Count > 0) _rows.Children.Add(CleanUpRow(old));
             foreach (var v in list) _rows.Children.Add(Row(v));
         }
         catch (OperationCanceledException) { }
@@ -51,6 +53,47 @@ public sealed partial class SavedVersionsList : UserControl
             Log.Warn($"Saved versions: {ex.Message}");
             _summary.Text = L.T("Could not read the saved versions.");
         }
+    }
+
+    /// <summary>One click (and a second to confirm) removes the old nightly builds no game uses; the newest three stay.</summary>
+    FrameworkElement CleanUpRow(List<SavedVersion> old)
+    {
+        long bytes = old.Sum(v => v.Bytes);
+        var text = new TextBlock
+        {
+            Text = L.F("{0} older nightly builds that no game uses take {1}. The newest three stay.", old.Count, DiskUsage.Format(bytes)),
+            Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowDescription"],
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var button = new Button { Content = L.T("Remove them"), VerticalAlignment = VerticalAlignment.Center };
+        bool armed = false;
+        button.Click += async (_, _) =>
+        {
+            if (!armed)
+            {
+                armed = true;
+                button.Content = L.F("Remove {0} ({1})", old.Count, DiskUsage.Format(bytes));
+                button.Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["AccentButtonStyle"];
+                return;
+            }
+            button.IsEnabled = false;
+            await Task.Run(() =>
+            {
+                foreach (var v in old)
+                    try { SavedVersions.Delete(v); }
+                    catch (Exception ex) { Log.Warn($"Saved versions: {v.Name}: {ex.Message}"); }
+            });
+            Changed?.Invoke();
+            await ReloadAsync();
+        };
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6), Background = (Brush)HybridLauncher.Helpers.ThemeRes.Current["LayerOnAcrylicFillColorDefaultBrush"] };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(text);
+        Grid.SetColumn(button, 1);
+        grid.Children.Add(button);
+        return grid;
     }
 
     /// <summary>The key of a version's own name: its folder's name, so it survives moving the builds folder.</summary>

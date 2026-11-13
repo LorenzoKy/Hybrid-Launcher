@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A modern game launcher that properly manages popular mods, built with customization and tons of quality of life options in mind.</b><br />
-  Steam · Epic Games · GOG · Xbox / Game Pass · your own folders
+  Steam · Epic Games · GOG · Xbox / Game Pass · Ubisoft Connect · EA app · Rockstar Games Launcher · your own folders
 </p>
 
 <p align="center">
@@ -35,8 +35,8 @@
 ## What is Hybrid Launcher
 
 A free and open source Windows 11 app that **finds the games on your PC**, gives each one **its own page**, and installs the
-mods that make them run and look better: **OptiScaler**, **ReShade**, **RenoDX** and **Luma**. A launcher and a mod tool
-in one window, for several stores at once.
+mods that make them run and look better: **OptiScaler** first of all, then **ReShade**, **RenoDX**, **Luma**, **DXVK** and,
+in early and experimental form, **DLSS 5**. A launcher and a mod tool in one window, for several stores at once.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/f3d5303a-d989-4724-8d4f-76170061e6a7" width="100%" alt="A game's page in Hybrid Launcher: the game list on the left, the banner, the launch bar with Play, HDR and Cloud, the tabs and the store details" />
@@ -58,10 +58,12 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
 ## Features
 
 **Your games**
-- **One library** for Steam, Epic Games, GOG, Xbox / Game Pass and your own folders: covers, play time, achievements,
-  pins, search, filters, renaming, controller support.
-- **A page per game** with Play, store details, trailer, reviews, HowLongToBeat, PCGamingWiki fixes, links and notes, and a
-  quiet summary of the mods installed in it (OptiScaler, ReShade, Ultra+… with their versions) in the banner's corner.
+- **One library** for Steam, Epic Games, GOG, Xbox / Game Pass, Ubisoft Connect, the EA app, the Rockstar Games Launcher and your own folders: covers, play time, achievements,
+  pins, search, filters, renaming, a Last played section, Play on every cover, custom covers, drag and drop, controller support.
+- **A page per game** that opens on its **Dashboard**: trailer, the newest update with its patch notes read in the app,
+  news, Steam's version history, your activity and achievements, the mods in its folder, reviews, HowLongToBeat and
+  PCGamingWiki. Every card folds, and the gear picks which cards show and their order; tabs for each mod, notes, links
+  and quick access follow.
 - **Direct downloads** from your Steam, Epic and GOG accounts, with pause, resume and updates that leave your mods in place.
 - **Cloud saves** on OneDrive, MEGA or a folder (Google Drive, a NAS, a USB drive), one or several at once, with history and conflict handling.
 
@@ -75,7 +77,25 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
 - **Ultra+** for Unreal Engine games *(experimental)*: install, update, add-ons and its settings from the game's Ultra+ tab,
   with automatic updates and notifications if you want them. It is new and tried on few games so far; *Uninstall* puts the
   folder back as it was.
-- **ReShade, RenoDX and Luma**, matched to the game where possible; removal keeps your presets.
+- **Mods tab**: one table of every mod in the game folder, its version, what loads it, whether it works and who put it
+  there, with Open and Uninstall on each line; then **ReShade, RenoDX and Luma**, matched to the game where possible
+  (removal keeps your presets).
+- **DLSS 5** *(early, experimental)*: step-by-step setup of DLSS 5 neural rendering with mochizuki0323's **DLSSNR-AMD**
+  (Radeon RX 9000, RX 7000 experimental; through OptiScaler or ReShade) and janblade's **F5 Multipass** (NVIDIA NGX, or a
+  vendor-neutral port), from NVIDIA's model file you pick once. Young community projects: expect games where it does not
+  work yet.
+- **Auto tab** *(experimental)*: reads the game (bitness, graphics API, graphics card, HDR) and proposes the mods that fit,
+  each with its build (OptiScaler's source and version, DLSS 5's method, ReShade standard or add-on, picked for you when
+  RenoDX needs it), then installs them together in the right order. Installing each mod from its own tab is still the
+  recommended way.
+- **DXVK, DXVK-gplasync and VKD3D-Proton**: Direct3D 8 to 12 run through Vulkan, with the right dlls for the game's
+  Direct3D version and bitness, async, HDR and a frame cap as switches, and the game's own files put back on uninstall.
+- **What is installed as what**: every mod file beside the game exe, which mod it is, its version and what loads it. The
+  page follows the folder, so a mod added or removed by hand shows at once.
+- **OptiScaler's file name** (dxgi.dll, winmm.dll, version.dll…) changed in place without reinstalling, and its settings
+  described in plain words.
+- **Mod check**: a warning on the game's banner when something keeps a mod from loading (a game update removed it, ReShade
+  loads twice, RenoDX without the add-on build of ReShade, DXVK without its dxgi.dll), with a button that fixes it.
 - **Backups** of every file a mod replaces, so removing it puts the game back.
 - **Smart HDR**: Windows HDR on when the game starts, off when it closes.
 - **Update notifications** in one list beside Minimize, with Windows pop-ups you choose per source (OptiScaler builds you
@@ -84,7 +104,9 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
 **Extras**
 - **Achievement pop-ups** that look like a console's or a store's (PlayStation 5, PlayStation 4, Xbox, Steam, GOG, Epic, all
   *Like* looks drawn by Hybrid Launcher) or your own: bronze, silver or gold by rarity, the game's own platinum, your own sounds
-  per tier, a preview with a real game. Steam, local and GOG achievements are read.
+  per tier, a light, dark or coloured background for the PlayStation looks, a preview with a real game. Steam, Xbox / Game
+  Pass, local and GOG achievements are read; each unlock can save a screenshot, rumble the controller and go into an
+  unlock history you can export.
 - **Local achievements**: games that keep their achievements in save files on this PC show them on the game page and
   unlock them with the same pop-ups as Steam and GOG. Cloud saves carry them along with the saves. On by default, in
   Settings → Achievements → *Sources*.
@@ -92,10 +114,14 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
   Launcher forward from a game; pressed on an achievement pop-up, it opens that achievement, as a console does.
 - **Quick access** shortcuts per game, **My PC** with your hardware and driver upscaler versions, tray mode (the window steps aside
   while a game runs and comes back when it closes), start with Windows, a welcome tour and a one-click bug report.
+- **Smooth scrolling and vsync, always on**: the mouse wheel glides instead of jumping and answers at the next frame, and
+  everything the app moves by itself (scrolling, the controller's right stick, the achievement pop-ups) moves once per
+  refresh of your display, at 60, 120, 144 Hz or more.
 - **Light on your PC**: with another window in front it rests (clips paused, Windows efficiency mode) and wakes up the moment
   you click it; games open in an instant.
 - **Search all settings** from the box beside the Settings title, and **your play time is kept** even when you reinstall or
   move a game.
+- **Interface size** from 50 to 200%, scroll bars shown or hidden, Shading on or off, and Settings' tabs as a list.
 - **Make it yours**: keep only the features you need (*Everything*, *Only OptiScaler*, *Just a launcher*…), and toggle,
   drag or hide tabs, launch bar items and colour themes, including the warm *Cozy* theme.
 

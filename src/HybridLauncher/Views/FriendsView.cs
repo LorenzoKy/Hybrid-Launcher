@@ -55,10 +55,7 @@ public sealed class FriendsView
         Root = body;
 
         // Steam's updates come in bursts on SteamKit2's thread: one redraw for each burst.
-        _redraw = _ui.CreateTimer();
-        _redraw.Interval = TimeSpan.FromMilliseconds(400);
-        _redraw.IsRepeating = false;
-        _redraw.Tick += (_, _) => _ = LoadAsync(quiet: true);
+        _redraw = HybridLauncher.Helpers.WeakTimer.Create(_ui, this, TimeSpan.FromMilliseconds(400), static f => _ = f.LoadAsync(quiet: true), repeating: false);
         body.Loaded += (_, _) => { SteamAccount.FriendsChanged -= OnChanged; SteamAccount.FriendsChanged += OnChanged; };
         body.Unloaded += (_, _) => { SteamAccount.FriendsChanged -= OnChanged; _cts?.Cancel(); };
     }

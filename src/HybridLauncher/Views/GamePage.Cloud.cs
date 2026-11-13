@@ -10,7 +10,7 @@ using Windows.UI;
 namespace HybridLauncher.Views;
 
 /// <summary>The launch bar's Cloud button: the game's cloud saves state, and its menu (sync now, older copies, saves folder).</summary>
-public sealed partial class GamePage
+public partial class GamePage
 {
     CloudStatus? _cloud;
     int _cloudAsk;

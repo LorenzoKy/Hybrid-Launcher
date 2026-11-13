@@ -59,7 +59,8 @@ static class Efficiency
         try
         {
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-            SetProcessWorkingSetSizeEx(GetCurrentProcess(), -1, -1, 0);
+            // The working set is left to Windows: emptying it made the window slow to come back from the notification area
+            // (every page and font faulted back in from disk on the first frames).
         }
         catch (Exception ex) { Log.Warn($"Memory trim: {ex.Message}"); }
     }

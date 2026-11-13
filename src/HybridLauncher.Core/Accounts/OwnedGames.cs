@@ -34,8 +34,14 @@ public static class OwnedGames
         GameStore.Steam => SteamAsync(accounts, ct),
         GameStore.Epic => OnlineOr(GameStore.Epic, EpicAccount.SignedIn, EpicAccount.LibraryAsync, Epic, accounts.EpicName, ct),
         GameStore.Gog => OnlineOr(GameStore.Gog, GogAccount.SignedIn, GogAccount.LibraryAsync, Gog, accounts.GogName, ct),
+        GameStore.Ubisoft => Task.FromResult(new OwnedList(store, [], "Ubisoft Connect", L.T("Ubisoft keeps your library online only: install games from Ubisoft Connect. Hybrid Launcher lists them once installed."))),
+        GameStore.Ea => Task.FromResult(new OwnedList(store, [], "EA app", L.T("EA keeps your library online only: install games from the EA app. Hybrid Launcher lists them once installed."))),
+        GameStore.Rockstar => Task.FromResult(new OwnedList(store, [], "Rockstar Games Launcher", L.T("Rockstar keeps your library online only: install games from the Rockstar Games Launcher. Hybrid Launcher lists them once installed."))),
         _ => Task.FromResult(new OwnedList(store, [], "Xbox app", L.T("Microsoft keeps the Xbox / Game Pass library online only: install games from the Xbox app. Hybrid Launcher lists them once installed."))),
     };
+
+    /// <summary>Launchers whose library Hybrid Launcher cannot read: only their installed games are listed.</summary>
+    public static bool InstalledOnly(GameStore store) => store is GameStore.Xbox or GameStore.Ubisoft or GameStore.Ea or GameStore.Rockstar;
 
     /// <summary>Whether Hybrid Launcher downloads this store's games itself (its account is signed in).</summary>
     public static bool Direct(GameStore store) => store switch

@@ -106,6 +106,8 @@ public sealed partial class LoopVideo : Grid
                 p.IsLoopingEnabled = true;
                 p.IsMuted = true;
                 p.AutoPlay = false;
+                // A short silent loop: decoded as it plays, with the smallest buffer (starts sooner, holds less memory).
+                p.RealTimePlayback = true;
                 p.Source = MediaSource.CreateFromUri(source);
                 return p;
             });

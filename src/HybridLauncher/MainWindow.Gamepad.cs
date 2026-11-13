@@ -20,14 +20,18 @@ public enum PadKey { Up, Down, Left, Right, A, B, X, Y, LB, RB, LT, RT, Menu, Vi
 /// control (as the arrow keys and Tab do) and the right stick scrolls; the buttons do what Settings → Controller gives them
 /// (<see cref="PadActions"/>; by default A presses, B goes back, X opens the right-click menu, Y plays, LB / RB change tab, LT / RT
 /// scroll a page, Menu jumps to the game list, View to Search). Read only while Hybrid Launcher is the window in front, so a
-/// game running on top never steers it; the timer runs only while a controller is connected.
+/// game running on top never steers it; it is read once per display refresh, only while a controller is connected.
 /// </summary>
 public sealed partial class MainWindow
 {
-    DispatcherQueueTimer? _padTimer;
+    /// <summary>The controller is read once per display refresh (Helpers.FrameSync), while this is set.</summary>
+    IDisposable? _padClock;
     readonly HashSet<PadKey> _padHeld = [];
+    readonly HashSet<PadKey> _padNow = [];
     PadKey? _padDir;
     DateTime _padRepeat;
+    /// <summary>The ms since the last reading: the right stick scrolls by time, the same speed at any refresh rate.</summary>
+    double _padMs = 1000.0 / 60;
 
     public static bool PadConnected { get; private set; }
 
@@ -36,20 +40,22 @@ public sealed partial class MainWindow
 
     Action? _padApply;
 
+    /// <summary>The controller is being read (the self-test checks it stops when Controller navigation is off).</summary>
+    bool PadReading => _padClock is not null;
+
     void StartGamepad()
     {
-        _padTimer = DispatcherQueue.CreateTimer();
-        _padTimer.Interval = TimeSpan.FromMilliseconds(16);
-        _padTimer.Tick += (_, _) => PollPad();
-        // The controller is read 60 times a second, but only while one is connected and the window is in front: behind another
-        // app (a game) it is never read anyway, so the timer stops instead of waking the process for nothing.
+        // The controller is read at each refresh of the display (vsync), so right-stick scrolling moves once per frame shown, but
+        // only while one is connected and the window is in front: behind another app (a game) it is never read anyway, so the
+        // clock stops instead of waking the process for nothing.
         bool front = true;
         void Apply()
         {
             PadConnected = Gamepad.Gamepads.Count > 0;
             // Turned off in Settings: never read, so a tool that maps the controller to the mouse is the only one acting on it.
-            if (PadConnected && front && !_hidden && AppState.Settings.GamepadInput) _padTimer.Start();
-            else { _padTimer.Stop(); _padHeld.Clear(); _padDir = null; }
+            if (PadConnected && front && !_hidden && AppState.Settings.GamepadInput)
+                _padClock ??= Helpers.FrameSync.Subscribe(DispatcherQueue, ms => { _padMs = Math.Clamp(ms, 1, 50); PollPad(); });
+            else { StopPad(); _padHeld.Clear(); _padDir = null; }
         }
         void Changed() => DispatcherQueue.TryEnqueue(Apply);
         _padApply = Apply;
@@ -61,7 +67,13 @@ public sealed partial class MainWindow
             Apply();
         };
         Changed();
-        Closed += (_, _) => _padTimer.Stop();
+        Closed += (_, _) => StopPad();
+    }
+
+    void StopPad()
+    {
+        _padClock?.Dispose();
+        _padClock = null;
     }
 
     void PollPad()
@@ -73,7 +85,9 @@ public sealed partial class MainWindow
         catch { return; }
         var b = r.Buttons;
 
-        var now = new HashSet<PadKey>();
+        // One set for every reading (read once per display refresh: a new one each time was garbage at 180 a second).
+        var now = _padNow;
+        now.Clear();
         void On(bool down, PadKey k) { if (down) now.Add(k); }
         On((b & GamepadButtons.DPadUp) != 0 || r.LeftThumbstickY > 0.55, PadKey.Up);
         On((b & GamepadButtons.DPadDown) != 0 || r.LeftThumbstickY < -0.55, PadKey.Down);
@@ -109,15 +123,19 @@ public sealed partial class MainWindow
         _padHeld.Clear();
         _padHeld.UnionWith(now);
 
+        // A hand on the controller: the frame clock stays at the display's rate, as for the mouse (Helpers.FrameWarmth).
+        bool stick = Math.Abs(r.RightThumbstickY) > 0.2 || Math.Abs(r.RightThumbstickX) > 0.2;
+        if (now.Count > 0 || stick) Helpers.FrameWarmth.Poke();
         // The right stick scrolls what is under the focus, smoothly, a little each frame.
-        if (Math.Abs(r.RightThumbstickY) > 0.2 || Math.Abs(r.RightThumbstickX) > 0.2)
-            Scroll(-r.RightThumbstickY * 26, r.RightThumbstickX * 26, animate: false);
+        if (stick)
+            Scroll(-r.RightThumbstickY * 26 * _padMs / (1000.0 / 60), r.RightThumbstickX * 26 * _padMs / (1000.0 / 60), animate: false);
     }
 
     /// <summary>One controller press (also the self-test's way in): a direction moves, a button does its action.</summary>
     public void Pad(PadKey key)
     {
         NotePadPress();
+        Helpers.UiPerf.Controller(key.ToString());
         try
         {
             switch (key)
@@ -140,11 +158,11 @@ public sealed partial class MainWindow
             case PadAction.Press: Press(); break;
             case PadAction.Back: Back(); break;
             case PadAction.Menu: ContextMenu(); break;
-            case PadAction.Play: (ContentFrame.Content as GamePage)?.PlayFromPad(); break;
+            case PadAction.Play: (Shown as GamePage)?.PlayFromPad(); break;
             case PadAction.PrevTab or PadAction.NextTab:
                 int by = action == PadAction.PrevTab ? -1 : 1;
-                if (ContentFrame.Content is GamePage g) g.StepTab(by);
-                else if (ContentFrame.Content is SettingsPage s) s.StepTab(by);
+                if (Shown is GamePage g) g.StepTab(by);
+                else if (Shown is SettingsPage s) s.StepTab(by);
                 else StepSection(by);
                 break;
             case PadAction.PageUp: Scroll(-0.85, 0, animate: true, pages: true); break;
@@ -167,7 +185,7 @@ public sealed partial class MainWindow
                 items.Add(it);
         if (Nav.SettingsItem is NavigationViewItem settings) items.Add(settings);
         if (items.Count == 0) return;
-        int at = ContentFrame.Content switch
+        int at = Shown switch
         {
             HardwarePage => items.FindIndex(i => (i as NavigationViewItem)?.Tag as string == HardwareTag),
             DownloadsPage => items.FindIndex(i => (i as NavigationViewItem)?.Tag as string == DownloadsTag),
@@ -208,7 +226,7 @@ public sealed partial class MainWindow
     /// <summary>The first control of what is on screen: the open page's, else the game list.</summary>
     public void FocusFirst()
     {
-        if ((ContentFrame.Content is DependencyObject page ? FocusManager.FindFirstFocusableElement(page) : null) is Control c) c.Focus(FocusState.Keyboard);
+        if ((Shown is DependencyObject page ? FocusManager.FindFirstFocusableElement(page) : null) is Control c) c.Focus(FocusState.Keyboard);
         else (Nav.SelectedItem as Control)?.Focus(FocusState.Keyboard);
     }
 
@@ -248,7 +266,7 @@ public sealed partial class MainWindow
         ScrollViewer? sv = null;
         for (DependencyObject? d = Focused(root) as DependencyObject; d is not null && sv is null; d = VisualTreeHelper.GetParent(d))
             if (d is ScrollViewer s && (s.ScrollableHeight > 0 || s.ScrollableWidth > 0)) sv = s;
-        sv ??= FindScroller(ContentFrame.Content as DependencyObject);
+        sv ??= FindScroller(Shown as DependencyObject);
         if (sv is null) return;
         double dy = pages ? down * sv.ViewportHeight : down, dx = pages ? right * sv.ViewportWidth : right;
         sv.ChangeView(sv.HorizontalOffset + dx, sv.VerticalOffset + dy, null, !animate);

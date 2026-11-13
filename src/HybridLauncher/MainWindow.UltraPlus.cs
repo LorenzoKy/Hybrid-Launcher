@@ -154,9 +154,9 @@ public sealed partial class MainWindow
             if (UltraPlusLibrary.Entries.FirstOrDefault(e => e.State is not null) is { } installed)
             {
                 await step($"ultra {installed.Game.Name}: install", () => { AppState.Settings.GameTab = "ultra"; OpenGame(installed.Game.Id); }, 4000);
-                await step($"ultra {installed.Game.Name}: add-ons", () => (ContentFrame.Content as GamePage)?.SelfTestShow("ultra/addons"), 1500);
-                await step($"ultra {installed.Game.Name}: settings", () => (ContentFrame.Content as GamePage)?.SelfTestShow("ultra/settings"), 1500);
-                await step($"ultra {installed.Game.Name}: scroll", () => (ContentFrame.Content as GamePage)?.SelfTestScroll(true), 800);
+                await step($"ultra {installed.Game.Name}: add-ons", () => (Shown as GamePage)?.SelfTestShow("ultra/addons"), 1500);
+                await step($"ultra {installed.Game.Name}: settings", () => (Shown as GamePage)?.SelfTestShow("ultra/settings"), 1500);
+                await step($"ultra {installed.Game.Name}: scroll", () => (Shown as GamePage)?.SelfTestScroll(true), 800);
             }
             await Check("ultra update all", async () =>
             {

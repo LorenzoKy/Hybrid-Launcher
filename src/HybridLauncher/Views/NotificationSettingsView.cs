@@ -140,12 +140,7 @@ public static class NotificationSettingsView
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.Children.Add(new Border
-        {
-            Width = 32, Height = 32, CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.FromArgb(0x26, c.R, c.G, c.B)),
-            Child = new FontIcon { Glyph = f?.Glyph ?? "", FontSize = 15, Foreground = new SolidColorBrush(c), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-        });
+        grid.Children.Add(new Controls.IconTile(f?.Glyph ?? "\uE896", c, 32));
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);
         return grid;

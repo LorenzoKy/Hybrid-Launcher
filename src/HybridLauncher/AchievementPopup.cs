@@ -19,7 +19,8 @@ namespace HybridLauncher;
 /// <param name="Completion">The game's platinum: its own achievement for unlocking all the others, shown in the platinum tier.</param>
 /// <param name="GameId">The library game it belongs to, and <paramref name="AchievementKey"/> the achievement: the controller's
 /// Home button pressed while it shows (or just after) opens that achievement in the game's Achievements tab.</param>
-public sealed record Toast(string Name, string Description, string? IconUrl, string? Game, double? Percent = null, GameStore? Store = null, int? Points = null, string? Look = null, bool Completion = false, string? GameId = null, string? AchievementKey = null);
+/// <param name="Progress">A progress pop-up ("5 / 10") instead of an unlock: the achievement moved on but is still locked.</param>
+public sealed record Toast(string Name, string Description, string? IconUrl, string? Game, double? Percent = null, GameStore? Store = null, int? Points = null, string? Look = null, bool Completion = false, string? GameId = null, string? AchievementKey = null, string? Progress = null);
 
 /// <summary>
 /// The unlock toast: a small borderless window in a corner of the screen the game runs on, always on top, shown without taking
@@ -31,6 +32,7 @@ public sealed record Toast(string Name, string Description, string? IconUrl, str
 /// slides inside a fixed window any more (that exposed the window's backdrop as a dark smear).
 ///
 /// Looks (Settings → Achievements → Look): Hybrid, PlayStation, PlayStation 4 (white or black), Xbox, Steam, GOG, Epic, Minimal, or the game's own store.
+/// The PlayStation looks take their background from Settings → Achievements → PlayStation background (the console's own by default).
 /// Corner (or the original's own, "Native"), size, colours (Hybrid and Minimal), opacity, duration, sound and rarity line come from Settings → Achievements.
 /// </summary>
 public static class AchievementPopup
@@ -44,6 +46,10 @@ public static class AchievementPopup
 
     public static void Show(Toast toast)
     {
+        // Out of Windows' efficiency mode from the unlock on, not only once the window is up: fetching the picture, building the
+        // window and its first frames ran at EcoQoS on the slow cores while a game played (the late, halting start).
+        MediaPolicy.KeepAwake(true);
+        _ = Task.Delay(TimeSpan.FromSeconds(12)).ContinueWith(_ => MediaPolicy.KeepAwake(false), TaskScheduler.Default);
         int generation = _generation;
         _preparing = PrepareThenShow(_preparing, toast, generation);
     }
@@ -119,7 +125,7 @@ public static class AchievementPopup
     /// <summary>The picture decoded and ready to draw, or null when it is not there within a moment (the pop-up then shows without it).</summary>
     static async Task<BitmapImage?> DecodeAsync(string url)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1.2));
         byte[]? data;
         try { data = await FetchAsync(url, cts.Token); }
         catch (Exception ex) { Log.Warn($"Pop-up picture {url}: {ex.Message}"); return null; }
@@ -151,7 +157,10 @@ public static class AchievementPopup
     public static void ShowTest(string? look = null) => ShowReplacing(Sample with { Look = look });
 
     /// <summary>The card looks' first line: an unlock, or the game's platinum.</summary>
-    static string Headline(Toast t) => L.T(t.Completion ? "PLATINUM UNLOCKED" : "ACHIEVEMENT UNLOCKED");
+    static string Headline(Toast t) => t.Progress is { } p ? L.F("ACHIEVEMENT PROGRESS {0}", p) : L.T(t.Completion ? "PLATINUM UNLOCKED" : "ACHIEVEMENT UNLOCKED");
+
+    /// <summary>A pop-up is about to open (the unlock screenshot is taken around it). Raised on the UI thread.</summary>
+    public static event Action<Toast>? Opening;
 
     /// <summary>
     /// A sample platinum (Settings with no game picked, self-test): a game's achievement for unlocking all the others, with the
@@ -353,6 +362,7 @@ public static class AchievementPopup
         {
             try
             {
+                try { Opening?.Invoke(item); } catch (Exception ex) { Log.Warn($"Pop-up opening: {ex.Message}"); }
                 _current = Open(item, placing: false);
                 if (item.GameId is not null) { _lastShown = item; _lastLeft = null; }
                 return;
@@ -444,19 +454,69 @@ public static class AchievementPopup
     static Built Build(string look, Toast t, double size, PopupSettings o, bool left)
     {
         var accent = AccentColor(o);
-        var custom = BackgroundColor(o, accent);
+        // The look's own colours (Settings → Achievements → Background and Text), each empty = the look's own.
+        o.LookColours.TryGetValue(look, out var colours);
+        Color? custom = TryParseHex(colours?.Background, out var bg) ? bg : null;
+        Color? ink = TryParseHex(colours?.Text, out var tx) ? tx : null;
         double opacity = Math.Clamp(o.Opacity, 0.6, 1);
-        return look switch
+        var built = look switch
         {
-            "PlayStation" => BuildPlayStation(t, size, opacity),
-            _ when IsPs4(look) => BuildPlayStation4(t, size, opacity, left, look == "PlayStation4Black"),
-            "Xbox" => BuildXbox(t, size, opacity),
+            "PlayStation" => BuildPlayStation(t, size, opacity, PsBack(custom)),
+            _ when IsPs4(look) => BuildPlayStation4(t, size, opacity, left, look == "PlayStation4Black", PsBack(custom)),
+            "Xbox" => BuildXbox(t, size, opacity, custom),
             "Minimal" => BuildMinimal(t, size, accent, custom, opacity),
-            "Steam" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0x66, 0xC0, 0xF4), Color.FromArgb(255, 0x1B, 0x28, 0x38), opacity, 8, Headline(t), true),
-            "Gog" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0xC0, 0x6C, 0xD0), Color.FromArgb(255, 0x24, 0x1A, 0x2B), opacity, 10, Headline(t), true),
-            "Epic" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), Color.FromArgb(255, 0x1D, 0x1E, 0x22), opacity, 4, Headline(t), false),
+            "Steam" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0x66, 0xC0, 0xF4), custom ?? Color.FromArgb(255, 0x1B, 0x28, 0x38), opacity, 8, Headline(t), true),
+            "Gog" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0xC0, 0x6C, 0xD0), custom ?? Color.FromArgb(255, 0x24, 0x1A, 0x2B), opacity, 10, Headline(t), true),
+            "Epic" => BuildCard(t, size, o.ShowRarity, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), custom ?? Color.FromArgb(255, 0x1D, 0x1E, 0x22), opacity, 4, Headline(t), false),
             _ => BuildCard(t, size, o.ShowRarity, t.Completion ? PlatinumColour : accent, custom, opacity, 8, Headline(t), true),
         };
+        // A light background with no text colour picked gets dark text (the PlayStation looks do it themselves).
+        bool ps = look is "PlayStation" || IsPs4(look);
+        bool light = custom is { } c && IsLight(c);
+        if (ink is null && light && !ps) ink = Color.FromArgb(255, 0x1A, 0x1A, 0x1C);
+        // The PlayStation looks have no coloured lines: a picked text colour takes every line.
+        if (ink is { } i) Ink(built.Root, i, all: ps, darkenColoured: light && !ps);
+        return built;
+    }
+
+    static double Lin(byte v) { double x = v / 255.0; return x <= 0.04045 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4); }
+    static double Luma(Color c) => 0.2126 * Lin(c.R) + 0.7152 * Lin(c.G) + 0.0722 * Lin(c.B);
+    internal static bool IsLight(Color c) => Luma(c) > 0.36;
+
+    /// <summary>
+    /// The text colour picked for a look: every neutral text (white, black or grey; coloured labels such as Xbox's green line
+    /// keep their colour) takes <paramref name="ink"/>. Main text in full, secondary text (see-through or grey) a little faded,
+    /// so the look keeps its order of lines.
+    /// </summary>
+    static void Ink(UIElement e, Color ink, bool all = false, bool darkenColoured = false)
+    {
+        switch (e)
+        {
+            case TextBlock tb when tb.Foreground is SolidColorBrush { Color: var c }:
+                bool neutral = Math.Max(c.R, Math.Max(c.G, c.B)) - Math.Min(c.R, Math.Min(c.G, c.B)) < 40;
+                if (neutral || all)
+                {
+                    double l = Luma(Color.FromArgb(255, c.R, c.G, c.B));
+                    bool secondary = c.A < 0xF0 || (l > 0.08 && l < 0.7);
+                    tb.Foreground = new SolidColorBrush(Color.FromArgb(secondary ? (byte)0xB4 : (byte)0xFF, ink.R, ink.G, ink.B));
+                }
+                // A coloured line (the accent's headline) on a light background: a deep shade of its colour, so it reads.
+                else if (darkenColoured)
+                    tb.Foreground = new SolidColorBrush(Color.FromArgb(255, (byte)(c.R * 0.45), (byte)(c.G * 0.45), (byte)(c.B * 0.45)));
+                break;
+            case Panel p:
+                foreach (var child in p.Children) Ink(child, ink, all, darkenColoured);
+                break;
+            case Border { Child: { } child }:
+                Ink(child, ink, all, darkenColoured);
+                break;
+            case Viewbox { Child: { } child }:
+                Ink(child, ink, all, darkenColoured);
+                break;
+            case ContentControl { Content: UIElement child }:
+                Ink(child, ink, all, darkenColoured);
+                break;
+        }
     }
 
     // ---------- window ----------
@@ -520,6 +580,7 @@ public static class AchievementPopup
             content = host;
         }
 
+        if (!placing) Helpers.FocusGuard.Note($"an achievement pop-up opening ({look})");
         var window = new Window { Title = "Hybrid Launcher achievement", Content = content };
         // Fully transparent window: only what the toast draws is ever on screen. Without a backdrop of its own the window has
         // no dark rectangle to show while it moves, fades or closes.
@@ -684,7 +745,8 @@ public static class AchievementPopup
         int _frames, _drawn, _lastX = int.MinValue, _lastY = int.MinValue;
         bool _started, _done, _awake;
         double _fromSlide = 1, _fromOpacity, _fromReveal;
-        Microsoft.UI.Dispatching.DispatcherQueueTimer? _watchdog;
+        IDisposable? _watchdog;
+        Microsoft.UI.Composition.SpriteVisual? _tick;
 
         /// <param name="dxDip">The slide in DIPs (the window moves by it in pixels, or the slider inside it in DIPs).</param>
         /// <param name="inside">The window stays put and <paramref name="slider"/> (the toast) slides inside it.</param>
@@ -713,12 +775,11 @@ public static class AchievementPopup
             // Out of Windows' efficiency mode while it is on screen (over a game it would stutter).
             _awake = true;
             MediaPolicy.KeepAwake(true);
+            KeepClockFast();
             CompositionTarget.Rendering += OnFrame;
-            // If the frame clock does not run (nothing is being drawn), a timer steps the animation instead.
-            _watchdog = Window.DispatcherQueue.CreateTimer();
-            _watchdog.Interval = TimeSpan.FromMilliseconds(16);
-            _watchdog.Tick += (_, _) => { if (Stopwatch.GetTimestamp() - _lastFrame > Stopwatch.Frequency / 10) SafeStep(); };
-            _watchdog.Start();
+            // If the frame clock does not run (nothing is being drawn), the display's refresh (Helpers.FrameSync) steps the
+            // animation instead: still once per refresh, never between two.
+            _watchdog = FrameSync.Subscribe(Window.DispatcherQueue, _ => { if (Stopwatch.GetTimestamp() - _lastFrame > Stopwatch.Frequency / 20) SafeStep(); });
         }
 
         public void Dismiss()
@@ -898,10 +959,41 @@ public static class AchievementPopup
             Release();
         }
 
+        /// <summary>
+        /// With nothing else moving (the app in the tray, a game in front) the frame clock ticks every ~93 ms: the first frames of
+        /// the toast came at that pace and its slide stepped. An endless animation of an invisible dot in the toast's own window
+        /// keeps the clock at the display's rate while it is on screen (Helpers.FrameWarmth does the same for the main window).
+        /// </summary>
+        void KeepClockFast()
+        {
+            try
+            {
+                if (_root is not Panel panel) return;
+                var host = new Border { Width = 1, Height = 1, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+                if (panel is Grid g) { Grid.SetRowSpan(host, Math.Max(1, g.RowDefinitions.Count)); Grid.SetColumnSpan(host, Math.Max(1, g.ColumnDefinitions.Count)); }
+                panel.Children.Add(host);
+                var compositor = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(host).Compositor;
+                _tick = compositor.CreateSpriteVisual();
+                _tick.Size = new System.Numerics.Vector2(1, 1);
+                _tick.Opacity = 0;
+                Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetElementChildVisual(host, _tick);
+                var spin = compositor.CreateScalarKeyFrameAnimation();
+                spin.InsertKeyFrame(0f, 0f);
+                spin.InsertKeyFrame(1f, 360f, compositor.CreateLinearEasingFunction());
+                spin.Duration = TimeSpan.FromSeconds(10);
+                spin.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+                _tick.StartAnimation("RotationAngleInDegrees", spin);
+            }
+            catch (Exception ex) { Log.Warn($"Pop-up frame clock: {ex.Message}"); }
+        }
+
         void Release()
         {
+            try { _tick?.StopAnimation("RotationAngleInDegrees"); } catch { }
+            _tick = null;
             CompositionTarget.Rendering -= OnFrame;
-            try { _watchdog?.Stop(); } catch { }
+            _watchdog?.Dispose();
+            _watchdog = null;
             if (_awake) { _awake = false; MediaPolicy.KeepAwake(false); }
         }
     }
@@ -932,6 +1024,7 @@ public static class AchievementPopup
         if (_run is { } r && r.Window == window) { r.Stop(); _run = null; }
         foreach (var l in Leaving.ToArray())
             if (l.Window == window) { l.Stop(); Leaving.Remove(l); }
+        Helpers.FocusGuard.Note("an achievement pop-up closing");
         try { window.Close(); } catch { }
         if (_current == window)
         {
@@ -1117,7 +1210,10 @@ public static class AchievementPopup
     // ---------- PlayStation (shared) ----------
 
     // Both PlayStation notices are set in Calibri Light, as the After Effects projects they were measured from.
-    static readonly FontFamily PsFont = new("Calibri Light");
+    // Made on first use (on the UI thread), not in the type's initializer: Prefetch runs on a background thread and, as the
+    // first use of the class, made the initializer fail there for good (RPC_E_WRONG_THREAD, seen in a log).
+    static FontFamily? _psFont;
+    static FontFamily PsFont => _psFont ??= new("Calibri Light");
 
     /// <summary>
     /// A line of PlayStation text placed by the top of its capitals (the measurements are of capitals): the box is trimmed to the
@@ -1180,6 +1276,25 @@ public static class AchievementPopup
         return host;
     }
 
+    /// <summary>A PlayStation look's background other than the original's: the plate's gradient (the PS4 bar uses
+    /// <see cref="From"/>), whether it is light (dark text on it), the second line's colour and an empty picture's.</summary>
+    sealed record PsBackdrop(Color From, Color To, bool Light, Color Sub, Color Empty);
+
+    /// <summary>
+    /// The PlayStation looks' background: the pop-up background picked in Settings → Achievements (any colour, the same picker as
+    /// the other looks), or null for "Automatic" (each look keeps the console's own). A light colour gets dark text.
+    /// </summary>
+    static PsBackdrop? PsBack(Color? chosen)
+    {
+        if (chosen is not { } c) return null;
+        static Color Mix(Color a, Color b, double t) => Color.FromArgb(255,
+            (byte)Math.Round(a.R + (b.R - a.R) * t), (byte)Math.Round(a.G + (b.G - a.G) * t), (byte)Math.Round(a.B + (b.B - a.B) * t));
+        bool light = IsLight(c);
+        return light
+            ? new(c, Mix(c, Colors.Black, 0.12), true, Mix(c, Colors.Black, 0.55), Mix(c, Colors.Black, 0.22))
+            : new(c, Mix(c, Colors.Black, 0.45), false, Mix(c, Colors.White, 0.45), Mix(c, Colors.Black, 0.5));
+    }
+
     // ---------- PlayStation 5 ----------
 
     /// <summary>
@@ -1188,9 +1303,13 @@ public static class AchievementPopup
     /// to #242123 between 10% and 71% of its width; the picture 68 px square; the tier's trophy, the name in white and
     /// "Trophy earned!" in grey, all in Calibri Light.
     /// </summary>
-    static Built BuildPlayStation(Toast item, double u, double opacity)
+    static Built BuildPlayStation(Toast item, double u, double opacity, PsBackdrop? back = null)
     {
         var (tier, _) = Tier(item);
+        var from = back?.From ?? Color.FromArgb(255, 0x40, 0x38, 0x3F);
+        var to = back?.To ?? Color.FromArgb(255, 0x24, 0x21, 0x23);
+        var ink = back is { Light: true } ? Color.FromArgb(255, 0x1A, 0x1A, 0x1C) : Colors.White;
+        var subInk = back?.Sub ?? Color.FromArgb(255, 0x7D, 0x77, 0x7B);
         var plate = new Border
         {
             Width = Ps5W * u,
@@ -1202,17 +1321,17 @@ public static class AchievementPopup
                 EndPoint = new(0.711, 0.5),
                 GradientStops =
                 {
-                    new GradientStop { Color = WithAlpha(Color.FromArgb(255, 0x40, 0x38, 0x3F), opacity), Offset = 0 },
-                    new GradientStop { Color = WithAlpha(Color.FromArgb(255, 0x24, 0x21, 0x23), opacity), Offset = 1 },
+                    new GradientStop { Color = WithAlpha(from, opacity), Offset = 0 },
+                    new GradientStop { Color = WithAlpha(to, opacity), Offset = 1 },
                 },
             },
         };
         var canvas = new Canvas { Width = Ps5W * u, Height = Ps5H * u, IsHitTestVisible = false };
-        canvas.Children.Add(At(PsPicture(item, 68 * u, Color.FromArgb(255, 0x14, 0x13, 0x15), tier, free: true), 26 * u, 23 * u));
+        canvas.Children.Add(At(PsPicture(item, 68 * u, back?.Empty ?? Color.FromArgb(255, 0x14, 0x13, 0x15), tier, free: true), 26 * u, 23 * u));
         // The app's trophy in the tier's metal, a square centred on the name's capitals, its left edge on the line below's.
         canvas.Children.Add(At(Icons.TierTrophy(Snap(34 * u), tier), 107 * u, 23 * u));
-        canvas.Children.Add(At(PsText(item.Name, 28 * u, Colors.White, (Ps5W - 146 - 34) * u), 146 * u, 31 * u));
-        canvas.Children.Add(At(PsText(L.T("Trophy earned!"), 23 * u, Color.FromArgb(255, 0x7D, 0x77, 0x7B), (Ps5W - 109 - 34) * u), 109 * u, 74.5 * u));
+        canvas.Children.Add(At(PsText(item.Name, 28 * u, ink, (Ps5W - 146 - 34) * u), 146 * u, 31 * u));
+        canvas.Children.Add(At(PsText(item.Progress is { } progress ? L.F("Progress: {0}", progress) : L.T("Trophy earned!"), 23 * u, subInk, (Ps5W - 109 - 34) * u), 109 * u, 74.5 * u));
         var root = new Grid { RequestedTheme = ElementTheme.Dark, Width = Ps5W * u, Height = Ps5H * u };
         root.Children.Add(plate);
         root.Children.Add(canvas);
@@ -1225,7 +1344,7 @@ public static class AchievementPopup
     /// The Xbox achievement banner: the green-ringed picture pops in first, then the dark pill unrolls from it to the right and the text
     /// appears ("Achievement unlocked", the name, the gamerscore when the source gives one); on the way out it folds back.
     /// </summary>
-    static Built BuildXbox(Toast item, double size, double opacity)
+    static Built BuildXbox(Toast item, double size, double opacity, Color? back = null)
     {
         var green = Color.FromArgb(255, 0x10, 0x9C, 0x10);
         double ring = 60 * size, pad = 10 * size, full = 390 * size, closed = ring + 2 * pad;
@@ -1237,7 +1356,7 @@ public static class AchievementPopup
         circle.Children.Add(pic);
 
         var text = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center, Opacity = 0 };
-        text.Children.Add(new TextBlock { Text = (item.Points is { } g ? g + "G  ·  " : "") + L.T(item.Completion ? "Platinum unlocked" : "Achievement unlocked"), FontSize = 12.5 * size, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = Solid(0xFF, 0x7C, 0xE0, 0x7C), TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
+        text.Children.Add(new TextBlock { Text = (item.Points is { } g ? g + "G  ·  " : "") + (item.Progress is { } progress ? L.F("Achievement progress {0}", progress) : L.T(item.Completion ? "Platinum unlocked" : "Achievement unlocked")), FontSize = 12.5 * size, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = Solid(0xFF, 0x7C, 0xE0, 0x7C), TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
         text.Children.Add(new TextBlock { Text = item.Name, FontSize = 17 * size, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = Solid(Colors.White), TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.WordEllipsis });
         if (item.Game is { Length: > 0 } game)
             text.Children.Add(new TextBlock { Text = game, FontSize = 11.5 * size, Foreground = Solid(0xAA, 0xFF, 0xFF, 0xFF), TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
@@ -1254,7 +1373,9 @@ public static class AchievementPopup
             Width = full,
             HorizontalAlignment = HorizontalAlignment.Left,
             CornerRadius = new CornerRadius(40 * size),
-            Background = Gradient(WithAlpha(Color.FromArgb(255, 0x2A, 0x2C, 0x2E), opacity), WithAlpha(Color.FromArgb(255, 0x1A, 0x1B, 0x1D), opacity)),
+            Background = back is { } b
+                ? Gradient(WithAlpha(b, opacity), WithAlpha(Color.FromArgb(255, (byte)(b.R * 0.65), (byte)(b.G * 0.65), (byte)(b.B * 0.65)), opacity))
+                : Gradient(WithAlpha(Color.FromArgb(255, 0x2A, 0x2C, 0x2E), opacity), WithAlpha(Color.FromArgb(255, 0x1A, 0x1B, 0x1D), opacity)),
             BorderBrush = Solid(0x60, green.R, green.G, green.B),
             BorderThickness = new Thickness(1),
             Child = grid,
@@ -1281,10 +1402,12 @@ public static class AchievementPopup
     /// window (<see cref="Built.Slider"/>), so it comes from beyond the screen edge without showing on a neighbouring screen.
     /// <paramref name="black"/>: the console's dark theme, the same bar in near-black with the name in white and a lighter disc.
     /// </summary>
-    static Built BuildPlayStation4(Toast item, double u, double opacity, bool left, bool black = false)
+    static Built BuildPlayStation4(Toast item, double u, double opacity, bool left, bool black = false, PsBackdrop? back = null)
     {
-        var faceColour = black ? Color.FromArgb(255, 0x16, 0x16, 0x18) : Colors.White;
-        var emptyColour = black ? Color.FromArgb(255, 0x33, 0x33, 0x36) : Color.FromArgb(255, 0xBC, 0xBC, 0xBC);
+        // Another background than the original's: light and dark are the console's two themes, a colour is a dark tint of it.
+        if (back is { } b) black = !b.Light;
+        var faceColour = back?.From ?? (black ? Color.FromArgb(255, 0x16, 0x16, 0x18) : Colors.White);
+        var emptyColour = back?.Empty ?? (black ? Color.FromArgb(255, 0x33, 0x33, 0x36) : Color.FromArgb(255, 0xBC, 0xBC, 0xBC));
         var (tier, _) = Tier(item);
         double W = Ps4W * u, H = Ps4H * u;
         var bar = new Grid { Width = W, Height = H, HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
@@ -1524,7 +1647,17 @@ public static class AchievementPopup
         };
     }
 
-    static Color? BackgroundColor(PopupSettings o, Color accent) => TryParseHex(o.Background, out var c) ? c : null;
+    /// <summary>Settings from before 1.4: the PlayStation looks' own background list becomes the shared background.</summary>
+    public static void MoveOldSettings()
+    {
+        var o = AppState.Settings.Popup;
+        if (o.PsBackground == "Original" && o.Background.Length == 0) return;
+        var a = AccentColor(o);
+        o.MovePsBackground($"#{a.R:X2}{a.G:X2}{a.B:X2}");
+        // 1.4: one background per look instead of one shared by some of them.
+        o.MoveSharedBackground();
+        SettingsStore.Save();
+    }
 
     /// <summary>The pop-up's colour: the colour theme's accent (or the Windows one), gold, Steam blue, or the user's own.</summary>
     static Color AccentColor(PopupSettings o)

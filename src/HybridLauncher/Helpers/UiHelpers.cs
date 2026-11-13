@@ -47,6 +47,21 @@ public static class StoreLogos
     // Xbox: the official sphere (back in Simple Icons since 2025; Hybrid Launcher drew a ring with an X before).
     const string Xbox = "M 4.102 21.033 C 6.211 22.881 8.977 24 12 24 c 3.026 0 5.789 -1.119 7.902 -2.967 1.877 -1.912 -4.316 -8.709 -7.902 -11.417 -3.582 2.708 -9.779 9.505 -7.898 11.417 z m 11.16 -14.406 c 2.5 2.961 7.484 10.313 6.076 12.912 C 23.002 17.48 24 14.861 24 12.004 c 0 -3.34 -1.365 -6.362 -3.57 -8.536 0 0 -.027 -.022 -.082 -.042 -.063 -.022 -.152 -.045 -.281 -.045 -.592 0 -1.985 .434 -4.805 3.246 z M 3.654 3.426 c -.057 .02 -.082 .041 -.086 .042 C 1.365 5.642 0 8.664 0 12.004 c 0 2.854 .998 5.473 2.661 7.533 -1.401 -2.605 3.579 -9.951 6.08 -12.91 -2.82 -2.813 -4.216 -3.245 -4.806 -3.245 -.131 0 -.223 .021 -.281 .046 v -.002 z M 12 3.551 S 9.055 1.828 6.755 1.746 c -.903 -.033 -1.454 .295 -1.521 .339 C 7.379 .646 9.659 0 11.984 0 H 12 c 2.334 0 4.605 .646 6.766 2.085 -.068 -.046 -.615 -.372 -1.52 -.339 C 14.946 1.828 12 3.545 12 3.545 v .006 z";
 
+    // Ubisoft Connect, EA app and Rockstar Games Launcher: the publishers' marks (Simple Icons 16.0, CC0).
+    const string Ubisoft = "M23.561 11.988C23.301-.304 6.954-4.89.656 6.634c.282.206.661.477.943.672a11.747 11.747 0 00-.976 3.067 11.885 11.885 0 00-.184 2.071C.439 18.818 5.621 24 12.005 24c6.385 0 11.556-5.17 11.556-11.556v-.455zm-20.27 2.06c-.152 1.246-.054 1.636-.054 1.788l-.282.098c-.108-.206-.37-.932-.488-1.908C2.163 10.308 4.7 6.96 8.57 6.33c3.544-.52 6.937 1.68 7.728 4.758l-.282.098c-.087-.087-.228-.336-.77-.878-4.281-4.281-11.002-2.32-11.956 3.74zm11.002 2.081a3.145 3.145 0 01-2.59 1.355 3.15 3.15 0 01-3.155-3.155 3.159 3.159 0 012.927-3.144c1.018-.043 1.972.51 2.416 1.398a2.580 2.580 0 01-.455 2.950c.293.205.575.4.856.595zm6.58.12c-1.669 3.782-5.106 5.766-8.77 5.712-7.034-.347-9.083-8.466-4.38-11.393l.207.206c-.076.108-.358.325-.791 1.182-.51 1.041-.672 2.081-.607 2.732.369 5.67 8.314 6.83 11.045 1.214C21.057 8.217 11.822.401 3.626 6.374l-.184-.184C5.599 2.808 9.816 1.3 13.837 2.309c6.147 1.55 9.453 7.956 7.035 13.94z";
+    const string Ea = "M16.635 6.162l-5.928 9.377H4.24l1.508-2.3h4.024l1.474-2.335H2.264L.79 13.239h2.156L0 17.84h12.072l4.563-7.259 1.652 2.66h-1.401l-1.473 2.299h4.347l1.473 2.3H24zm-11.461.107L3.7 8.604l9.52-.035 1.474-2.3z";
+    const string Rockstar = "M5.971 6.816h3.241c1.469 0 2.741-.448 2.741-2.084 0-1.3-1.117-1.576-2.19-1.576H6.748l-.777 3.66Zm12.834 8.753h5.168l-4.664 3.228.755 5.087-4.041-3.07L10.599 24l2.536-5.392s-2.95-3.075-2.947-3.075c-.198-.262-.265-.936-.265-1.226 0-.367.024-.739.049-1.134.028-.451.058-.933.058-1.476 0-1.338-.59-2.038-2.036-2.038H5.283l-1.18 5.525H.026L3.269 0h7.672c2.852 0 5.027.702 5.027 3.936 0 2.276-1.12 3.894-3.592 4.233v.045c1.162.276 1.598 1.062 1.598 2.527 0 .585-.018 1.098-.034 1.581-.015.428-.03.834-.03 1.243 0 .525.137 1.382.48 1.968h.567l3.028-5.060.82 5.096Zm-1.233-2.948-2.187 3.654h-3.457l2.103 2.189-1.73 3.672 3.777-2.218 2.976 2.263-.553-3.731 3.093-2.139h-3.430l-.592-3.690Z";
+
+    // PlayStation: the PS mark (Simple Icons), for the Controllers card's PlayStation rows.
+    const string PlayStation = "M8.984 2.596v17.547l3.915 1.261V6.688c0-.69.304-1.151.794-.991.636.18.76.814.76 1.505v5.875c2.441 1.193 4.362-.002 4.362-3.152 0-3.237-1.126-4.675-4.438-5.827-1.307-.448-3.728-1.186-5.39-1.502zm4.656 16.241l6.296-2.275c.715-.258.826-.625.246-.818-.586-.192-1.637-.139-2.357.123l-4.205 1.5V14.98l.24-.085s1.201-.42 2.913-.615c1.696-.18 3.785.03 5.437.661 1.848.601 2.04 1.472 1.576 2.072-.465.6-1.622 1.036-1.622 1.036l-8.544 3.107V18.86zM1.807 18.6c-1.9-.545-2.214-1.668-1.352-2.32.801-.586 2.16-1.052 2.16-1.052l5.615-2.013v2.313L4.205 17c-.705.271-.825.632-.239.826.586.195 1.637.15 2.343-.12L8.247 17v2.074c-.12.03-.256.044-.39.073-1.939.331-3.996.196-6.038-.479z";
+
+    /// <summary>A small Xbox or PlayStation mark at <paramref name="size"/> px, in the text colour (the Controllers card's rows).</summary>
+    public static FrameworkElement Controller(bool playStation, double size = 14)
+    {
+        var icon = new PathIcon { Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), playStation ? PlayStation : Xbox), Width = 24, Height = 24 };
+        return new Viewbox { Width = size, Height = size, Child = icon };
+    }
+
     /// <summary>The logo at <paramref name="size"/> px, or a folder glyph for games added by hand.</summary>
     public static FrameworkElement Create(GameStore store, double size = 16)
     {
@@ -57,6 +72,9 @@ public static class StoreLogos
             GameStore.Epic => Epic,
             GameStore.Gog => Gog,
             GameStore.Xbox => Xbox,
+            GameStore.Ubisoft => Ubisoft,
+            GameStore.Ea => Ea,
+            GameStore.Rockstar => Rockstar,
             _ => null,
         };
         if (data is null) return new FontIcon { Glyph = "", FontSize = size };
@@ -72,6 +90,9 @@ public static class StoreLogos
         GameStore.Epic => "Epic Games",
         GameStore.Gog => "GOG",
         GameStore.Xbox => "Xbox / Game Pass",
+        GameStore.Ubisoft => "Ubisoft Connect",
+        GameStore.Ea => "EA app",
+        GameStore.Rockstar => "Rockstar Games",
         _ => L.T("Added by you"),
     };
 
@@ -102,6 +123,9 @@ public static class StoreLogos
             GameStore.Epic => (C(0x3A, 0x3A, 0x42), C(0x12, 0x12, 0x16)),
             GameStore.Gog => (C(0xB0, 0x4C, 0xD8), C(0x56, 0x18, 0x78)),
             GameStore.Xbox => (C(0x3C, 0xB8, 0x3C), C(0x0E, 0x6B, 0x0E)),
+            GameStore.Ubisoft => (C(0x2A, 0x86, 0xF5), C(0x0A, 0x3A, 0x9C)),
+            GameStore.Ea => (C(0xFF, 0x4F, 0x4F), C(0xA0, 0x16, 0x2A)),
+            GameStore.Rockstar => (C(0xF2, 0x8A, 0x12), C(0x8E, 0x3A, 0x04)),
             _ => (C(0x76, 0x7E, 0x94), C(0x3A, 0x40, 0x52)),
         };
         // The logo fills about two thirds of the tile (Steam's round mark a little more: it has no corners to spare).
@@ -219,7 +243,7 @@ public static class TechTags
     /// An upscaler / frame generation tag in its maker's colour. Nearly solid, so the art behind cannot bleed through and dirty it,
     /// with an edge in its own lighter hue (a white see-through edge blurs on fractional scaling); frame generation blends two shades.
     /// </summary>
-    public static Border Create(string text, bool frameGen = false, double fontSize = 10)
+    public static Border Create(string text, bool frameGen = false, double fontSize = 10, double padX = 7)
     {
         frameGen |= IsFrameGen(text);
         var (main, blend) = VendorColors(text);
@@ -241,7 +265,7 @@ public static class TechTags
         {
             Background = background,
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(7, v, 7, v),
+            Padding = new Thickness(padX, v, padX, v),
             UseLayoutRounding = true,
             Child = Text(text, fontSize),
         };
@@ -328,15 +352,15 @@ public static class Palettes
         new("Windows", "Windows accent", "Your Windows accent colour", null, null),
         new("Hybrid", "Hybrid", "Crimson, like the logo's crossbar", C(0xD7, 0x14, 0x3A), C(0xA8, 0x0E, 0x2C)),
         // Always dark, with their own background: a plain near-black one, and Venom's purple night.
-        new("Dark", "Dark", "Plain near-black background, soft silver accent (always dark)", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x17, 0x17, 0x1A), C(0x07, 0x07, 0x08))),
-        new("VenomViolet", "Venom", "Deep purple night with violet light (always dark)", C(0xA8, 0x5C, 0xFF), C(0x7B, 0x2C, 0xE6), (C(0x1A, 0x0F, 0x26), C(0x07, 0x04, 0x0C))),
+        new("Dark", "Dark", "Plain near-black background, soft silver accent (always dark)", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x11, 0x11, 0x14), C(0x06, 0x06, 0x07))),
+        new("VenomViolet", "Venom", "Deep purple night with violet light (always dark)", C(0xA8, 0x5C, 0xFF), C(0x7B, 0x2C, 0xE6), (C(0x13, 0x0B, 0x1C), C(0x06, 0x03, 0x0A))),
         // Scene themes: dark / grey backgrounds of their own, inspired by a console or game look.
-        new("Cyberpunk", "Cyberpunk 2077", "Night city black, signal yellow and red (always dark)", C(0xFC, 0xEE, 0x0A), C(0xFF, 0x00, 0x3C), (C(0x16, 0x10, 0x14), C(0x07, 0x07, 0x09))),
-        new("Mgs1", "Metal Gear Solid", "Shadow Moses: arctic night blue with codec green (always dark)", C(0x5C, 0xE0, 0x8C), C(0x2C, 0x6E, 0x9E), (C(0x10, 0x1A, 0x24), C(0x04, 0x08, 0x0C))),
-        new("Mgs2", "Metal Gear Solid 2", "Sons of Liberty: Big Shell steel with cyan readouts (always dark)", C(0x4F, 0xC8, 0xF0), C(0x8E, 0xA4, 0xB8), (C(0x18, 0x1E, 0x26), C(0x08, 0x0A, 0x0E))),
+        new("Cyberpunk", "Cyberpunk 2077", "Night city black, signal yellow and red (always dark)", C(0xFC, 0xEE, 0x0A), C(0xFF, 0x00, 0x3C), (C(0x11, 0x0C, 0x0F), C(0x06, 0x06, 0x08))),
+        new("Mgs1", "Metal Gear Solid", "Shadow Moses: arctic night blue with codec green (always dark)", C(0x5C, 0xE0, 0x8C), C(0x2C, 0x6E, 0x9E), (C(0x0C, 0x14, 0x1C), C(0x03, 0x07, 0x0A))),
+        new("Mgs2", "Metal Gear Solid 2", "Sons of Liberty: Big Shell steel with cyan readouts (always dark)", C(0x4F, 0xC8, 0xF0), C(0x8E, 0xA4, 0xB8), (C(0x12, 0x17, 0x1D), C(0x06, 0x08, 0x0B))),
         // Cozy: warm charcoal like a dim lamp-lit room, terracotta accent, cream text; the app's other colours soften to match.
         new("Cozy", "Cozy", "Warm charcoal, terracotta and cream, every colour softened to match (always dark)", C(0xBF, 0x4E, 0x38), C(0xC9, 0x85, 0x3F),
-            (C(0x24, 0x1E, 0x1B), C(0x11, 0x0D, 0x0B)), Text: C(0xF1, 0xE8, 0xDF), Harmonize: true),
+            (C(0x1D, 0x18, 0x16), C(0x0E, 0x0B, 0x09)), Text: C(0xF1, 0xE8, 0xDF), Harmonize: true),
         new("Custom", "My colours", "Your own accent, glow and background (Settings)", C(0x9A, 0x5C, 0xFF), C(0x8A, 0x4D, 0xFF)),
     ];
 
@@ -457,6 +481,7 @@ public static class Palettes
         var tone = palette.Accent ?? palette.Tint;
         // Material colours off: cards and outlines keep WinUI's neutral grey; only the accent brushes change.
         bool material = AppState.Settings.Material;
+        bool shading = AppState.Settings.Shading;
 
         var dict = new ResourceDictionary();
         foreach (var (theme, dark) in new[] { ("Dark", true), ("Light", false), ("Default", true) })
@@ -472,16 +497,25 @@ public static class Palettes
             // (WinUI's are neutral grey). Barely there: text contrast stays the same.
             if (material && tone is { } cardTone)
             {
-            t["CardBackgroundFillColorDefaultBrush"] = new SolidColorBrush(dark
-                ? Color.FromArgb(0x14, Mix(Colors.White, cardTone, 0.55).R, Mix(Colors.White, cardTone, 0.55).G, Mix(Colors.White, cardTone, 0.55).B)
-                : Color.FromArgb(0xB8, Mix(Colors.White, cardTone, 0.05).R, Mix(Colors.White, cardTone, 0.05).G, Mix(Colors.White, cardTone, 0.05).B));
+            // Lit from above: a touch lighter at the top edge, a touch deeper at the bottom (the same amount on average as
+            // before), so every card and row has the same quiet shading instead of a flat sheet.
+            t["CardBackgroundFillColorDefaultBrush"] = dark
+                ? (shading ? Lit(Mix(Colors.White, cardTone, 0.55), 0x24, 0x09) : Solid(Mix(Colors.White, cardTone, 0.55), 0x14))
+                : new SolidColorBrush(Color.FromArgb(0xB8, Mix(Colors.White, cardTone, 0.05).R, Mix(Colors.White, cardTone, 0.05).G, Mix(Colors.White, cardTone, 0.05).B));
             // The rows inside cards take the same trace (a step lighter), so cards, rows and groups read as one material.
-            t["LayerOnAcrylicFillColorDefaultBrush"] = new SolidColorBrush(dark
-                ? Color.FromArgb(0x1A, Mix(Colors.White, cardTone, 0.55).R, Mix(Colors.White, cardTone, 0.55).G, Mix(Colors.White, cardTone, 0.55).B)
-                : Color.FromArgb(0xC8, Mix(Colors.White, cardTone, 0.04).R, Mix(Colors.White, cardTone, 0.04).G, Mix(Colors.White, cardTone, 0.04).B));
+            t["LayerOnAcrylicFillColorDefaultBrush"] = dark
+                ? (shading ? Lit(Mix(Colors.White, cardTone, 0.55), 0x2A, 0x10) : Solid(Mix(Colors.White, cardTone, 0.55), 0x1A))
+                : new SolidColorBrush(Color.FromArgb(0xC8, Mix(Colors.White, cardTone, 0.04).R, Mix(Colors.White, cardTone, 0.04).G, Mix(Colors.White, cardTone, 0.04).B));
             t["CardStrokeColorDefaultBrush"] = new SolidColorBrush(dark
                 ? Color.FromArgb(0x24, Mix(Colors.White, cardTone, 0.35).R, Mix(Colors.White, cardTone, 0.35).G, Mix(Colors.White, cardTone, 0.35).B)
                 : Color.FromArgb(0x1C, Mix(Colors.Black, cardTone, 0.5).R, Mix(Colors.Black, cardTone, 0.5).G, Mix(Colors.Black, cardTone, 0.5).B));
+            }
+            else if (dark && shading)
+            {
+                // Material colours off (the default): the same light from above on WinUI's neutral white fills (on average
+                // as bright as WinUI's own #0D / #09), so cards and rows have depth whatever the setting.
+                t["CardBackgroundFillColorDefaultBrush"] = Lit(Colors.White, 0x17, 0x07);
+                t["LayerOnAcrylicFillColorDefaultBrush"] = Lit(Colors.White, 0x13, 0x04);
             }
             if (palette.Accent is not { } accent)
             {
@@ -538,10 +572,27 @@ public static class Palettes
             if (target.TryGetValue(source, out var brush)) target[key] = brush;
     }
 
-    /// <summary>The window tint for the palette: a soft diagonal wash, stronger in the dark theme.</summary>
+    /// <summary>
+    /// The window tint for the palette. Scene themes: their own opaque gradient. The others sit on Mica: in the dark theme
+    /// (rc.5) a deep veil over it, so the window is a dark, modern charcoal rather than Mica's grey while the wallpaper's tone
+    /// still shows faintly through (not a flat black), with the palette's colour washing in from the corners; in the light
+    /// theme only the soft wash.
+    /// </summary>
     public static Brush? TintBrush(Palette palette, bool dark)
     {
         if (palette.Backdrop is { } scene) return SceneBrush(palette, scene.Top, scene.Bottom);
+        if (dark)
+        {
+            var veil = Color.FromArgb(0xFF, 0x0A, 0x0A, 0x0D);
+            var from = palette.Tint is { } t1 ? Mix(veil, t1, 0.12) : veil;
+            var to = (palette.Accent ?? palette.Tint) is { } t2 ? Mix(veil, t2, 0.07) : veil;
+            var dim = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1) };
+            // 2.0.0-rc.4: a lighter veil (was A8 / B4 / C0), halfway back to 1.3's Mica, as the painted backdrop.
+            dim.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x78, from.R, from.G, from.B), Offset = 0 });
+            dim.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x84, veil.R, veil.G, veil.B), Offset = 0.5 });
+            dim.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x90, to.R, to.G, to.B), Offset = 1 });
+            return dim;
+        }
         if (palette.Tint is not { } tint) return null;
         byte a = dark ? (byte)0x26 : (byte)0x14;
         var brush = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1) };
@@ -562,6 +613,20 @@ public static class Palettes
         brush.GradientStops.Add(new GradientStop { Color = bottom, Offset = 1 });
         return brush;
     }
+
+    /// <summary>A see-through fill of <paramref name="c"/>, <paramref name="top"/> alpha at the top edge to <paramref name="bottom"/> at the bottom.</summary>
+    static Brush Solid(Color c, byte alpha) => new SolidColorBrush(Color.FromArgb(alpha, c.R, c.G, c.B));
+
+    static Brush Lit(Color c, byte top, byte bottom) => new LinearGradientBrush
+    {
+        StartPoint = new Windows.Foundation.Point(0.5, 0),
+        EndPoint = new Windows.Foundation.Point(0.5, 1),
+        GradientStops =
+        {
+            new GradientStop { Color = Color.FromArgb(top, c.R, c.G, c.B), Offset = 0 },
+            new GradientStop { Color = Color.FromArgb(bottom, c.R, c.G, c.B), Offset = 1 },
+        },
+    };
 
     static Color Mix(Color a, Color b, double t) => Color.FromArgb(255,
         (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));

@@ -7,7 +7,7 @@
     xmlns:controls="using:HybridLauncher.Controls">
 
     <Grid>
-    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" ViewChanged="Scroller_ViewChanged">
+    <ScrollView x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" ContentOrientation="Vertical" ViewChanged="Scroller_ViewChanged" ScrollCompleted="Scroller_ScrollCompleted">
         <Grid x:Name="PageLayers">
         <!-- Under the banner a "floor" continues the art as a soft mirror that fades into the page, so the banner and the bar
              read as one surface. A layer of its own behind the page (a canvas never clips it), placed under the banner in code. -->
@@ -86,40 +86,55 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="LinksToggle" Style="{StaticResource BannerButton}" Padding="10,9" VerticalAlignment="Top" Opacity="0" Click="LinksToggle_Click"
+                <Button x:Name="LinksToggle" Style="{StaticResource BannerButton}" Padding="8,8" VerticalAlignment="Top" Opacity="0" Click="LinksToggle_Click"
                         ToolTipService.ToolTip="Hide the links">
                     <Button.OpacityTransition>
                         <ScalarTransition Duration="0:0:0.15" />
                     </Button.OpacityTransition>
-                    <FontIcon x:Name="LinksToggleIcon" Glyph="&#xED1A;" FontSize="16" />
+                    <FontIcon x:Name="LinksToggleIcon" Glyph="&#xED1A;" FontSize="13" />
                 </Button>
-                <StackPanel x:Name="LinkPills" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Spacing="10">
-                    <Button x:Name="NexusButton" Style="{StaticResource BannerButton}" Click="Nexus_Click" ToolTipService.ToolTip="Open this game's page on Nexus Mods">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Image x:Name="NexusIcon" Source="ms-appx:///Assets/Brands/NexusMods.svg" Width="22" Height="22" VerticalAlignment="Center" />
+                <!-- One frosted strip holding every link (1.4.0): flat buttons inside, small icons, so the links sit on the banner
+                     as a part of it rather than as separate big pills. -->
+                <Border x:Name="LinkPills" Grid.Column="1" VerticalAlignment="Top" CornerRadius="10" Padding="3">
+                    <Border.Background>
+                        <helpers:GlassBrush Tint="#8A1C1E24" Blur="18" />
+                    </Border.Background>
+                    <StackPanel Orientation="Horizontal" Spacing="2">
+                        <StackPanel.Resources>
+                            <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#26FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#14FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                        </StackPanel.Resources>
+                    <Button x:Name="NexusButton" Style="{StaticResource BannerLinkButton}" Click="Nexus_Click" ToolTipService.ToolTip="Open this game's page on Nexus Mods">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Image x:Name="NexusIcon" Source="ms-appx:///Assets/Brands/NexusMods.svg" Width="16" Height="16" VerticalAlignment="Center" />
                             <TextBlock x:Name="NexusLabel" Text="Nexus Mods" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="PcgwButton" Style="{StaticResource BannerButton}" Click="Pcgw_Click" ToolTipService.ToolTip="Open this game on PCGamingWiki">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Image x:Name="PcgwIcon" Source="ms-appx:///Assets/Brands/PCGamingWiki.png" Width="22" Height="22" VerticalAlignment="Center" />
+                    <Button x:Name="PcgwButton" Style="{StaticResource BannerLinkButton}" Click="Pcgw_Click" ToolTipService.ToolTip="Open this game on PCGamingWiki">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Image x:Name="PcgwIcon" Source="ms-appx:///Assets/Brands/PCGamingWiki.png" Width="16" Height="16" VerticalAlignment="Center" />
                             <TextBlock x:Name="PcgwLabel" Text="PCGamingWiki" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="SteamDbButton" Style="{StaticResource BannerButton}" Click="SteamDb_Click" Visibility="Collapsed" ToolTipService.ToolTip="Open this game on SteamDB (depots, updates, player counts)">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Image x:Name="SteamDbIcon" Source="ms-appx:///Assets/Brands/SteamDB.svg" Width="22" Height="22" VerticalAlignment="Center" />
+                    <Button x:Name="SteamDbButton" Style="{StaticResource BannerLinkButton}" Click="SteamDb_Click" Visibility="Collapsed" ToolTipService.ToolTip="Open this game on SteamDB (depots, updates, player counts)">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Image x:Name="SteamDbIcon" Source="ms-appx:///Assets/Brands/SteamDB.svg" Width="16" Height="16" VerticalAlignment="Center" />
                             <TextBlock x:Name="SteamDbLabel" Text="SteamDB" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="OptiWikiButton" Style="{StaticResource BannerButton}" Click="OptiWiki_Click" ToolTipService.ToolTip="Open this game's page on the OptiScaler wiki (compatibility and setup notes)">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="OptiWikiButton" Style="{StaticResource BannerLinkButton}" Click="OptiWiki_Click" ToolTipService.ToolTip="Open this game's page on the OptiScaler wiki (compatibility and setup notes)">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
                             <!-- OptiScaler's own wordmark (the project has no other logo), then "Wiki". -->
-                            <Image Source="ms-appx:///Assets/Brands/OptiScaler.png" Height="16" Stretch="Uniform" VerticalAlignment="Center" />
+                            <Image Source="ms-appx:///Assets/Brands/OptiScaler.png" Height="12" Stretch="Uniform" VerticalAlignment="Center" />
                             <TextBlock x:Name="OptiWikiLabel" Text="Wiki" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                </StackPanel>
+                    </StackPanel>
+                </Border>
                 </Grid>
 
                 <!-- What is installed in the game folder (OptiScaler, ReShade, Ultra+, RenoDX, Luma) and which version: small quiet
@@ -276,8 +291,8 @@
                                     </ToggleButton.Resources>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <!-- A bare sun, like the folder buttons' glyphs: amber-to-pink while Smart HDR is on, grey while off. -->
-                                        <Border x:Name="HdrIcon" Width="34" Height="34" CornerRadius="9" Background="#26FFB547" VerticalAlignment="Center">
-                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="18" />
+                                        <Border x:Name="HdrIcon" Width="26" Height="34" VerticalAlignment="Center">
+                                            <FontIcon x:Name="HdrGlyph" Glyph="&#xE706;" FontSize="20" />
                                         </Border>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock Text="HDR" FontWeight="Bold" FontSize="13" CharacterSpacing="60" />
@@ -288,8 +303,8 @@
                                 <!-- Cloud saves for this game: its state at a glance, the menu (sync now, older copies, folder) on click. -->
                                 <Button x:Name="CloudButton" Style="{StaticResource FlatGlassButton}" VerticalAlignment="Stretch" Padding="7,4,14,4" Click="CloudButton_Click">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Grid x:Name="CloudIcon" Width="34" Height="34" CornerRadius="9" Background="{ThemeResource TintCyanWashBrush}" VerticalAlignment="Center">
-                                            <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="18" />
+                                        <Grid x:Name="CloudIcon" Width="26" Height="34" VerticalAlignment="Center">
+                                            <FontIcon x:Name="CloudGlyph" Glyph="&#xE753;" FontSize="20" />
                                             <ProgressRing x:Name="CloudRing" Width="20" Height="20" IsActive="False" Visibility="Collapsed" Foreground="{ThemeResource TintCyanBrush}" />
                                         </Grid>
                                         <StackPanel VerticalAlignment="Center">
@@ -308,7 +323,7 @@
                             <StackPanel x:Name="FolderGroup" Grid.Column="5" Orientation="Horizontal" Spacing="10">
                             <Button x:Name="FolderButton" Style="{StaticResource FlatGlassButton}" Click="OpenFolder_Click" Padding="7,4,14,4" VerticalAlignment="Stretch">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <Border x:Name="FolderIcon" Width="34" Height="34" CornerRadius="9" Background="{ThemeResource TintAmberWashBrush}" VerticalAlignment="Center"><FontIcon Glyph="&#xE838;" FontSize="16" Foreground="{ThemeResource TintAmberBrush}" /></Border>
+                                    <Border x:Name="FolderIcon" Width="26" Height="34" VerticalAlignment="Center"><FontIcon Glyph="&#xE838;" FontSize="20" Foreground="{ThemeResource TintAmberBrush}" /></Border>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock x:Name="FolderLabel" Text="Game folder" />
                                         <!-- The install folder's size on disk, measured in the background. -->
@@ -319,7 +334,7 @@
                             <!-- The game's settings and save folders, from PCGamingWiki; shown only when they exist on this PC. -->
                             <Button x:Name="SaveFolderButton" Style="{StaticResource FlatGlassButton}" Padding="7,4,14,4" VerticalAlignment="Stretch" Click="SaveFolder_Click" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <Border x:Name="SaveIcon" Width="34" Height="34" CornerRadius="9" Background="{ThemeResource TintBlueWashBrush}" VerticalAlignment="Center"><FontIcon Glyph="&#xE74E;" FontSize="16" Foreground="{ThemeResource TintBlueBrush}" /></Border>
+                                    <Border x:Name="SaveIcon" Width="26" Height="34" VerticalAlignment="Center"><FontIcon Glyph="&#xE74E;" FontSize="20" Foreground="{ThemeResource TintBlueBrush}" /></Border>
                                     <StackPanel x:Name="SaveFolderLabel" VerticalAlignment="Center">
                                         <TextBlock Text="Saves folder" />
                                         <TextBlock x:Name="SaveSizeText" FontSize="11" FontWeight="Normal" Opacity="0.7" Text="Measuring…" />
@@ -328,7 +343,7 @@
                             </Button>
                             <Button x:Name="ConfigFolderButton" Style="{StaticResource FlatGlassButton}" Padding="7,4,14,4" VerticalAlignment="Stretch" Click="ConfigFolder_Click" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <Border x:Name="ConfigIcon" Width="34" Height="34" CornerRadius="9" Background="{ThemeResource TintVioletWashBrush}" VerticalAlignment="Center"><FontIcon Glyph="&#xE90F;" FontSize="16" Foreground="{ThemeResource TintVioletBrush}" /></Border>
+                                    <Border x:Name="ConfigIcon" Width="26" Height="34" VerticalAlignment="Center"><FontIcon Glyph="&#xE90F;" FontSize="20" Foreground="{ThemeResource TintVioletBrush}" /></Border>
                                     <StackPanel x:Name="ConfigFolderLabel" VerticalAlignment="Center">
                                         <TextBlock Text="Configuration folder" />
                                         <TextBlock x:Name="ConfigSizeText" FontSize="11" FontWeight="Normal" Opacity="0.7" Text="Measuring…" />
@@ -336,11 +351,11 @@
                                 </StackPanel>
                             </Button>
                             </StackPanel>
-                            <Button x:Name="AchButton" Grid.Column="6" Style="{StaticResource FlatGlassButton}" VerticalAlignment="Stretch" Click="AchButton_Click" Visibility="Collapsed" Padding="7,4,14,4" ToolTipService.ToolTip="Steam achievements">
+                            <Button x:Name="AchButton" Grid.Column="6" Style="{StaticResource FlatGlassButton}" VerticalAlignment="Stretch" Click="AchButton_Click" Visibility="Collapsed" Padding="7,4,14,4" ToolTipService.ToolTip="Achievements">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <!-- Hybrid Launcher's trophy (Icons.TrophyPath, set in code), scaled to the slot and centred in it. -->
-                                    <Border x:Name="AchTile" Width="34" Height="34" CornerRadius="9" Background="#26FFD34D" VerticalAlignment="Center">
-                                        <ContentControl x:Name="AchIcon" Width="20" Height="20" IsTabStop="False" Foreground="#FFFFD34D" VerticalAlignment="Center"
+                                    <Border x:Name="AchTile" Width="26" Height="34" VerticalAlignment="Center">
+                                        <ContentControl x:Name="AchIcon" Width="24" Height="24" IsTabStop="False" Foreground="#FFFFD34D" VerticalAlignment="Center"
                                                         HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                                     </Border>
                                     <TextBlock x:Name="AchButtonText" VerticalAlignment="Center" />
@@ -357,6 +372,17 @@
                         <TextBlock x:Name="ExeLine" Foreground="#B3FFFFFF" FontSize="12" IsTextSelectionEnabled="True" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                     </StackPanel>
                 </Border>
+                <!-- Light from above on the launch bar's glass: a sheen that fades by mid-height (depth from light, not a shadow;
+                     no outline). Laid over the bar, it takes no clicks. -->
+                <Border x:Name="LaunchSheen" Grid.Row="1" Margin="14,0,14,12" CornerRadius="18" IsHitTestVisible="False" Visibility="Collapsed">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#1CFFFFFF" Offset="0" />
+                            <GradientStop Color="#06FFFFFF" Offset="0.45" />
+                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
             </Grid>
 
             <!-- 3. The tab row (built in code: order, hidden tabs and drag to reorder come from the settings). While the page
@@ -365,13 +391,21 @@
                 <controls:TabStrip x:Name="Tabs" />
             </Border>
 
-            <!-- 3o. Game, OptiScaler wiki and PCGamingWiki: built in code the first time they are shown. -->
+
+            <!-- 3o. The Dashboard (DashboardView.cs), OptiScaler wiki and PCGamingWiki: built in code the first time they are shown. -->
             <Border x:Name="OverviewHost" Visibility="Collapsed" />
             <Border x:Name="PcgwHost" Visibility="Collapsed" />
             <Border x:Name="LinksHost" Visibility="Collapsed" />
+            <!-- Auto (2.0.0-rc.7): the mods this game can use, planned together and installed with one click (AutoView.cs). -->
+            <Border x:Name="AutoHost" Visibility="Collapsed" />
+            <!-- Mods (1.4.0-rc.18): the installed mods first (GamePage.Mods.cs), then each mod's section. -->
+            <Border x:Name="ModsOverviewHost" Visibility="Collapsed" />
             <Border x:Name="ReShadeHost" Visibility="Collapsed" />
             <Border x:Name="RenoDxHost" Visibility="Collapsed" />
             <Border x:Name="LumaHost" Visibility="Collapsed" />
+            <Border x:Name="Dlss5Host" Visibility="Collapsed" />
+            <Border x:Name="DxvkHost" Visibility="Collapsed" />
+            <Border x:Name="Vkd3dHost" Visibility="Collapsed" />
             <!-- Ultra+: install & versions, add-ons, settings (UltraPlusView.cs); add-ons and settings only when they have something. -->
             <Border x:Name="UltraInstallHost" Visibility="Collapsed" />
             <Border x:Name="UltraAddonsHost" Visibility="Collapsed" />
@@ -402,9 +436,9 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <!-- The state: a solid disc in its colour with a white glyph (a check once installed). -->
-                            <Border x:Name="StatusIconCircle" Width="40" Height="40" CornerRadius="20" VerticalAlignment="Top" Margin="0,2,0,0">
-                                <FontIcon x:Name="StatusIcon" Glyph="&#xE73E;" FontSize="18" Foreground="White" />
+                            <!-- The state: its glyph in its colour (a check once installed). -->
+                            <Border x:Name="StatusIconCircle" Width="34" Height="40" VerticalAlignment="Top" Margin="0,2,0,0">
+                                <FontIcon x:Name="StatusIcon" Glyph="&#xE73E;" FontSize="28" />
                             </Border>
                             <!-- Three lines, each with one job: what (version), which build, then the facts as small chips. -->
                             <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
@@ -476,14 +510,12 @@
                         </Grid>
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
 
-                        <StackPanel Padding="20,16,20,20" Spacing="22">
-                            <!-- Step 1: the version. -->
+                        <!-- One block since 2.0, not three numbered steps: the build, the setup options folded under it, and the
+                             action row. Nothing is indented under a step number any more. -->
+                        <StackPanel Padding="20,16,20,20" Spacing="12">
+                            <!-- The version. -->
                             <StackPanel Spacing="10">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <controls:StepBadge Number="1" />
-                                    <TextBlock Text="Choose a version" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                                </StackPanel>
-                                <StackPanel Spacing="10" Margin="38,0,0,0">
+                                <StackPanel Spacing="10">
                                     <!-- The four sources of a build, one line each (what they are is said in the hint under the list). -->
                                     <Grid x:Name="ChannelCards" ColumnSpacing="8" RowSpacing="8">
                                         <Grid.ColumnDefinitions>
@@ -602,8 +634,8 @@
                                                 <ToggleSwitch x:Name="NotifyToggle" Grid.Column="2" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="NotifyToggle_Toggled" />
                                             </Grid>
                                         </Border>
-                                        <!-- Forks and custom builds: one stored nvngx_dlssnr.dll, put in the installs whose build needs DLSS 5 neural
-                                             rendering. On globally sets the default; On for this game follows it unless ticked otherwise here. -->
+                                        <!-- DLSS 5 neural rendering (1.4.0-rc.13): what this game has, and the Setup DLSS 5 window (the PC's card,
+                                             the model file, janblade's F5 for NVIDIA and the vendor-neutral port, DLSSNR-AMD for Radeon). -->
                                         <Border x:Name="DlssNrRow" Grid.Row="3" Grid.ColumnSpan="2" Style="{StaticResource RowStyle}" Padding="12,6" Visibility="Collapsed">
                                             <Grid ColumnSpacing="12">
                                                 <Grid.ColumnDefinitions>
@@ -611,27 +643,19 @@
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <FontIcon Glyph="&#xE945;" FontSize="15" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="DLSS NR model file" Style="{StaticResource RowHeader}" />
+                                                    <TextBlock Text="DLSS 5" Style="{StaticResource RowHeader}" />
                                                     <TextBlock x:Name="DlssNrHint" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                                <Button x:Name="DlssNrChangeButton" Grid.Column="2" Padding="10,5" VerticalAlignment="Center" Click="DlssNrChange_Click" Visibility="Collapsed"
-                                                        ToolTipService.ToolTip="Pick another nvngx_dlssnr.dll">
-                                                    <TextBlock Text="Change…" />
+                                                <Button x:Name="Dlss5SetupButton" Grid.Column="2" Padding="12,5" VerticalAlignment="Center" Click="Dlss5Setup_Click">
+                                                    <TextBlock Text="Open in Mods" />
                                                 </Button>
-                                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                                    <CheckBox x:Name="DlssNrGlobalCheck" Content="On globally" MinWidth="0" Click="DlssNrGlobal_Click"
-                                                              ToolTipService.ToolTip="Every game whose OptiScaler build needs it gets the file, unless the game says otherwise" />
-                                                    <CheckBox x:Name="DlssNrGameCheck" Content="On for this game" MinWidth="0" Click="DlssNrGame_Click"
-                                                              ToolTipService.ToolTip="This game only. It follows On globally until you change it here" />
-                                                </StackPanel>
-                                                <!-- Not everyone uses DLSS NR: hides this row in every game (Settings, Game page brings it back). -->
-                                                <Button x:Name="DlssNrHideButton" Grid.Column="4" Width="32" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center"
+                                                <!-- Not everyone uses DLSS 5: hides this row in this game (its gear brings it back; Settings → Game page hides it everywhere). -->
+                                                <Button x:Name="DlssNrHideButton" Grid.Column="3" Width="32" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center"
                                                         Background="Transparent" BorderThickness="0" Click="DlssNrHide_Click"
-                                                        ToolTipService.ToolTip="Hide this row in every game" AutomationProperties.Name="Hide this row in every game">
+                                                        ToolTipService.ToolTip="Hide this row for this game" AutomationProperties.Name="Hide this row for this game">
                                                     <FontIcon Glyph="&#xED1A;" FontSize="14" Opacity="0.75" />
                                                 </Button>
                                             </Grid>
@@ -640,23 +664,20 @@
                                 </StackPanel>
                             </StackPanel>
 
-                            <!-- Step 2: the answers given to the setup script. -->
+                            <!-- The answers given to the setup script. -->
                             <StackPanel Spacing="10">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <controls:StepBadge Number="2" />
-                                    <TextBlock Text="Setup options" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                                </StackPanel>
-                                <Expander x:Name="SetupExpander" Margin="38,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
+                                <Expander x:Name="SetupExpander" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
                                     <Expander.Header>
                                         <Grid Padding="0,8" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <FontIcon Glyph="&#xE9E9;" FontSize="16" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <StackPanel Grid.Column="1">
-                                                <TextBlock Text="Answers for setup_windows.bat" Style="{StaticResource BodyTextBlockStyle}" TextWrapping="Wrap" />
-                                                <TextBlock x:Name="SetupSummary" Style="{StaticResource RowDescription}" />
+                                            <!-- 2.0.0: title and summary larger and brighter, so the setup reads at a glance. -->
+                                            <FontIcon Glyph="&#xE9E9;" FontSize="18" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                <TextBlock Text="Setup options" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextWrapping="Wrap" />
+                                                <TextBlock x:Name="SetupSummary" FontSize="14" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Opacity="0.88" TextWrapping="Wrap" />
                                             </StackPanel>
                                         </Grid>
                                     </Expander.Header>
@@ -669,7 +690,6 @@
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <StackPanel VerticalAlignment="Center">
                                                     <TextBlock Text="OptiScaler file name" Style="{StaticResource RowHeader}" />
-                                                    <TextBlock Text="dxgi.dll works for most games. Vulkan: winmm.dll. Xbox / Game Pass: winmm.dll or version.dll." Style="{StaticResource RowDescription}" />
                                                 </StackPanel>
                                                 <ComboBox x:Name="DllCombo" Grid.Column="1" MinWidth="170" VerticalAlignment="Center" SelectionChanged="SetupChanged" />
                                             </Grid>
@@ -723,13 +743,11 @@
                                 </Expander>
                             </StackPanel>
 
-                            <!-- Step 3: install (silent or with the bat window), and what to do once installed. -->
+                            <!-- Install (silent or with the bat window), and what to do once installed. -->
                             <StackPanel Spacing="10">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <controls:StepBadge Number="3" />
-                                    <TextBlock x:Name="Step3Title" Text="Install" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
-                                </StackPanel>
-                                <Border Margin="38,0,0,0" Style="{StaticResource RowStyle}" Padding="14,12">
+                                <!-- Kept for the code that names the action; the buttons say it themselves. -->
+                                <TextBlock x:Name="Step3Title" Text="Install" Visibility="Collapsed" />
+                                <Border Style="{StaticResource RowStyle}" Padding="14,12">
                                     <StackPanel Spacing="10">
                                         <Grid x:Name="ActionRow" ColumnSpacing="8" RowSpacing="8">
                                             <Grid.ColumnDefinitions>
@@ -794,7 +812,7 @@
                                 </Border>
 
                                 <!-- The keys OptiScaler listens to in game, each set by pressing it (filled from OptiScaler.ini). -->
-                                <StackPanel x:Name="KeysPanel" Margin="38,4,0,0" Spacing="6" Visibility="Collapsed">
+                                <StackPanel x:Name="KeysPanel" Margin="0,4,0,0" Spacing="6" Visibility="Collapsed">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="&#xE92E;" FontSize="14" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                                         <TextBlock Text="In-game keys" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
@@ -803,7 +821,7 @@
                                     <StackPanel x:Name="KeysRows" Spacing="4" />
                                 </StackPanel>
 
-                                <Expander x:Name="LogExpander" Margin="38,0,0,0" Header="Setup log" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed">
+                                <Expander x:Name="LogExpander" Header="Setup log" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="Collapsed">
                                     <ScrollViewer x:Name="LogScroller" MaxHeight="280" HorizontalScrollBarVisibility="Auto">
                                         <TextBlock x:Name="LogText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" TextWrapping="NoWrap" />
                                     </ScrollViewer>
@@ -812,90 +830,13 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-                <!-- A preview of the game's OptiScaler wiki entry (built in code), with the way to its tab. -->
-                <Border x:Name="OptiWikiPreviewHost" />
                 </StackPanel>
 
+                <!-- rc.5: beside the install only what helps choose and keep a build: this game's compatibility on the OptiScaler
+                     wiki, the versions saved on this PC and where OptiScaler lives. The plugins and DLLs have their own section. -->
                 <StackPanel x:Name="SideColumn" Grid.Column="1" Spacing="12" VerticalAlignment="Top">
-                <Border x:Name="AsiCard" Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="10">
-                        <Grid x:Name="AsiHeader" ColumnSpacing="4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel x:Name="AsiTitle" Spacing="2" VerticalAlignment="Center" Background="Transparent">
-                                <TextBlock Text="ASI plugins" Style="{StaticResource SectionTitle}" />
-                                <TextBlock x:Name="AsiSummary" Style="{StaticResource RowDescription}" />
-                            </StackPanel>
-                            <Button x:Name="AsiAddButton" Grid.Column="1" Style="{StaticResource IconButton}" Click="AsiAdd_Click" ToolTipService.ToolTip="Add .asi files (copied into the shared folder)">
-                                <FontIcon Glyph="&#xE710;" FontSize="14" />
-                            </Button>
-                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="AsiRefresh_Click" ToolTipService.ToolTip="Refresh">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
-                            </Button>
-                            <Button Grid.Column="3" Style="{StaticResource IconButton}" Click="AsiOpen_Click" ToolTipService.ToolTip="Open the shared ASI plugins folder">
-                                <FontIcon Glyph="&#xE838;" FontSize="14" />
-                            </Button>
-                        </Grid>
-                        <StackPanel x:Name="AsiBody" Spacing="10">
-                        <TextBlock Style="{StaticResource RowDescription}"
-                                   Text="Optional extras, kept in one shared folder. The switches are for this game only: a plugin turned on is copied into its OptiScaler install, and removed when turned off." />
-                        <StackPanel x:Name="AsiList" Spacing="4" />
-                        <HyperlinkButton x:Name="AsiEmpty" Click="AsiAdd_Click" Padding="0">
-                            <TextBlock Text="No .asi files yet: add one" TextWrapping="Wrap" />
-                        </HyperlinkButton>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- Custom dlls (OptiScaler nightly): extra upscalers and DLSSG frame generation, shared, switched per game. -->
-                <Border x:Name="CustomDllCard" Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="10">
-                        <Grid x:Name="CustomDllHeader" ColumnSpacing="4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel x:Name="CustomDllTitle" Spacing="2" VerticalAlignment="Center" Background="Transparent">
-                                <TextBlock Text="Custom DLLs" Style="{StaticResource SectionTitle}" />
-                                <TextBlock x:Name="CustomDllSummary" Style="{StaticResource RowDescription}" />
-                            </StackPanel>
-                            <Button x:Name="CustomDllAddButton" Grid.Column="1" Style="{StaticResource IconButton}" ToolTipService.ToolTip="Add custom DLLs (copied into the shared folder)">
-                                <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                <Button.Flyout>
-                                    <MenuFlyout x:Name="CustomDllAddMenu" Placement="BottomEdgeAlignedRight">
-                                        <MenuFlyoutItem Text="DLL files…" Click="CustomDllAddFiles_Click" ToolTipService.ToolTip="Pick DLLs, name them and say what they are">
-                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                        <MenuFlyoutItem Text="A folder laid out for OptiScaler…" Click="CustomDllAddFolder_Click">
-                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                    </MenuFlyout>
-                                </Button.Flyout>
-                            </Button>
-                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CustomDllRefresh_Click" ToolTipService.ToolTip="Refresh">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
-                            </Button>
-                            <Button Grid.Column="3" Style="{StaticResource IconButton}" Click="CustomDllOpen_Click" ToolTipService.ToolTip="Open the shared custom DLLs folder">
-                                <FontIcon Glyph="&#xE838;" FontSize="14" />
-                            </Button>
-                        </Grid>
-                        <StackPanel x:Name="CustomDllBody" Spacing="10">
-                        <TextBlock Style="{StaticResource RowDescription}"
-                                   Text="Extra FSR, DLSS or DLSSG DLLs for OptiScaler (nightly). Turn an entry on for this game, then pick it by name in OptiScaler's upscaler or FG list." />
-                        <StackPanel x:Name="CustomDllList" Spacing="4" />
-                        <HyperlinkButton x:Name="CustomDllEmpty" Click="CustomDllAddFiles_Click" Padding="0">
-                            <TextBlock Text="No custom DLLs yet: add one" TextWrapping="Wrap" />
-                        </HyperlinkButton>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
+                <!-- A preview of the game's OptiScaler wiki entry (built in code), with the way to its section. -->
+                <Border x:Name="OptiWikiPreviewHost" />
                 <!-- Every OptiScaler version kept on this PC, each with a bin. -->
                 <Border x:Name="VersionsCard" Style="{StaticResource CardStyle}">
                     <StackPanel Spacing="10">
@@ -912,9 +853,6 @@
                         <controls:SavedVersionsList x:Name="VersionsList" />
                     </StackPanel>
                 </Border>
-
-                <!-- The newest releases, previewed: Open goes to the Release notes section. -->
-                <Border x:Name="OptiNotesPreviewHost" />
 
                 <!-- Where OptiScaler lives: the project on GitHub and the test builds channel on its Discord. -->
                 <Border x:Name="OptiLinksCard" Style="{StaticResource CardStyle}">
@@ -937,6 +875,97 @@
                 </StackPanel>
             </Grid>
 
+            <!-- 3b'. Plugins &amp; DLLs (rc.5): what OptiScaler loads besides itself, side by side (stacked on narrow windows):
+                 ASI plugins and the custom upscaler / frame generation DLLs, both shared by every game and switched per game. -->
+            <Grid x:Name="OptiPluginsGrid" ColumnSpacing="12" RowSpacing="12" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                    <Border x:Name="AsiCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Spacing="10">
+                            <Grid x:Name="AsiHeader" ColumnSpacing="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="AsiTitle" Spacing="2" VerticalAlignment="Center" Background="Transparent">
+                                    <TextBlock Text="ASI plugins" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock x:Name="AsiSummary" Style="{StaticResource RowDescription}" />
+                                </StackPanel>
+                                <Button x:Name="AsiAddButton" Grid.Column="1" Style="{StaticResource IconButton}" Click="AsiAdd_Click" ToolTipService.ToolTip="Add .asi files (copied into the shared folder)">
+                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                </Button>
+                                <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="AsiRefresh_Click" ToolTipService.ToolTip="Refresh">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                </Button>
+                                <Button Grid.Column="3" Style="{StaticResource IconButton}" Click="AsiOpen_Click" ToolTipService.ToolTip="Open the shared ASI plugins folder">
+                                    <FontIcon Glyph="&#xE838;" FontSize="14" />
+                                </Button>
+                            </Grid>
+                            <StackPanel x:Name="AsiBody" Spacing="10">
+                            <TextBlock Style="{StaticResource RowDescription}"
+                                       Text="Optional extras, kept in one shared folder. The switches are for this game only: a plugin turned on is copied into its OptiScaler install, and removed when turned off." />
+                            <StackPanel x:Name="AsiList" Spacing="4" />
+                            <HyperlinkButton x:Name="AsiEmpty" Click="AsiAdd_Click" Padding="0">
+                                <TextBlock Text="No .asi files yet: add one" TextWrapping="Wrap" />
+                            </HyperlinkButton>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Custom dlls (OptiScaler nightly): extra upscalers and DLSSG frame generation, shared, switched per game. -->
+                    <Border x:Name="CustomDllCard" Grid.Column="1" Style="{StaticResource CardStyle}">
+                        <StackPanel Spacing="10">
+                            <Grid x:Name="CustomDllHeader" ColumnSpacing="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="CustomDllTitle" Spacing="2" VerticalAlignment="Center" Background="Transparent">
+                                    <TextBlock Text="Custom DLLs" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock x:Name="CustomDllSummary" Style="{StaticResource RowDescription}" />
+                                </StackPanel>
+                                <Button x:Name="CustomDllAddButton" Grid.Column="1" Style="{StaticResource IconButton}" ToolTipService.ToolTip="Add custom DLLs (copied into the shared folder)">
+                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                    <Button.Flyout>
+                                        <MenuFlyout x:Name="CustomDllAddMenu" Placement="BottomEdgeAlignedRight">
+                                            <MenuFlyoutItem Text="DLL files…" Click="CustomDllAddFiles_Click" ToolTipService.ToolTip="Pick DLLs, name them and say what they are">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="A folder laid out for OptiScaler…" Click="CustomDllAddFolder_Click">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Button.Flyout>
+                                </Button>
+                                <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CustomDllRefresh_Click" ToolTipService.ToolTip="Refresh">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                </Button>
+                                <Button Grid.Column="3" Style="{StaticResource IconButton}" Click="CustomDllOpen_Click" ToolTipService.ToolTip="Open the shared custom DLLs folder">
+                                    <FontIcon Glyph="&#xE838;" FontSize="14" />
+                                </Button>
+                            </Grid>
+                            <StackPanel x:Name="CustomDllBody" Spacing="10">
+                            <TextBlock Style="{StaticResource RowDescription}"
+                                       Text="Extra FSR, DLSS or DLSSG DLLs for OptiScaler (nightly). Turn an entry on for this game, then pick it by name in OptiScaler's upscaler or FG list." />
+                            <StackPanel x:Name="CustomDllList" Spacing="4" />
+                            <HyperlinkButton x:Name="CustomDllEmpty" Click="CustomDllAddFiles_Click" Padding="0">
+                                <TextBlock Text="No custom DLLs yet: add one" TextWrapping="Wrap" />
+                            </HyperlinkButton>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+            </Grid>
+
             <!-- 3a'. Quick Panel: the few OptiScaler.ini settings changed before almost every session (frame cap, frame generation,
                  ASI plugins), right under the install. Filled in code (GamePage.Ini.cs). -->
             <Border x:Name="QuickPanelCard" Style="{StaticResource CardStyle}" Visibility="Collapsed">
@@ -947,9 +976,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Border Width="34" Height="34" CornerRadius="8" Background="#33F2B82E" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE945;" FontSize="16" Foreground="{ThemeResource TintGoldBrush}" />
-                        </Border>
+                        <controls:IconTile x:Name="QuickPanelIcon" Glyph="&#xE945;" Tint="Gold" Size="34" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock Text="Quick Panel" Style="{StaticResource SectionTitle}" />
                             <TextBlock x:Name="QuickPanelHint" Style="{StaticResource RowDescription}" TextWrapping="Wrap"
@@ -1012,9 +1039,7 @@
                         </Grid.RowDefinitions>
                         <!-- The section's icon, as the Quick Panel above has its own (the Settings sub-tab's icon and colour). -->
                         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                        <Border Width="34" Height="34" CornerRadius="8" Background="#335FA8FF" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE9E9;" FontSize="16" Foreground="{ThemeResource TintBlueBrush}" />
-                        </Border>
+                        <controls:IconTile x:Name="IniIcon" Glyph="&#xE9E9;" Tint="Blue" Size="34" />
                         <StackPanel Spacing="2" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="10">
                                 <TextBlock Text="OptiScaler settings" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
@@ -1116,12 +1141,27 @@
             </Border>
         </StackPanel>
         </Grid>
-    </ScrollViewer>
+    </ScrollView>
 
     <!-- The tab row while the page is scrolled past it: pinned to the top, on an acrylic strip. -->
     <Border x:Name="StickyBar" VerticalAlignment="Top" Visibility="Collapsed" Margin="0,0,14,0" SizeChanged="StickyBar_SizeChanged"
             Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
-        <Border x:Name="StickySlot" MaxWidth="2600" Padding="20,8,20,8" />
+        <!-- Left of the row, an arrow back to the top of the page (the banner); a spacer as wide on the right keeps the row centred. -->
+        <Grid MaxWidth="2600">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="64" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="64" />
+            </Grid.ColumnDefinitions>
+            <!-- 2.0.0-rc.6: larger, centred in its column, level with the tab row, on a light fill (at 15 px on nothing it was
+                 hard to see). -->
+            <Button x:Name="TopButton" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="8,8,0,0" Width="40" Height="40" Padding="0"
+                    CornerRadius="10" Background="{ThemeResource SubtleFillColorSecondaryBrush}" BorderThickness="0" Click="TopButton_Click"
+                    ToolTipService.ToolTip="Back to the top" AutomationProperties.Name="Back to the top">
+                <FontIcon Glyph="&#xE74A;" FontSize="20" FontWeight="SemiBold" />
+            </Button>
+            <Border x:Name="StickySlot" Grid.Column="1" Padding="20,8,20,8" />
+        </Grid>
     </Border>
 
     <!-- PCGamingWiki's contents column while the tab bar is pinned: held here, beside its place in the page, under the bar. -->

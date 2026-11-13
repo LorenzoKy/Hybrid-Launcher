@@ -169,7 +169,7 @@ public static partial class RenoDx
             if (tested.Game is not null)
                 matches.Add(new RenoDxMatch(mod, (tested.Working ? L.T("Tested with this game") : L.T("Tested with this game (in progress)")) + (tested.Notes.Length > 0 ? $": {tested.Notes}" : ""), 70));
             else if (mod.Engine == engine)
-                matches.Add(new RenoDxMatch(mod, L.F("Generic mod for {0} games (this game runs on {0})", engine), 30));
+                matches.Add(new RenoDxMatch(mod, L.F("Generic mod for {0} games (this game runs on {0})", AutoSetup.EngineName(mod.Engine!)), 30));
         }
         return matches.OrderByDescending(m => m.Score).ToList();
     }

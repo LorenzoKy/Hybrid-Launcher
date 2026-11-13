@@ -43,6 +43,13 @@ public static class HardwareInfo
         Safe(ReadSystem, new SystemInfo("Windows", "", "", "", null, true, false)),
         Safe(ReadDrives, []));
 
+    /// <summary>The graphics cards alone (read once and kept: they do not change while the app runs).</summary>
+    public static IReadOnlyList<GpuInfo> Gpus() => _gpus ??= Safe(ReadGpus, []);
+    static IReadOnlyList<GpuInfo>? _gpus;
+
+    /// <summary>A display of this PC has HDR on now (the Auto tab recommends HDR mods then).</summary>
+    public static bool AnyHdrOn() => Safe(() => Displays.Read().Any(d => d.HdrOn), false);
+
     static T Safe<T>(Func<T> read, T fallback)
     {
         try { return read(); }

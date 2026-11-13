@@ -12,7 +12,9 @@ namespace HybridLauncher.Views;
 /// Settings → the search box by the title: one search through every tab. Each setting is found by what the page itself shows
 /// (its name, its description, its section, the choices of its lists), so it follows the UI language and every row added later
 /// with no list to keep. While there is text, the tabs give way to what matches, grouped by tab and section; picking a result
-/// opens its tab, scrolls to the setting and lights it for a moment.
+/// opens its tab, scrolls to the setting and lights it for a moment. Since 2.0 a setting is also found by its English name in
+/// an Italian UI, by common other words (synonyms), and with a typo; the words typed are lit in the results; Down goes to the
+/// results and Escape clears the search.
 /// </summary>
 public sealed partial class SettingsPage
 {
@@ -24,7 +26,9 @@ public sealed partial class SettingsPage
     /// <summary>Ctrl+F on Settings.</summary>
     public void FocusSearch()
     {
-        SettingsSearch.Focus(FocusState.Keyboard);
+        _searchWanted = true;
+        try { SettingsSearch.Focus(FocusState.Keyboard); }
+        finally { DispatcherQueue.TryEnqueue(() => _searchWanted = false); }
     }
 
     Panel PanelOf(string tab) => tab switch
@@ -36,6 +40,36 @@ public sealed partial class SettingsPage
     string TabName(string tab) => SettingsTabs.Items.FirstOrDefault(i => i.Tag as string == tab)?.Text ?? tab;
 
     void SettingsSearch_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args) => ShowSearch(sender.Text);
+
+    /// <summary>Down: to the first result (then Up and Down move through them). Escape: the search is cleared, the tab comes back.</summary>
+    void SettingsSearch_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Down && _searching && SearchResults.Children.OfType<Button>().FirstOrDefault() is { } first)
+        {
+            first.Focus(FocusState.Keyboard);
+            first.StartBringIntoView();
+            e.Handled = true;
+        }
+        else if (e.Key == Windows.System.VirtualKey.Escape && SettingsSearch.Text.Length > 0)
+        {
+            SettingsSearch.Text = "";
+            ShowSearch("");
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Up and Down between the results; Up from the first one goes back to the box.</summary>
+    void Result_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down)) return;
+        var buttons = SearchResults.Children.OfType<Button>().ToList();
+        int i = buttons.IndexOf((Button)sender);
+        if (i < 0) return;
+        int next = e.Key == Windows.System.VirtualKey.Down ? i + 1 : i - 1;
+        if (next < 0) FocusSearch();
+        else if (next < buttons.Count) { buttons[next].Focus(FocusState.Keyboard); buttons[next].StartBringIntoView(); }
+        e.Handled = true;
+    }
 
     void SettingsSearch_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {
@@ -55,18 +89,19 @@ public sealed partial class SettingsPage
             _index = null;
             SearchResults.Children.Clear();
             SearchResults.Visibility = Visibility.Collapsed;
-            SettingsTabs.Visibility = Visibility.Visible;
             ShowSettingsTab(_openTab);
+            UpdateNav();
             return;
         }
         if (!_searching)
         {
             _searching = true;
-            SettingsTabs.Visibility = Visibility.Collapsed;
+            UpdateNav();
             TabIntro.Visibility = Visibility.Collapsed;
-            RestoreDefaultsButton.Visibility = Visibility.Collapsed;
+            ShowRestoreDefaults(false);
             foreach (var item in SettingsTabs.Items) if (item.Tag is string t) PanelOf(t).Visibility = Visibility.Collapsed;
             SearchResults.Visibility = Visibility.Visible;
+            PageScroller.ScrollTo(0, 0, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled));
         }
         FillResults(Search(text));
     }
@@ -200,29 +235,177 @@ public sealed partial class SettingsPage
     }
 
     /// <summary>
+    /// Other words for what people type: a word on the left also finds settings with one of the words on the right. English
+    /// and Italian, folded (no accents). Only the obvious ones: a wrong synonym fills the results with noise.
+    /// </summary>
+    static readonly Dictionary<string, string[]> Synonyms = new(StringComparer.Ordinal)
+    {
+        ["dark"] = ["theme", "tema"], ["light"] = ["theme", "tema"], ["scuro"] = ["theme", "tema"], ["chiaro"] = ["theme", "tema"],
+        ["color"] = ["colour", "colore", "theme", "palette"], ["colore"] = ["colour", "theme", "tema", "palette"],
+        ["startup"] = ["start", "windows", "avvio"], ["boot"] = ["start", "windows", "avvio"], ["autostart"] = ["start", "windows", "avvio"],
+        ["audio"] = ["sound", "suono", "suoni"], ["volume"] = ["sound", "suono", "suoni"],
+        ["toast"] = ["notification", "notifica", "notifiche"], ["popup"] = ["notification", "notifica", "pop-up"], ["alert"] = ["notification", "notifica"],
+        ["avvisi"] = ["notification", "notifica", "notifiche"],
+        ["lang"] = ["language", "lingua"], ["lingua"] = ["language"], ["italiano"] = ["language", "lingua"], ["english"] = ["language", "lingua"],
+        ["trophy"] = ["achievement", "obiettivo", "platinum"], ["trophies"] = ["achievement", "obiettivi", "platinum"], ["trofei"] = ["achievement", "obiettivi", "platinum"],
+        ["gamepad"] = ["controller"], ["joystick"] = ["controller"], ["pad"] = ["controller"], ["joypad"] = ["controller"],
+        ["disk"] = ["storage", "cache", "spazio", "folder"], ["space"] = ["storage", "cache", "spazio"], ["disco"] = ["storage", "cache", "spazio"],
+        ["backup"] = ["cloud", "save", "salvataggi"], ["saves"] = ["cloud", "save", "salvataggi"], ["salvataggi"] = ["cloud", "save"],
+        ["upgrade"] = ["update", "aggiornamento", "aggiornamenti"], ["aggiorna"] = ["update", "aggiornamento", "aggiornamenti"],
+        ["login"] = ["sign", "account", "accedi"], ["signin"] = ["sign", "account", "accedi"], ["accesso"] = ["sign", "account", "accedi"],
+        ["blur"] = ["glass", "acrylic", "vetro"], ["transparency"] = ["glass", "acrylic", "vetro", "trasparenza"], ["trasparenza"] = ["glass", "acrylic", "vetro"],
+        ["animation"] = ["motion", "animazioni"], ["animazioni"] = ["motion", "animation"],
+        ["font"] = ["text", "testo"], ["tray"] = ["notification area", "area di notifica", "background"],
+    };
+
+    /// <summary>What one setting is searched in, folded once per search: its name (shown and English), its section, the rest.</summary>
+    sealed record Prepared(Hit Hit, string Title, string Section, string Rest, string[] Words);
+
+    List<Prepared>? _prepared;
+    List<Hit>? _preparedFrom;
+
+    List<Prepared> PreparedIndex()
+    {
+        var index = Index();
+        if (_prepared is not null && ReferenceEquals(_preparedFrom, index)) return _prepared;
+        var list = new List<Prepared>();
+        foreach (var h in index)
+        {
+            // In an Italian UI the English name finds the setting too.
+            string title = Fold(h.Title + " " + L.English(h.Title));
+            string section = Fold(h.Section + " " + L.English(h.Section));
+            string tab = TabName(h.Tab);
+            string rest = Fold(h.Description + " " + L.English(h.Description) + " " + h.Keywords + " " + tab + " " + L.English(tab));
+            var words = (title + " " + section + " " + rest).Split(WordBreaks, StringSplitOptions.RemoveEmptyEntries).Distinct().ToArray();
+            list.Add(new Prepared(h, title, section, rest, words));
+        }
+        _preparedFrom = index;
+        return _prepared = list;
+    }
+
+    static readonly char[] WordBreaks = " ,.;:()/-–—\"“”'’…·›\n\t".ToCharArray();
+
+    /// <summary>
     /// The settings that have every word typed (in their name, section, description, choices or tab), best first: a word in the
-    /// name counts most, then the section, then the rest; a word that starts a word counts more than one inside it.
+    /// name counts most, then the section, then the rest; a word that starts a word counts more than one inside it. A word
+    /// can also be met by a synonym (half as much) or, from four letters on, by a word one typo away (two from seven letters).
+    /// A name holding the whole text as typed comes first.
     /// </summary>
     List<Hit> Search(string text)
     {
         var words = Fold(text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length == 0) return [];
+        string phrase = string.Join(" ", words);
         var scored = new List<(Hit Hit, int Score, int Order)>();
         int order = 0;
-        foreach (var h in Index())
+        foreach (var p in PreparedIndex())
         {
             order++;
-            string title = Fold(h.Title), section = Fold(h.Section), rest = Fold(h.Description + " " + h.Keywords + " " + TabName(h.Tab));
             int score = 0;
             foreach (var w in words)
             {
-                int best = StartsWord(title, w) ? 12 : title.Contains(w) ? 8 : StartsWord(section, w) ? 5 : section.Contains(w) ? 3 : StartsWord(rest, w) ? 2 : rest.Contains(w) ? 1 : 0;
+                int best = Exact(p, w);
+                if (best == 0 && Synonyms.TryGetValue(w, out var others))
+                    foreach (var o in others)
+                        if (Exact(p, Fold(o)) is > 0 and var e) best = Math.Max(best, Math.Max(1, e / 2));
+                if (best == 0 && w.Length >= 4) best = Fuzzy(p, w);
                 if (best == 0) { score = 0; break; }
                 score += best;
             }
-            if (score > 0) scored.Add((h, score, order));
+            if (score == 0) continue;
+            if (Fold(p.Hit.Title) == phrase) score += 20;
+            else if (words.Length > 1 && p.Title.Contains(phrase, StringComparison.Ordinal)) score += 10;
+            scored.Add((p.Hit, score, order));
         }
         return scored.OrderByDescending(x => x.Score).ThenBy(x => x.Order).Select(x => x.Hit).ToList();
+    }
+
+    static int Exact(Prepared p, string w) =>
+        StartsWord(p.Title, w) ? 12 : p.Title.Contains(w, StringComparison.Ordinal) ? 8 : StartsWord(p.Section, w) ? 5
+        : p.Section.Contains(w, StringComparison.Ordinal) ? 3 : StartsWord(p.Rest, w) ? 2 : p.Rest.Contains(w, StringComparison.Ordinal) ? 1 : 0;
+
+    /// <summary>A word typed with a typo: the setting's closest word (or the start of one, while it is still being typed) within reach.</summary>
+    static int Fuzzy(Prepared p, string w)
+    {
+        int reach = w.Length >= 7 ? 2 : 1;
+        int best = 0;
+        foreach (var word in p.Words)
+        {
+            if (word.Length < w.Length - reach) continue;
+            int d = Distance(w, word, reach);
+            if (d > reach && word.Length > w.Length) d = Distance(w, word[..w.Length], reach);
+            if (d > reach) continue;
+            int s = StartsWord(p.Title, word) ? 6 : StartsWord(p.Section, word) ? 3 : 1;
+            if (s > best) best = s;
+            if (best == 6) break;
+        }
+        return best;
+    }
+
+    /// <summary>Edit distance (a letter added, dropped, changed, or two swapped), given up past <paramref name="max"/>.</summary>
+    static int Distance(string a, string b, int max)
+    {
+        if (Math.Abs(a.Length - b.Length) > max) return max + 1;
+        var d = new int[a.Length + 1, b.Length + 1];
+        for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+        for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            int rowMin = int.MaxValue;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                int v = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) v = Math.Min(v, d[i - 2, j - 2] + 1);
+                d[i, j] = v;
+                rowMin = Math.Min(rowMin, v);
+            }
+            if (rowMin > max) return max + 1;
+        }
+        return d[a.Length, b.Length];
+    }
+
+    /// <summary>
+    /// A text with the words typed lit in the accent colour (each word where it starts a word, else anywhere), for the results.
+    /// Matched on the folded text, which keeps one letter per letter for the scripts the app is in.
+    /// </summary>
+    static void Highlight(TextBlock tb, string text, string[] words)
+    {
+        tb.Inlines.Clear();
+        var folded = new StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            var f = Fold(c.ToString());
+            folded.Append(f.Length == 1 ? f[0] : c);
+        }
+        string hay = folded.ToString();
+        var lit = new bool[text.Length];
+        foreach (var w in words)
+        {
+            if (w.Length == 0) continue;
+            int at = -1;
+            for (int i = hay.IndexOf(w, StringComparison.Ordinal); i >= 0; i = hay.IndexOf(w, i + 1, StringComparison.Ordinal))
+            {
+                if (i == 0 || !char.IsLetterOrDigit(hay[i - 1])) { at = i; break; }
+                if (at < 0) at = i;
+            }
+            if (at >= 0) for (int k = at; k < at + w.Length && k < lit.Length; k++) lit[k] = true;
+        }
+        Brush? accent = Application.Current.Resources.TryGetValue("AccentTextFillColorPrimaryBrush", out var a) ? a as Brush : null;
+        int start = 0;
+        while (start < text.Length)
+        {
+            int end = start;
+            while (end < text.Length && lit[end] == lit[start]) end++;
+            var run = new Microsoft.UI.Xaml.Documents.Run { Text = text[start..end] };
+            if (lit[start])
+            {
+                run.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+                if (accent is not null) run.Foreground = accent;
+            }
+            tb.Inlines.Add(run);
+            start = end;
+        }
     }
 
     // ---------- the results ----------
@@ -234,15 +417,14 @@ public sealed partial class SettingsPage
     void FillResults(List<Hit> hits)
     {
         SearchResults.Children.Clear();
-        if (hits.Count == 0)
+        // The results' own heading, where the open tab's stands.
+        SearchResults.Children.Add(new TextBlock { Text = L.T("Search results"), FontSize = 26, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 14, 0, 0) });
+        SearchResults.Children.Add(new TextBlock
         {
-            SearchResults.Children.Add(new TextBlock
-            {
-                Text = L.F("No setting matches “{0}”.", SettingsSearch.Text.Trim()),
-                Style = Ui.Style("RowDescription"), Margin = new Thickness(0, 8, 0, 0),
-            });
-            return;
-        }
+            Text = hits.Count == 0 ? L.F("No setting matches “{0}”.", SettingsSearch.Text.Trim()) : L.N(hits.Count, "{0} setting matches", "{0} settings match"),
+            Style = Ui.Style("RowDescription"), Margin = new Thickness(0, 0, 0, 14),
+        });
+        if (hits.Count == 0) return;
         var all = Index();
         var groups = hits.Take(80).GroupBy(h => (h.Tab, h.Section)).ToList();
         bool first = true;
@@ -276,9 +458,16 @@ public sealed partial class SettingsPage
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = h.Title, Style = Ui.Style("RowHeader") });
+        var words = Fold(SettingsSearch.Text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var name = new TextBlock { Style = Ui.Style("RowHeader") };
+        Highlight(name, h.Title, words);
+        text.Children.Add(name);
         if (h.Description.Length > 0)
-            text.Children.Add(new TextBlock { Text = h.Description, Style = Ui.Style("RowDescription"), MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap });
+        {
+            var about = new TextBlock { Style = Ui.Style("RowDescription"), MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap };
+            Highlight(about, h.Description, words);
+            text.Children.Add(about);
+        }
         grid.Children.Add(text);
         var go = Icons.Make("", 12);
         go.Opacity = 0.6;
@@ -296,7 +485,17 @@ public sealed partial class SettingsPage
         };
         ToolTipService.SetToolTip(b, TabName(h.Tab) + (h.Section.Length > 0 ? " › " + h.Section : "") + " › " + h.Title);
         b.Click += (_, _) => GoTo(h);
+        b.KeyDown += Result_KeyDown;
         return b;
+    }
+
+    /// <summary>Self-test: opens a tab at a setting, by its title (as a search result would).</summary>
+    internal bool SelfTestGoTo(string tab, string title)
+    {
+        _index = null;
+        if (Search(title).FirstOrDefault(h => h.Tab == tab && h.Title == title) is not { } hit) return false;
+        GoTo(hit);
+        return true;
     }
 
     /// <summary>Opens the setting's tab, scrolls to it and lights its row for a moment. The search is cleared.</summary>
@@ -361,11 +560,11 @@ public sealed partial class SettingsPage
         await Task.Delay(400);
         var hit = Search("local").FirstOrDefault(h => h.Tab == "achievements" && h.Title == L.T("Local achievements"))
             ?? throw new InvalidOperationException("Local achievements not found");
-        if (SearchResults.Children.Count == 0 || SettingsTabs.Visibility == Visibility.Visible) throw new InvalidOperationException("the results are not shown");
+        if (SearchResults.Children.Count < 3 || !_searching) throw new InvalidOperationException("the results are not shown");
         if (shown is not null) await shown();
         GoTo(hit);
         await Task.Delay(700);
-        if (_openTab != "achievements" || SettingsTabs.Visibility != Visibility.Visible || LastFound != hit.Title)
+        if (_openTab != "achievements" || _searching || LastFound != hit.Title)
             throw new InvalidOperationException($"the result opened {_openTab}, found {LastFound}");
         SettingsSearch.Text = "zzqx";
         await Task.Delay(200);

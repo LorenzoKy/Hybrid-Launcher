@@ -1,4 +1,4 @@
-using HybridLauncher.Core;
+﻿using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Detection;
 using HybridLauncher.Core.Ini;
@@ -18,7 +18,7 @@ using Microsoft.UI.Xaml.Navigation;
 
 namespace HybridLauncher.Views;
 
-public sealed partial class GamePage : Page
+public partial class GamePage : Page, IAutoHost
 {
     Game? _game;
     GameSettings _settings = new();
@@ -48,6 +48,8 @@ public sealed partial class GamePage : Page
     // Store, wiki and HowLongToBeat data for this visit, shared by the banner and the info tabs (built when first shown).
     GameData? _data;
     OverviewView? _overview;
+    // The Dashboard view (1.4.0) of the game shown, and whether the page shows it instead of the tabs.
+    DashboardView? _dashboard;
     OptiWikiView? _optiWikiView;
     PcgwView? _pcgwView;
     LinksView? _linksView;
@@ -65,33 +67,73 @@ public sealed partial class GamePage : Page
 
     public string? GameId => _game?.Id;
 
+    /// <summary>
+    /// How wide the tool tabs' content is drawn (OptiScaler, Mods, Ultra+), centred: most of the page, so little room is lost at
+    /// its sides, up to a limit past which a row's name and its control drift too far apart. The Dashboard and the wikis use the
+    /// whole page. Set by <see cref="FitContent"/>.
+    /// </summary>
+    double _contentMax = 1320;
+    const double ContentShare = 0.92, ContentLimit = 2000;
+
+    FrameworkElement[] ToolSections => [OptiTab, QuickPanelCard, IniCard, OptiPluginsGrid, OptiWikiHost, OptiNotesHost, ModsOverviewHost, ReShadeHost, RenoDxHost, LumaHost, Dlss5Host, DxvkHost, Vkd3dHost, UltraInstallHost, UltraAddonsHost, UltraSettingsHost, OfflineHost];
+
+    /// <summary>The tool tabs' width for a page <paramref name="width"/> wide, set on their sections and separators.</summary>
+    void FitContent(double width)
+    {
+        // A page given up or hidden meanwhile (its art loaded late) has no real width: NaN here threw "Value does not fall
+        // within the expected range" from MaxWidth (2.0.0-rc.5).
+        if (double.IsNaN(width) || width <= 0) return;
+        double max = Math.Round(Math.Clamp(width * ContentShare, Math.Min(width, 1100), ContentLimit));
+        if (Math.Abs(max - _contentMax) < 1) return;
+        _contentMax = max;
+        foreach (var section in ToolSections) section.MaxWidth = max;
+        foreach (var sep in _separators.Values) if (!double.IsPositiveInfinity(sep.MaxWidth)) sep.MaxWidth = max;
+    }
+
     // The welcome tour points at these.
     internal FrameworkElement TourPlay => PlayButton;
+    /// <summary>Self-test: the page's scroller (scroll smoothness).</summary>
+    internal ScrollView SelfTestScroller => Scroller;
+    /// <summary>Self-test (perf): the tab row's buttons, to click.</summary>
+    internal IEnumerable<Button> SelfTestTabButtons => Tabs.SelfTestButtons;
     internal FrameworkElement TourHdr => HdrToggle;
     internal FrameworkElement TourTabs => Tabs;
     internal FrameworkElement TourMore => MoreButton;
 
     // When the page was asked for: the log says how long a game switch took to show (see OnNavigatedTo).
-    readonly long _created = System.Diagnostics.Stopwatch.GetTimestamp();
+    long _created = System.Diagnostics.Stopwatch.GetTimestamp();
+    /// <summary>The page has shown a game before: the next one is filled into it after <see cref="ResetForNextGame"/>.</summary>
+    bool _shownOnce;
     // True while the page is first shown: the open tab's views are built after the first frame, not before it.
     bool _deferViews;
 
     public GamePage()
     {
+        using var __perf = UiPerf.Scope("GamePage.ctor");
         InitializeComponent();
+        // The tabs that work on the game (OptiScaler, Mods, Ultra+) are centred on most of the page's width (FitContent).
+        foreach (var section in ToolSections) section.MaxWidth = _contentMax;
+        // Since 2.0.0-rc.4 one page per recent game, kept alive beside the Frame (MainWindow.GameSlots); a page can still be
+        // filled again for its game (ResetForNextGame) when its settings or the app's look changed.
         Loc.Apply(this);
         // The GPU choice is read by index: its labels can be translated.
         GpuCombo.Items.Clear();
         foreach (var label in new[] { L.T("Auto-detect"), "AMD / Intel", "Nvidia" }) GpuCombo.Items.Add(label);
         foreach (var n in OptiSetupOptions.DllNames) DllCombo.Items.Add(n);
+        // The file name chip of an install: a click offers the other names, swapped in place (no reinstall).
+        OptiDllChip.Tapped += (_, e) => { e.Handled = true; ShowDllSwapMenu(); };
+        ToolTipService.SetToolTip(OptiDllChip, L.T("The file name OptiScaler is loaded as. Click to change it without reinstalling."));
         Root.SizeChanged += (_, e) =>
         {
             _sectionsDirty = true;
+            // The sections moved (the tab row pinned or let go, a width change): the marked sub-tab is checked again even
+            // when no scroll step follows (a jump straight to a section left the pill on the section before it).
+            QueueSpy();
             ApplyLayout(e.NewSize.Width);
             if (_tab == "pcgw") DispatcherQueue.TryEnqueue(PlaceToc);
         };
         // A section changing height moves the ones below it: the scroll-spy measures them again.
-        foreach (var section in new FrameworkElement[] { OptiTab, QuickPanelCard, IniCard, OptiWikiHost, OptiNotesHost, ReShadeHost, RenoDxHost, LumaHost, UltraInstallHost, UltraAddonsHost, UltraSettingsHost, OfflineHost, PcgwHost })
+        foreach (var section in new FrameworkElement[] { OptiTab, QuickPanelCard, IniCard, OptiPluginsGrid, OptiWikiHost, OptiNotesHost, ModsOverviewHost, ReShadeHost, RenoDxHost, LumaHost, Dlss5Host, DxvkHost, Vkd3dHost, UltraInstallHost, UltraAddonsHost, UltraSettingsHost, OfflineHost, PcgwHost })
         {
             // A section changing height (built late, a card folded) moves the others: the marked sub-tab is checked again.
             section.SizeChanged += (_, _) =>
@@ -119,10 +161,16 @@ public sealed partial class GamePage : Page
             // Steam writes the session's time when the game closes: pick it up within a minute.
             if (++_ticks % 15 == 0) _ = UpdatePlayStatsAsync();
         };
-        VersionsList.Changed += () => _ = LoadCustomBuildsAsync(null, _pageCts.Token);
+        VersionsList.Changed += OnVersionsListChanged;
         PlayButton.Clicked += PlayOrStop;
+        // The mouse wheel glides, once per display refresh (Helpers.SmoothWheel).
+        CompositorWheel.Attach(Scroller);
         // Laid out again once the page is in the window: the sections' places are known only then.
         Loaded += (_, _) => QueueSubTabs();
+        // Settings → Appearance → Shading: the launch bar's sheen from above.
+        Sheen();
+        Loaded += (_, _) => Sheen();
+        ThemeRes.Applied += Sheen;
         AchIcon.Content = Icons.Make(Icons.TrophyGlyph, 17);
         InitFolds();
         InitTabs();
@@ -135,42 +183,46 @@ public sealed partial class GamePage : Page
         LinksToggle.LostFocus += (_, _) => { if (!_overLinks) LinksToggle.Opacity = 0; };
     }
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    /// <summary>Being prepared ahead of time, out of sight (MainWindow.PrepareStep): nothing is spread over frames for a viewer.</summary>
+    internal bool Unseen { get; set; }
+
+    /// <summary>The page is shown for <paramref name="id"/> (MainWindow.ShowGamePage; until 2.0.0-rc.4 the Frame's OnNavigatedTo).</summary>
+    public void Enter(string? id)
     {
-        base.OnNavigatedTo(e);
+        using var __perf = UiPerf.Scope("GamePage.NavigatedTo");
+        // Back to the game this page already shows (2.0.0-rc.4: one page per recent game, see MainWindow.NavigateGame): it is
+        // shown as it was left, nothing built or loaded again; only what may have changed meanwhile is looked at, after the
+        // first frame.
+        if (CanResume(id))
+        {
+            Resume();
+            return;
+        }
         var built = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds;
-        _game = AppState.FindAny(e.Parameter as string);
+        if (_shownOnce)
+        {
+            _created = System.Diagnostics.Stopwatch.GetTimestamp();
+            ResetForNextGame();
+            built = 0;
+        }
+        _shownOnce = true;
+        _game = AppState.FindAny(id);
         if (_game is null) return;
         _settings = AppState.Settings.For(_game.Id);
+        _builtParts = SettingsKeys.Parts(AppState.Settings);
+        _settingsStale = null;
+        _builtLook = _lookVersion;
         _channel = _settings.Install?.Channel ?? OptiChannel.Stable;
         if (_channel == OptiChannel.Fork && _settings.Install?.Source is { } installedFork) AppState.Settings.SelectedFork = installedFork;
         ChannelCard(_channel).IsChecked = true;
-        AppState.PinsChanged += UpdatePin;
-        AchievementWatcher.Changed += OnAchievementsChanged;
-        GameSessions.PlaytimeChanged += OnPlaytimeChanged;
-        GameSessions.Changed += OnSessionChanged;
-        CloudSync.Changed += OnCloudChanged;
-        Downloads.Changed += OnDownloadsChanged;
-        AppState.GamesChanged += OnDownloadsChanged;
-        MediaPolicy.Changed += UpdateFloor;
-        UltraPlusLibrary.Changed += OnUltraChanged;
-        GameJobs.Changed += OnJobsChanged;
-        GameJobs.Progress += OnJobProgress;
-        OptiReleases.Updated += OnReleasesUpdated;
+        Subscribe();
         var ct = _pageCts.Token;
         var game = _game;
-        var art = GameInfo.GetAsync(game, ct);
-        _data = new GameData
+        if (TakeKept(game) is not { } kept)
         {
-            Game = game,
-            Token = ct,
-            Art = art,
-            Store = StoreAsync(art, ct),
-            Pcgw = PcgwAsync(game, art, ct),
-            OptiWiki = CompatWiki.GetEntryAsync(GameNames.PlainOrClean(GameNames.LookupName(game)), ct),
-            ShowTab = OpenTab,
-        };
-        Prefetch(_data);
+            (_data, _dataCts) = MakeData(game);
+            Prefetch(_data);
+        }
         // A switch to another game shows at once: the banner, the launch bar and the tab row come first, and the open tab's
         // content (the overview with its description, the mod views, the OptiScaler card read from the game folder...) is built
         // right after that first frame, while the page is already on screen. Building it before made every switch wait for it.
@@ -183,19 +235,29 @@ public sealed partial class GamePage : Page
         ShowTab(AppState.Settings.GameTab, remember: false);
         _deferViews = false;
         var setup = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds;
+        // When the UI thread is next free (after the navigation's own work and anything queued before): the rest, up to the
+        // first frame, is the page's first layout and drawing.
+        double free = 0;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High, () => free = System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds);
         var data = _data;
         AfterFirstFrame(() =>
         {
             if (ct.IsCancellationRequested || _game != game) return;
-            Log.Info($"Game page {game.Name}: first frame {_firstFrameMs:F0} ms, settled {System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds:F0} ms (page built {built:F0}, filled {setup:F0})");
+            Log.Info($"Game page {game.Name}: first frame {_firstFrameMs:F0} ms, settled {System.Diagnostics.Stopwatch.GetElapsedTime(_created).TotalMilliseconds:F0} ms (page built {built:F0}, filled {setup:F0}, UI free {free:F0})");
             ShowTab(_tab, remember: false);
+            UiPerf.Layout(this, "first visit tab " + _tab);
             if (_optiPending) RefreshOpti();
-            OptiWikiPreviewHost.Child = WikiPreviews.OptiCard(data);
-            OptiNotesPreviewHost.Child = OptiNotesView.Preview(() => OpenTab("releasenotes"));
+            UiPerf.Layout(this, "first visit opti");
+            if (data is not null) OptiWikiPreviewHost.Child = WikiPreviews.OptiCard(data);
+            UiPerf.Layout(this, "first visit wiki preview");
+            StartWarmUp();
         });
         // Always open a game at the top, with the banner visible.
         DispatcherQueue.TryEnqueue(() => Scroller.ChangeView(null, 0, null, disableAnimation: true));
         _ = LoadArtAsync(_pageCts.Token);
+        // The folder as read now: a later return reads it again only if it changes.
+        var stampDir = TargetDir;
+        _ = Task.Run(() => FolderStamp(stampDir)).ContinueWith(t => DispatcherQueue.TryEnqueue(() => { if (_game == game) _folderStamp = t.Result; }), TaskScheduler.Default);
         _ = LoadWikiExtrasAsync(_pageCts.Token);
         _ = LoadReleasesAsync(false, _pageCts.Token);
         _ = LoadCustomBuildsAsync(null, _pageCts.Token);
@@ -205,12 +267,616 @@ public sealed partial class GamePage : Page
         SyncJob();
     }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    /// <summary>The page follows the app's events while shown; never twice (a page prepared ahead of time may be shown mid-way).</summary>
+    void Subscribe()
     {
-        base.OnNavigatedFrom(e);
+        Unsubscribe();
+        AppState.PinsChanged += UpdatePin;
+        AchievementWatcher.Changed += OnAchievementsChanged;
+        GameSessions.PlaytimeChanged += OnPlaytimeChanged;
+        GameSessions.Changed += OnSessionChanged;
+        CloudSync.Changed += OnCloudChanged;
+        Downloads.Changed += OnDownloadsChanged;
+        AppState.GamesChanged += OnDownloadsChanged;
+        MediaPolicy.Changed += UpdateFloor;
+        UltraPlusLibrary.Changed += OnUltraChanged;
+        GameJobs.Changed += OnJobsChanged;
+        GameJobs.Progress += OnJobProgress;
+        OptiReleases.Updated += OnReleasesUpdated;
+    }
+
+    // ---------- one page per recent game (2.0.0-rc.4) ----------
+
+    // What the page was built with: the app-wide settings it reads (a hash) and the look; either changing means building again.
+    int _builtLook = -1;
+    // The settings the page was last brought up to date with (Helpers.SettingsKeys.Parts), and the ones found changed on a
+    // return (refreshed in place right after the page is back on screen).
+    IReadOnlyDictionary<string, int>? _builtParts;
+    List<string>? _settingsStale;
+    // The game folder as it was when the page last read it (newest write, entry count): a return reads it again only if it moved.
+    (DateTime, int) _folderStamp;
+    // Ids whose page must be built again on the next visit (the page's own "open again as it is now").
+    static readonly HashSet<string> FreshIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The next visit to <paramref name="id"/> builds its page again instead of showing it as it was left.</summary>
+    public static void RequestFresh(string id) => FreshIds.Add(id);
+
+    /// <summary>App-wide settings that changed since the page was brought up to date (not the per-game ones, the library's or the window's).</summary>
+    List<string> SettingsChanged()
+    {
+        var now = SettingsKeys.Parts(AppState.Settings);
+        var changed = SettingsKeys.Changed(_builtParts, now);
+        changed.RemoveAll(k => k == "Library" || k.StartsWith("Games/", StringComparison.Ordinal));
+        _builtParts = now;
+        return changed;
+    }
+
+    bool CanResume(string? id)
+    {
+        if (!_shownOnce || _game is null || id is null || !string.Equals(_game.Id, id, StringComparison.OrdinalIgnoreCase)) return false;
+        if (FreshIds.Remove(id)) return false;
+        if (_builtLook != _lookVersion || AppState.FindAny(id) is not { } now) return false;
+        // A rescan makes a new Game for every game: the page stays if it is the same game (folder, exe, state), and takes the
+        // new one; a game that moved, changed its exe or finished installing is built again.
+        if (!ReferenceEquals(now, _game))
+        {
+            if (!SameGame(now, _game)) return false;
+            _game = now;
+        }
+        // A setting changed while the page was away (until rc.8 any save at all, an update check's included, built the page
+        // again from nothing, 150-300 ms of loading on a return): it is shown as it was and brought up to date in place right
+        // after its first frame. A new look (theme, palette) and the Features page still build it again (above).
+        var changed = SettingsChanged();
+        _settingsStale = changed.Count > 0 ? changed : null;
+        return true;
+    }
+
+    static bool SameGame(Game a, Game b) =>
+        a.Name == b.Name && a.Store == b.Store && string.Equals(a.InstallDir, b.InstallDir, StringComparison.OrdinalIgnoreCase)
+        && a.StoreExe == b.StoreExe && a.MainExe == b.MainExe && a.SteamAppId == b.SteamAppId
+        && a.NotInstalled == b.NotInstalled && a.Installing == b.Installing;
+
+    void Resume()
+    {
+        using var __perf = UiPerf.Scope("GamePage.Resume");
+        _created = System.Diagnostics.Stopwatch.GetTimestamp();
+        _firstFrameMs = 0;
+        _pageCts.Dispose();
+        _pageCts = new CancellationTokenSource();
+        _settings = AppState.Settings.For(_game!.Id);
+        Subscribe();
+        var game = _game;
+        var ct = _pageCts.Token;
+        // As a game is always opened: at the top, the banner in view.
+        Scroller.ChangeView(null, 0, null, disableAnimation: true);
+        AfterFirstFrame(() =>
+        {
+            if (ct.IsCancellationRequested || _game != game) return;
+            Log.Info($"Game page {game.Name}: shown as left, first frame {_firstFrameMs:F0} ms" + (_settingsStale is { } st ? $", settings changed meanwhile: {string.Join(", ", st.Take(6))}" : ""));
+            if (_settingsStale is not null)
+            {
+                _settingsStale = null;
+                RefreshInPlace();
+            }
+            UpdatePin();
+            UpdateRunState();
+            SyncJob();
+            _ = UpdatePlayStatsAsync();
+            _ = UpdateCloudButtonAsync();
+            // Pictures whose loading the last visit left unfinished.
+            if (HeroImage.Source is null) _ = LoadArtAsync(ct);
+            _ = ResumeFolderAsync(game, ct);
+            _filesTimer.Start();
+            StartWarmUp();
+        });
+    }
+
+    /// <summary>
+    /// The page brought up to date with the app's settings without being built again: what reads them (the launch bar, the
+    /// tab row, the OptiScaler card, the links) is drawn again where it is. One part per turn of the UI thread, so the frames
+    /// keep coming.
+    /// </summary>
+    void RefreshInPlace()
+    {
+        var game = _game;
+        var steps = new List<Action> { Refresh, RebuildTabs, UpdateLinks, RefreshOpti };
+        int i = 0;
+        void Next()
+        {
+            if (i >= steps.Count || _game is null || !ReferenceEquals(_game, game)) return;
+            using (UiPerf.Scope("GamePage.RefreshInPlace"))
+            {
+                try { steps[i++](); }
+                catch (Exception ex) { Log.Warn($"Game page refresh: {ex.Message}"); }
+            }
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+        }
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+    }
+
+    /// <summary>The game folder read again only when something in it changed while the page was away (a mod, an update).</summary>
+    async Task ResumeFolderAsync(Game game, CancellationToken ct)
+    {
+        var dir = TargetDir;
+        var stamp = await Task.Run(() => FolderStamp(dir));
+        if (ct.IsCancellationRequested || _game != game) return;
+        WatchModsFolder(dir);
+        if (stamp == _folderStamp) return;
+        _folderStamp = stamp;
+        RefreshOpti();
+        _ = UpdateModBadgesAsync();
+        _ = UpdateFootprintAsync();
+        if (_tab == "mods") _ = RefreshModsOverviewAsync();
+        _dashboard?.RefreshMods();
+        // The Auto tab's plan follows the folder too (2.0.0-rc.12).
+        _autoView?.Refresh();
+    }
+
+    static (DateTime, int) FolderStamp(string? dir)
+    {
+        try
+        {
+            if (dir is null || !Directory.Exists(dir)) return default;
+            var newest = DateTime.MinValue;
+            int count = 0;
+            foreach (var f in new DirectoryInfo(dir).EnumerateFileSystemInfos())
+            {
+                count++;
+                if (f.LastWriteTimeUtc > newest) newest = f.LastWriteTimeUtc;
+            }
+            return (newest, count);
+        }
+        catch { return default; }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="steps"/> one per turn of the UI thread (each after the frames queued before it), while the same game
+    /// and the Mods tab stay open; a step that fails is logged and the next still runs.
+    /// </summary>
+    void BuildInTurns(List<Action> steps, Game? game)
+    {
+        int i = 0;
+        void Next()
+        {
+            if (i >= steps.Count || _game is null || !ReferenceEquals(_game, game) || _tab != "mods") return;
+            using (UiPerf.Scope("GamePage.ModsSection"))
+            {
+                try { steps[i++](); }
+                catch (Exception ex) { Log.Warn($"Mods tab section: {ex.Message}"); }
+            }
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+        }
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+    }
+
+    // ---------- info views: made once per game, ahead of time when the user is idle ----------
+
+    /// <summary>Makes the info view of <paramref name="tab"/> for this game if it is not made yet (not placed anywhere).</summary>
+    void MakeInfoView(string tab)
+    {
+        if (_data is null) return;
+        using var __perf = UiPerf.Scope("GamePage.MakeView " + tab);
+        switch (tab)
+        {
+            case "overview" when _dashboard is null && _game is not null:
+                // The Dashboard tab: the old Game tab's parts (trailer, description, details...) are some of its cards.
+                _overview ??= new OverviewView(_data);
+                _dashboard = new DashboardView(_game, _settings, _data, _overview, _ach, _data.ShowTab, _data.Token);
+                break;
+            case "optiwiki" when _optiWikiView is null:
+                _optiWikiView = new OptiWikiView(_data);
+                break;
+            case "pcgw" when _pcgwView is null:
+                _pcgwView = new PcgwView(_data);
+                BindPcgw(_pcgwView);
+                break;
+            case "links" when _linksView is null:
+                _linksView = new LinksView(_data);
+                break;
+        }
+    }
+
+    /// <summary>The PCGamingWiki view's contents and table of contents act on this page (a kept view moves between pages).</summary>
+    void BindPcgw(PcgwView view)
+    {
+        view.ScrollRequested = el => ScrollToElement(el);
+        view.TocLayoutChanged = () => DispatcherQueue.TryEnqueue(PlaceToc);
+    }
+
+    /// <summary>Puts a view in its host, taking it from wherever it was (the warm-up layer, nowhere).</summary>
+    static void Place(Border host, UIElement? view)
+    {
+        if (view is null || ReferenceEquals(host.Child, view)) return;
+        Detach(view);
+        host.Child = view;
+    }
+
+    /// <summary>
+    /// Takes <paramref name="view"/> out of whatever holds it. Since 2.0.0-rc.4 a game's kept views can still sit in another
+    /// game page (a retired page, another page's warm-up layer): putting them in a host while they had a parent threw
+    /// "Value does not fall within the expected range" and left the game page empty (2.0.0-rc.5).
+    /// </summary>
+    static void Detach(UIElement view)
+    {
+        var parent = (view as FrameworkElement)?.Parent ?? Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(view);
+        switch (parent)
+        {
+            case Border b when ReferenceEquals(b.Child, view): b.Child = null; break;
+            case Panel p: p.Children.Remove(view); break;
+            case ContentControl c when ReferenceEquals(c.Content, view): c.Content = null; break;
+            case ContentPresenter cp when ReferenceEquals(cp.Content, view): cp.Content = null; break;
+            case Microsoft.UI.Xaml.Controls.Primitives.Popup pop when ReferenceEquals(pop.Child, view): pop.Child = null; break;
+        }
+    }
+
+    Canvas? _warmLayer;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _warmTimer;
+
+    /// <summary>
+    /// The info tabs not opened yet are made while nobody uses the app (no input for a moment, nothing scrolling), one per idle
+    /// moment, and laid out unseen at the page's width in a layer of their own: opening one of them later only moves it into
+    /// place, instead of building and laying out a large view on the click (200-450 ms).
+    /// </summary>
+    void StartWarmUp()
+    {
+        if (_warmLayer is null)
+        {
+            // Laid out but not drawn (off the window, Opacity 0). Tried in 2.0.0-rc.9: drawn too (composition visual at 0) made
+            // the Dashboard tab open quicker, but every view held here was then drawn with the page, and showing pages and
+            // the library got slower (snappy gate: prepared jank 69 -> 381 ms, library 81 -> 217 ms).
+            _warmLayer = new Canvas { IsHitTestVisible = false, Opacity = 0 };
+            Canvas.SetLeft(_warmLayer, -20000);
+            PageLayers.Children.Insert(0, _warmLayer);
+        }
+        if (_warmTimer is null)
+        {
+            // Weak (2.0.0-rc.12): a timer holding this page through its handler kept every retired page alive.
+            _warmTimer = WeakTimer.Create(DispatcherQueue, this, TimeSpan.FromMilliseconds(350), static p => p.WarmStep());
+        }
+        _warmTimer.Start();
+    }
+
+    void WarmStep()
+    {
+        if (_game is null || _data is null || App.ShuttingDown) { _warmTimer?.Stop(); return; }
+        // Only while nobody is using the window: a view made during a scroll or a click would be the very hitch it saves.
+        if (MediaPolicy.Quiet || FrameWarmth.Awake || UserIdleMs() < 900 || _loading) return;
+        string? next = new[] { "overview", "optiwiki", "pcgw", "links" }.FirstOrDefault(t => t switch
+        {
+            "overview" => _dashboard is null,
+            "optiwiki" => _optiWikiView is null,
+            "pcgw" => _pcgwView is null,
+            _ => _linksView is null,
+        } && !GameTabs.Hidden(t == "optiwiki" ? "opti" : t, _settings));
+        if (next is null)
+        {
+            if (!WarmNeighbour()) _warmTimer?.Stop();
+            return;
+        }
+        MakeInfoView(next);
+        UIElement? view = next switch { "overview" => _dashboard, "optiwiki" => _optiWikiView, "pcgw" => _pcgwView, _ => _linksView };
+        if (view is FrameworkElement { Parent: null } fe && _warmLayer is not null)
+        {
+            double width = Math.Max(320, Root.ActualWidth - 40);
+            _warmLayer.Children.Add(new Border { Width = width, Child = fe });
+        }
+    }
+
+    /// <summary>Views left in the warm-up layer go with the game (they are kept with its other views, see Kept).</summary>
+    void ClearWarmLayer()
+    {
+        _warmTimer?.Stop();
+        if (_warmLayer is null) return;
+        foreach (var b in _warmLayer.Children.OfType<Border>()) b.Child = null;
+        _warmLayer.Children.Clear();
+    }
+
+    internal static double UserIdleMs()
+    {
+        var info = new LastInputInfo { Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? unchecked((uint)Environment.TickCount - info.Time) : 0;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct LastInputInfo { public uint Size, Time; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool GetLastInputInfo(ref LastInputInfo info);
+
+    /// <summary>
+    /// The store, wiki and reviews data of a game's page. It lives as long as the game's views are kept (see Kept), not only one
+    /// visit: its own token, cancelled when they go.
+    /// </summary>
+    (GameData, CancellationTokenSource) MakeData(Game game)
+    {
+        var cts = new CancellationTokenSource();
+        var ct = cts.Token;
+        var art = GameInfo.GetAsync(game, ct);
+        return (new GameData
+        {
+            Game = game,
+            Token = ct,
+            Art = art,
+            Store = StoreAsync(art, ct),
+            Pcgw = PcgwAsync(game, art, ct),
+            OptiWiki = CompatWiki.GetEntryAsync(GameNames.PlainOrClean(GameNames.LookupName(game)), ct),
+            // Through the page that shows the game when asked (2.0.0-rc.12): these views outlive the page that made them (Kept),
+            // and the made page's OpenTab opened tabs on a page no longer shown, and held it in memory.
+            ShowTab = tab => OpenTabOf(game.Id, tab),
+        }, cts);
+    }
+
+    /// <summary>
+    /// Idle warm-up for the games around this one in the list (the next a hand is likely to open): their overview is made and
+    /// laid out unseen, and kept like a game shown before, so the first visit opens as fast as a return.
+    /// </summary>
+    bool WarmNeighbour()
+    {
+        if (_game is null || _warmLayer is null || App.Window is not { } window) return false;
+        if (_kept.Count >= KeptMax - 2 || _kept.Values.Count(k => k.Prepared) >= 4) return false;
+        foreach (var id in window.GamesNear(_game.Id, 4))
+        {
+            if (_kept.ContainsKey(id) || AppState.Find(id) is not { } game || GameTabs.Hidden("overview", AppState.Settings.For(id))) continue;
+            using var __perf = UiPerf.Scope("GamePage.WarmNeighbour");
+            var (data, cts) = MakeData(game);
+            var overview = new OverviewView(data);
+            var dashboard = new DashboardView(game, AppState.Settings.For(id), data, overview, null, data.ShowTab, data.Token);
+            _warmLayer.Children.Add(new Border { Width = Math.Max(320, Root.ActualWidth - 40), Child = dashboard });
+            // Older than anything shown: made ahead of time, it is the first to go when room is needed.
+            _kept[id] = new Kept { Data = data, Cts = cts, Overview = overview, Dashboard = dashboard, Used = 0, Prepared = true };
+            Prefetch(data);
+            return true;
+        }
+        return false;
+    }
+
+    // ---------- the views of recently shown games ----------
+
+    /// <summary>
+    /// What a game's info tabs were built from and into, kept when another game is shown: going back to it shows its overview,
+    /// wikis and links as they were, with no wait (building the overview and laying it out was 50-200 ms after each switch).
+    /// The twelve games shown last are kept; the oldest goes first. A new look (theme, palette) drops them all.
+    /// </summary>
+    sealed class Kept
+    {
+        public required GameData Data;
+        public required CancellationTokenSource Cts;
+        public OverviewView? Overview;
+        public DashboardView? Dashboard;
+        public OptiWikiView? OptiWiki;
+        public PcgwView? Pcgw;
+        public LinksView? Links;
+        public long Used;
+        /// <summary>Made ahead of time by the idle warm-up, not shown yet.</summary>
+        public bool Prepared;
+    }
+
+    const int KeptMax = 12;
+    // Shared by every game page place (GameSlots): a game that lost its place keeps its views here.
+    static readonly Dictionary<string, Kept> _kept = new(StringComparer.OrdinalIgnoreCase);
+    CancellationTokenSource? _dataCts;
+    static int _lookVersion;
+    static int _keptLook;
+
+    /// <summary>The kept views of games without a page go (the window went to the notification area: their memory is freed).</summary>
+    internal static void DropKept()
+    {
+        foreach (var k in _kept.Values) k.Cts.Cancel();
+        _kept.Clear();
+    }
+
+    /// <summary>The app's look changed: views built in the old one are not shown again.</summary>
+    public static void ForgetViews() => _lookVersion++;
+
+    void KeepViews()
+    {
+        // A kept Dashboard called this page back when its sections changed (2.0.0-rc.12): it held the page while it was kept.
+        if (_dashboard is not null) _dashboard.SectionsChanged = null;
+        if (_pcgwView is not null) { _pcgwView.ScrollRequested = null; _pcgwView.TocLayoutChanged = null; }
+        if (_game is null || _data is null || _dataCts is null) return;
+        _overview?.Hide();
+        if (_kept.Remove(_game.Id, out var old) && old.Cts != _dataCts) old.Cts.Cancel();
+        _kept[_game.Id] = new Kept
+        {
+            Data = _data, Cts = _dataCts, Overview = _overview, Dashboard = _dashboard, OptiWiki = _optiWikiView, Pcgw = _pcgwView, Links = _linksView,
+            Used = System.Diagnostics.Stopwatch.GetTimestamp(),
+        };
+        _dataCts = null;
+        while (_kept.Count > KeptMax)
+        {
+            var oldest = _kept.MinBy(k => k.Value.Used);
+            oldest.Value.Cts.Cancel();
+            _kept.Remove(oldest.Key);
+        }
+    }
+
+    /// <summary>The kept views of <paramref name="game"/>, put back in their places (still hidden unless their tab is open).</summary>
+    Kept? TakeKept(Game game)
+    {
+        if (_keptLook != _lookVersion)
+        {
+            foreach (var k in _kept.Values) k.Cts.Cancel();
+            _kept.Clear();
+            _keptLook = _lookVersion;
+            return null;
+        }
+        if (!_kept.Remove(game.Id, out var kept)) return null;
+        // A rescan made a new Game for it: its data may differ (folder, name), so it is read again.
+        if (!ReferenceEquals(kept.Data.Game, game) || kept.Cts.IsCancellationRequested)
+        {
+            kept.Cts.Cancel();
+            return null;
+        }
+        try
+        {
+            Place(OverviewHost, kept.Dashboard);
+            Place(OptiWikiHost, kept.OptiWiki);
+            Place(PcgwHost, kept.Pcgw);
+            Place(LinksHost, kept.Links);
+        }
+        catch (Exception ex)
+        {
+            // Still held somewhere they cannot be taken from: the game's views are made again instead.
+            Log.Info($"Kept views of {game.Name} not reusable, made again: {ex.Message}");
+            OverviewHost.Child = OptiWikiHost.Child = PcgwHost.Child = LinksHost.Child = null;
+            kept.Cts.Cancel();
+            return null;
+        }
+        _data = kept.Data;
+        _dataCts = kept.Cts;
+        _overview = kept.Overview;
+        _dashboard = kept.Dashboard;
+        _optiWikiView = kept.OptiWiki;
+        _pcgwView = kept.Pcgw;
+        if (_pcgwView is not null) BindPcgw(_pcgwView);
+        _linksView = kept.Links;
+        return kept;
+    }
+
+    /// <summary>
+    /// The page is kept for the next game (NavigationCacheMode): everything the last game left in it goes, so it starts as a
+    /// new page would. The controls stay, already laid out; their values are set again by the game's own loading, and every
+    /// load that was still running for the last game was cancelled (its token) or checks that its game is still the one shown.
+    /// </summary>
+    void ResetForNextGame()
+    {
+        using var __perf = UiPerf.Scope("GamePage.Reset");
+        _pageCts.Dispose();
+        _pageCts = new CancellationTokenSource();
+        _floorCts?.Cancel();
+        ClearWarmLayer();
+        KeepViews();
+        _dataCts?.Cancel();
+        _dataCts = null;
+        _game = null;
+        _shownJob = null;
+        _steamAppId = null;
+        _busy = false;
+        _iniStale = _achStale = true;
+        _measuringFiles = _measuringSize = _loadingAch = false;
+        _ticks = 0;
+        _data = null;
+        _configDir = _saveDir = null;
+        _ach = null;
+        _achToShow = null;
+        _achTiles.Clear();
+        _achTileByKey.Clear();
+        _achText.Clear();
+        if (_achSearch is not null && _achSearch.Text.Length > 0) _achSearch.Text = "";
+        AchGrid.Children.Clear();
+        _achLaidOutColumns = -1;
+        _optiPending = false;
+        _ultraFits = null;
+        _firstFrameMs = 0;
+        // The views of the last game's tabs: made again for this one when its tabs are opened.
+        _overview?.Hide();
+        _overview = null; OverviewHost.Child = null;
+        _dashboard = null;
+        _optiWikiView = null; OptiWikiHost.Child = null;
+        OptiNotesHost.Child = null;
+        _pcgwView = null; PcgwHost.Child = null;
+        _linksView = null; LinksHost.Child = null;
+        _reshadeView = null; ReShadeHost.Child = null;
+        _renoDxView = null; RenoDxHost.Child = null;
+        _lumaView = null; LumaHost.Child = null;
+        _dxvkView = null; DxvkHost.Child = null;
+        _vkd3dView = null; Vkd3dHost.Child = null;
+        _dlss5View = null; _dlss5Body = null; _dlss5Stale = false; _dlss5Pills = null; _dlss5Page = "overview"; Dlss5Host.Child = null;
+        ResetModsOverview();
+        _ultra = null; UltraInstallHost.Child = null; UltraAddonsHost.Child = null; UltraSettingsHost.Child = null;
+        _quickView = null; QuickHost.Child = null;
+        _notesView = null; NotesHost.Child = null;
+        _autoView = null; AutoHost.Child = null;
+        OfflineHost.Child = null;
+        OptiWikiPreviewHost.Child = null;
+        TocPin.Child = null;
+        TocPin.Visibility = Visibility.Collapsed;
+        _sectionEls = []; _sectionIds = []; _sectionTops = [];
+        _sectionsDirty = true;
+        _forcedSection = null;
+        if (_stuck)
+        {
+            _stuck = false;
+            StickySlot.Child = null;
+            StickyBar.Visibility = Visibility.Collapsed;
+            TabHost.Child = Tabs;
+            TabHost.Height = double.NaN;
+        }
+        // The banner of the last game.
+        _heroUri = _floorKey = null;
+        HeroImage.Source = null;
+        HeroImage.Opacity = 0;
+        FloorImage.Source = null;
+        LogoImage.Source = null;
+        LogoImage.Visibility = Visibility.Collapsed;
+        TitleText.Visibility = Visibility.Visible;
+        MetaText.Text = "";
+        TechBadges.Children.Clear();
+        TechBadges.Visibility = Visibility.Collapsed;
+        ApiBadge.Visibility = Visibility.Collapsed;
+        ConfigSizeText.Text = SaveSizeText.Text = L.T("Measuring…");
+        LastPlayedText.Text = PlayTimeText.Text = "—";
+        _argsExpanded = false;
+        _selectCustom = null;
+        _update = null;
+        _updateCheck++;
+        _cloud = null;
+        _cloudAsk++;
+        _modBadgesRun++;
+        _doc = null;
+        _dupKeys.Clear();
+        Scroller.ChangeView(null, 0, null, disableAnimation: true);
+    }
+
+    /// <summary>Retired pages, watched by the self-test's page churn: none should outlive a full collection (2.0.0-rc.12).</summary>
+    internal static readonly List<WeakReference<GamePage>> Retired = [];
+    /// <summary>
+    /// A game page taken out of the window for good (MainWindow keeps the last eight games' pages): its views go to the kept
+    /// ones, so the game opens quickly again later.
+    /// </summary>
+
+    internal void Retire()
+    {
+        if (App.SelfTesting) lock (Retired) Retired.Add(new WeakReference<GamePage>(this));
+        // The app-wide events let go of the page (2.0.0-rc.12): the two added when it was made held every retired page, with its
+        // whole visual tree and pictures, for the rest of the session.
+        Unsubscribe();
+        VersionsList.Changed -= OnVersionsListChanged;
+        ThemeRes.Applied -= Sheen;
+        _warmTimer?.Stop();
+        _filesTimer.Stop();
+        _pageCts.Cancel();
+        _overview?.StopTrailer();
+        StopWatchingModsFolder();
+        ClearWarmLayer();
+        KeepViews();
+        // The kept views leave this page with it: the game's next page takes them free.
+        OverviewHost.Child = OptiWikiHost.Child = PcgwHost.Child = LinksHost.Child = null;
+        _overview = null; _dashboard = null; _optiWikiView = null; _pcgwView = null; _linksView = null;
+        _game = null;
+    }
+
+    /// <summary>The page is hidden (another page or game is shown): its work stops until it is shown again.</summary>
+    public void Leave()
+    {
+        // The warm-up layer stays as it is: the views laid out there ahead of time are what makes this page's tabs open at
+        // once (emptying it here cost 300+ ms on the Opti tab). A neighbour's views held here are taken out by Detach.
+        _warmTimer?.Stop();
         _pageCts.Cancel();
         _filesTimer.Stop();
+        StopWatchingModsFolder();
         _overview?.StopTrailer();
+        Unsubscribe();
+        SaveArgs();
+    }
+
+    void OnVersionsListChanged() => _ = LoadCustomBuildsAsync(null, _pageCts.Token);
+
+    /// <summary>Settings → Appearance → Shading: the launch bar's sheen from above.</summary>
+    void Sheen() => LaunchSheen.Visibility = AppState.Settings.Shading ? Visibility.Visible : Visibility.Collapsed;
+
+    void Unsubscribe()
+    {
         AppState.PinsChanged -= UpdatePin;
         AchievementWatcher.Changed -= OnAchievementsChanged;
         GameSessions.PlaytimeChanged -= OnPlaytimeChanged;
@@ -223,7 +889,6 @@ public sealed partial class GamePage : Page
         GameJobs.Changed -= OnJobsChanged;
         GameJobs.Progress -= OnJobProgress;
         OptiReleases.Updated -= OnReleasesUpdated;
-        SaveArgs();
     }
 
     /// <summary>When the page's first frame was drawn, from when it was asked for (for the log's game-switch timing).</summary>
@@ -248,6 +913,7 @@ public sealed partial class GamePage : Page
     /// <summary>Re-reads the game folder and redraws everything that depends on it.</summary>
     public void Refresh()
     {
+        using var __perf = UiPerf.Scope("GamePage.Refresh");
         if (_game is null) return;
         _loading = true;
         try
@@ -320,6 +986,7 @@ public sealed partial class GamePage : Page
     /// <summary>The OptiScaler card and its side cards: setup answers, status, ASI plugins, custom dlls and the ini view.</summary>
     void RefreshOpti()
     {
+        using var __perf = UiPerf.Scope("GamePage.RefreshOpti");
         _optiPending = false;
         bool was = _loading;
         _loading = true;
@@ -343,9 +1010,12 @@ public sealed partial class GamePage : Page
     ReShadeView? _reshadeView;
     RenoDxView? _renoDxView;
     LumaView? _lumaView;
+    DxvkView? _dxvkView;
+    DxvkView? _vkd3dView;
     UltraPlusTab? _ultra;
     QuickAccessView? _quickView;
     NotesView? _notesView;
+    AutoView? _autoView;
 
     void InitTabs()
     {
@@ -362,6 +1032,12 @@ public sealed partial class GamePage : Page
         Tabs.CustomizeRequested += async () =>
         {
             if (_game is null) return;
+            if (_tab == "overview")
+            {
+                try { if (await DashboardView.CustomizeAsync(XamlRoot, ActualTheme)) _dashboard?.Rebuild(); }
+                catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the dashboard"), ex.Message, ex); }
+                return;
+            }
             try
             {
                 if (!await TabsDialog.ShowAsync(XamlRoot, ActualTheme, _settings, _game.Title)) return;
@@ -429,13 +1105,22 @@ public sealed partial class GamePage : Page
     /// Tabs with sections about the game's own files: on a game not installed yet the OptiScaler tab shows <see cref="OfflineCard"/>
     /// in place of its install and settings, and the ReShade section of ReShade &amp; Mods shows it (the wiki, RenoDX and Luma still work).
     /// </summary>
-    bool NeedsFiles(string id) => _game?.NotInstalled == true && id is "opti" or "mods";
+    bool NeedsFiles(string id) => _game?.NotInstalled == true && id is "opti" or "mods" or "auto";
 
     /// <summary>The OptiScaler.ini editor is on screen (its tab is open, the game is installed).</summary>
     bool IniOpen => IniCard.Visibility == Visibility.Visible;
 
     /// <summary>The ids of the tabs this game shows (self-test).</summary>
     internal List<string> SelfTestTabIds() => VisibleTabs().Select(t => t.Id).ToList();
+
+    /// <summary>The tab open now.</summary>
+    internal string OpenTabId => _tab;
+
+    /// <summary>Opens a tab without remembering it as the one to open next time (pages prepared ahead of time, MainWindow.GameSlots).</summary>
+    internal void ShowTabQuietly(string tab) => ShowTab(tab, remember: false);
+
+    /// <summary>Self-test (snappy): opens a tab as its button does.</summary>
+    internal void SelfTestShowTab(string tab) => ShowTab(tab);
 
     List<GameTab> VisibleTabs() => GameTabs.Ordered().Where(t => Available(t.Id) && !GameTabs.Hidden(t.Id, _settings)).ToList();
 
@@ -468,6 +1153,12 @@ public sealed partial class GamePage : Page
             : L.F("\"{0}\" is hidden for {1}. The gear at the end of the tabs brings it back.", name, _game?.Title));
     }
 
+    /// <summary>A tab of the game's page on screen, when the game shown is <paramref name="gameId"/>.</summary>
+    static void OpenTabOf(string gameId, string tab)
+    {
+        if (App.Window?.ShownGamePage is { } page && string.Equals(page.GameId, gameId, StringComparison.OrdinalIgnoreCase)) page.OpenTab(tab);
+    }
+
     /// <summary>
     /// Opens a tab from a link on the page (any id, old ones included: see <see cref="GameTabs.Resolve"/>), and brings the part
     /// wanted into view: the section of a tab that holds several, or the tab row.
@@ -480,9 +1171,49 @@ public sealed partial class GamePage : Page
         else DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => ScrollToSection(section));
     }
 
+    // ---------- Dashboard (1.4.0; the first tab since rc.7) ----------
+
+    /// <summary>Self-test: opens the Dashboard tab and reports what it shows.</summary>
+    internal (int Cards, bool NewsLoaded, int Activity)? SelfTestDashboard()
+    {
+        ShowTab("overview", remember: false);
+        return _dashboard?.SelfTestState();
+    }
+
+    /// <summary>Self-test: the Dashboard's cards reordered and hidden, then back (DashboardView.SelfTestReorder).</summary>
+    internal string SelfTestDashboardReorder() => _dashboard?.SelfTestReorder() ?? throw new InvalidOperationException("no dashboard");
+
+    /// <summary>Self-test: opens the newest post of the Dashboard in the app's reader.</summary>
+    internal bool SelfTestReadPost() => _dashboard?.SelfTestReadPost() ?? false;
+
+    /// <summary>
+    /// Self-test: gives the Dashboard a made-up set of achievements (13 of 43 unlocked, rarities from 2% to 80%, no icons so
+    /// the tier trophies stand in) and scrolls to its card, for a picture of the card without a signed-in store.
+    /// </summary>
+    internal bool SelfTestSampleAchievements()
+    {
+        if (_dashboard is null) return false;
+        var items = new List<Achievement>();
+        for (int i = 0; i < 43; i++)
+            items.Add(new Achievement
+            {
+                Key = $"s:{i}", ApiName = $"SAMPLE_{i}", Name = i == 7 ? "Hang Ten" : $"Sample achievement {i + 1}",
+                Description = i == 7 ? "Surf a wave for ten seconds without falling" : "Do the thing this achievement asks for",
+                Unlocked = i < 13, UnlockedAt = i < 13 ? DateTime.UtcNow.AddHours(-3 - i * 20) : null, GlobalPercent = i == 7 ? 2.4 : 8 + i * 1.7,
+            });
+        _dashboard.SetAchievements(new AchievementSet("sample", items));
+        return true;
+    }
+
+    /// <summary>Self-test: opens or closes the Dashboard's version history.</summary>
+    internal bool SelfTestHistory(bool open) => _dashboard?.SelfTestHistory(open) ?? false;
+
     /// <summary>Shows one tab; the others are collapsed, so they cost nothing to lay out or draw.</summary>
+    int _optiReveal, _modsReveal;
+
     void ShowTab(string tab, bool remember = true, string? section = null)
     {
+        using var __perf = UiPerf.Scope("GamePage.ShowTab");
         tab = GameTabs.Resolve(tab).Tab;
         var visible = VisibleTabs();
         if (!visible.Any(t => t.Id == tab))
@@ -490,27 +1221,75 @@ public sealed partial class GamePage : Page
             remember = false;
             tab = visible.FirstOrDefault(t => t.Id == "overview")?.Id ?? visible.FirstOrDefault()?.Id ?? "overview";
         }
-        if (tab != "overview") _overview?.StopTrailer();
+        if (tab != "overview") _dashboard?.Hide();
         _tab = tab;
         Tabs.Select(tab);
+        Tabs.SetView(tab == "overview");
         bool offline = NeedsFiles(tab);
-        bool opti = tab == "opti", mods = tab == "mods";
-        OfflineHost.Visibility = offline && opti ? Visibility.Visible : Visibility.Collapsed;
-        if (offline && opti) OfflineHost.Child = OfflineCard(GameTabs.Find("opti")!);
+        bool opti = tab == "opti", mods = tab == "mods", auto = tab == "auto";
+        OfflineHost.Visibility = offline && (opti || auto) ? Visibility.Visible : Visibility.Collapsed;
+        if (offline && (opti || auto)) OfflineHost.Child = OfflineCard(GameTabs.Find(tab)!);
+        AutoHost.Visibility = auto && !offline ? Visibility.Visible : Visibility.Collapsed;
         // A switch to another game: the OptiScaler card (the largest part of the page) is laid out on the frame after the first,
         // so the banner, the launch bar and the tabs show at once.
-        OptiTab.Visibility = opti && !offline && !_deferViews ? Visibility.Visible : Visibility.Collapsed;
-        IniCard.Visibility = opti && !offline && !_deferViews ? Visibility.Visible : Visibility.Collapsed;
-        QuickPanelCard.Visibility = IniCard.Visibility;
-        OptiWikiHost.Visibility = opti ? Visibility.Visible : Visibility.Collapsed;
-        OptiNotesHost.Visibility = OptiWikiHost.Visibility;
+        bool optiFiles = opti && !offline && !_deferViews;
+        // The OptiScaler tab's sections come back from Collapsed one per frame (2.0.0-rc.6): all at once, WinUI laid out the
+        // install block, plugins, Quick Panel, every setting, the wiki and the notes before drawing anything (340-460 ms
+        // after the click). The first shows with the click; asked for a section by name, all of them show at once.
+        bool optiInTurns = opti && section is null && OptiTab.Visibility != Visibility.Visible;
+        var optiRest = new List<(FrameworkElement El, bool Show)>
+        {
+            (OptiPluginsGrid, optiFiles), (QuickPanelCard, optiFiles), (IniCard, optiFiles), (OptiWikiHost, opti), (OptiNotesHost, opti),
+        };
+        OptiTab.Visibility = optiFiles ? Visibility.Visible : Visibility.Collapsed;
+        int optiTurn = ++_optiReveal;
+        foreach (var (el, show) in optiRest)
+            if (!show) el.Visibility = Visibility.Collapsed;
+            else if (!optiInTurns) el.Visibility = Visibility.Visible;
+        if (optiInTurns)
+        {
+            var queue = new Queue<FrameworkElement>(optiRest.Where(x => x.Show).Select(x => x.El));
+            void Reveal()
+            {
+                if (optiTurn != _optiReveal || _tab != "opti" || queue.Count == 0) return;
+                using (UiPerf.Scope("GamePage.OptiSection"))
+                {
+                    var el = queue.Dequeue();
+                    el.Visibility = Visibility.Visible;
+                    UiPerf.Layout(this, "opti section " + el.Name);
+                }
+                if (queue.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Reveal);
+                else _sectionsDirty = true;
+            }
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Reveal);
+        }
         AchCard.Visibility = tab == "ach" ? Visibility.Visible : Visibility.Collapsed;
         OverviewHost.Visibility = tab == "overview" ? Visibility.Visible : Visibility.Collapsed;
         PcgwHost.Visibility = tab == "pcgw" ? Visibility.Visible : Visibility.Collapsed;
         LinksHost.Visibility = tab == "links" ? Visibility.Visible : Visibility.Collapsed;
-        ReShadeHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
-        RenoDxHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
-        LumaHost.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
+        // The Mods tab the same way: the table first, then ReShade and the others, one per frame (2.0.0-rc.6).
+        bool modsInTurns = mods && section is null && ModsOverviewHost.Visibility != Visibility.Visible;
+        int modsTurn = ++_modsReveal;
+        var modsHosts = new FrameworkElement[] { ModsOverviewHost, ReShadeHost, RenoDxHost, LumaHost, Dlss5Host, DxvkHost, Vkd3dHost };
+        foreach (var host in modsHosts)
+            host.Visibility = mods && (!modsInTurns || host == ModsOverviewHost) ? Visibility.Visible : Visibility.Collapsed;
+        if (modsInTurns)
+        {
+            var queue = new Queue<FrameworkElement>(modsHosts.Skip(1));
+            void Reveal()
+            {
+                if (modsTurn != _modsReveal || _tab != "mods" || queue.Count == 0) return;
+                using (UiPerf.Scope("GamePage.ModsReveal"))
+                {
+                    var el = queue.Dequeue();
+                    el.Visibility = Visibility.Visible;
+                    UiPerf.Layout(this, "mods section " + el.Name);
+                }
+                if (queue.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Reveal);
+                else _sectionsDirty = true;
+            }
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Reveal);
+        }
         ShowUltra(tab == "ultra");
         QuickHost.Visibility = tab == "quick" ? Visibility.Visible : Visibility.Collapsed;
         NotesHost.Visibility = tab == "notes" ? Visibility.Visible : Visibility.Collapsed;
@@ -518,31 +1297,53 @@ public sealed partial class GamePage : Page
         if (mods && offline) ReShadeHost.Child = OfflineCard(GameTabs.Sections("mods")[0]);
         if (_data is not null && !_deferViews)
         {
-            if (tab == "overview" && _overview is null)
+            if (tab == "overview")
             {
-                OverviewHost.Child = _overview = new OverviewView(_data);
-                _overview.ApplyLayout(Root.ActualWidth);
-                _overview.SetAchievements(_ach);
+                bool madeNow = _dashboard is null;
+                MakeInfoView("overview");
+                Place(OverviewHost, _dashboard);
+                // Made with the click and on screen (not prepared unseen): its cards come in one per frame. One made ahead of
+                // time was already laid out and drawn in the warm-up layer: it is only moved.
+                if (madeNow && !Unseen) _dashboard?.RevealInTurns();
+                if (_dashboard is not null) _dashboard.SectionsChanged = OnDashboardSections;
+                _dashboard?.Show();
             }
-            if (opti && _optiWikiView is null) OptiWikiHost.Child = _optiWikiView = new OptiWikiView(_data);
+            if (opti)
+            {
+                MakeInfoView("optiwiki");
+                Place(OptiWikiHost, _optiWikiView);
+            }
             if (opti && OptiNotesHost.Child is null) OptiNotesHost.Child = new OptiNotesView(() => _settings.Install);
-            if (tab == "pcgw" && _pcgwView is null)
+            if (tab == "pcgw")
             {
-                PcgwHost.Child = _pcgwView = new PcgwView(_data);
-                _pcgwView.ScrollRequested += el => ScrollToElement(el);
-                _pcgwView.TocLayoutChanged += () => DispatcherQueue.TryEnqueue(PlaceToc);
+                MakeInfoView("pcgw");
+                Place(PcgwHost, _pcgwView);
             }
-            if (tab == "links" && _linksView is null) LinksHost.Child = _linksView = new LinksView(_data);
+            if (tab == "links")
+            {
+                MakeInfoView("links");
+                Place(LinksHost, _linksView);
+            }
             if (mods)
             {
-                // The three sections are built together, the first time the tab opens.
+                // The sections are built together, the first time the tab opens; the installed mods are read again each time.
                 if (!offline)
                 {
                     _reshadeView ??= new ReShadeView(ModContext());
                     if (!ReferenceEquals(ReShadeHost.Child, _reshadeView)) ReShadeHost.Child = _reshadeView;
                 }
-                if (_renoDxView is null) RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext());
-                if (_lumaView is null) LumaHost.Child = _lumaView = new LumaView(ModContext());
+                // The sections under ReShade, one per turn of the UI thread (2.0): built together they held it 150-550 ms on
+                // the click. Asked for one of them by name (a link, a search hit), all at once so the jump finds it.
+                // Built at once, each is refreshed below with the others; built later, by its own step.
+                bool now = section is not null || App.SelfTesting;
+                var steps = new List<Action>();
+                if (_renoDxView is null) steps.Add(() => { RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext()); if (!now) Ui.Safe(_renoDxView.Refresh); });
+                if (_lumaView is null) steps.Add(() => { LumaHost.Child = _lumaView = new LumaView(ModContext()); if (!now) Ui.Safe(_lumaView.Refresh); });
+                if (_dlss5View is null) steps.Add(() => Dlss5Host.Child = Dlss5Section());
+                if (_dxvkView is null) steps.Add(() => { DxvkHost.Child = _dxvkView = new DxvkView(ModContext()); if (!now) Ui.Safe(_dxvkView.Refresh); });
+                if (_vkd3dView is null) steps.Add(() => { Vkd3dHost.Child = _vkd3dView = new DxvkView(ModContext(), vkd3d: true); if (!now) Ui.Safe(_vkd3dView.Refresh); });
+                if (now) foreach (var step in steps) step();
+                else BuildInTurns(steps, _game);
             }
             if (tab == "ultra" && _ultra is null)
             {
@@ -555,6 +1356,10 @@ public sealed partial class GamePage : Page
             }
             if (tab == "quick" && _quickView is null) QuickHost.Child = _quickView = new QuickAccessView(ModContext());
             if (tab == "notes" && _notesView is null) NotesHost.Child = _notesView = new NotesView(ModContext());
+            if (auto && !offline && _autoView is null) AutoHost.Child = _autoView = new AutoView(ModContext(), this);
+            else if (auto && !offline) _autoView?.Refresh();
+            // The Auto tab follows the folder as the Mods table does: a mod taken out anywhere (its tab, Explorer) shows at once.
+            if (auto && !offline) WatchModsFolder(TargetDir);
         }
         if (mods)
         {
@@ -562,11 +1367,18 @@ public sealed partial class GamePage : Page
             if (!offline && _reshadeView is { } r) Ui.Safe(r.Refresh);
             if (_renoDxView is { } x) Ui.Safe(x.Refresh);
             if (_lumaView is { } l) Ui.Safe(l.Refresh);
+            if (_dxvkView is { } d) Ui.Safe(d.Refresh);
+            if (_vkd3dView is { } v) Ui.Safe(v.Refresh);
+            // DLSS 5 reads OptiScaler and the game folder: what changed while another tab was open shows now.
+            if (_dlss5Stale) RefreshDlss5();
+            _ = RefreshModsOverviewAsync();
         }
         if (tab == "ultra") _ultra?.Refresh();
-        if (opti && _iniStale && !offline) LoadIni();
+        // Not with the first frame of a game switch (_deferViews): reading and laying out OptiScaler.ini's settings held a game
+        // with OptiScaler 150-300 ms before anything showed; the page's after-first-frame ShowTab loads it.
+        if (opti && _iniStale && !offline && !_deferViews) using (UiPerf.Scope("GamePage.LoadIni")) LoadIni();
         if (tab == "ach" && _achStale) BuildAchievementTiles();
-        if (opti && !offline) _ = UpdateFootprintAsync();
+        if (opti && !offline && !_deferViews) _ = UpdateFootprintAsync();
         ShowSubTabs(section);
         PlaceToc();
         if (remember && AppState.Settings.GameTab != tab)
@@ -576,7 +1388,7 @@ public sealed partial class GamePage : Page
         }
     }
 
-    // ---------- sub-tabs: the sections of OptiScaler and of ReShade & Mods ----------
+    // ---------- sub-tabs: the sections of OptiScaler and of Mods ----------
 
     FrameworkElement[] _sectionEls = [];
     string[] _sectionIds = [];
@@ -590,14 +1402,21 @@ public sealed partial class GamePage : Page
         ("opti", "install") => NeedsFiles("opti") ? OfflineHost : OptiTab,
         ("opti", "quickpanel") => NeedsFiles("opti") ? null : QuickPanelCard,
         ("opti", "settings") => IniCard,
+        ("opti", "plugins") => NeedsFiles("opti") ? null : OptiPluginsGrid,
         ("opti", "wiki") => OptiWikiHost,
         ("opti", "notes") => OptiNotesHost,
+        ("mods", "installed") => ModsOverviewHost,
         ("mods", "reshade") => ReShadeHost,
         ("mods", "renodx") => RenoDxHost,
         ("mods", "luma") => LumaHost,
+        ("mods", "dxvk") => DxvkHost,
+        ("mods", "vkd3d") => Vkd3dHost,
+        ("mods", "dlss5") => Dlss5Host,
         ("ultra", "install") => UltraInstallHost,
         ("ultra", "addons") => UltraAddonsHost,
         ("ultra", "settings") => UltraSettingsHost,
+        // The Dashboard's main sections (the trailer, the latest update, news...), inside its own view.
+        ("overview", _) => _dashboard?.Section(id),
         _ => null,
     };
 
@@ -617,13 +1436,20 @@ public sealed partial class GamePage : Page
     /// </summary>
     FrameworkElement? Separator(GameTab section)
     {
+        // OptiScaler's Plugins & DLLs read as part of its install (2.0.0-rc.4): no line between them.
+        if (_tab == "opti" && section.Id == "plugins") return null;
         if (SectionElement(section.Id) is not { } el) return null;
         // Before the page is loaded the sections in the XAML have no Parent yet (the tab shown on opening a game): the page's
         // own panel holds them, so the separators are there from the start, not only after another tab was opened.
         var panel = el.Parent as Panel ?? VisualTreeHelper.GetParent(el) as Panel ?? (Root.Children.Contains(el) ? Root : null);
         if (panel is null) return null;
         string key = $"{_tab}/{section.Id}";
-        if (!_separators.TryGetValue(key, out var sep)) _separators[key] = sep = Ui.SectionRule(section.Tint);
+        if (!_separators.TryGetValue(key, out var sep))
+        {
+            _separators[key] = sep = Ui.SectionRule(section.Tint);
+            // As wide as the section it stands over (FitContent follows the window).
+            sep.MaxWidth = el.MaxWidth;
+        }
         // Asked of the panel, not of Parent (null too before the page is loaded): a separator is never added twice.
         int at = panel.Children.IndexOf(sep);
         if (at < 0) panel.Children.Insert(panel.Children.IndexOf(el), sep);
@@ -690,7 +1516,11 @@ public sealed partial class GamePage : Page
         // Every section after the first starts with a slim separator naming it; it is also where a sub-tab scrolls to.
         foreach (var sep in _separators.Values) sep.Visibility = Visibility.Collapsed;
         // PCGamingWiki's sections are cards with their own headings: no separator over them.
-        _sectionEls = shown.Select((s, i) => i > 0 && Separator(s) is { } sep ? sep : SectionElement(s.Id)!).ToArray();
+        // The Dashboard draws its own hairline over each section and has no sub-tab bar (rc.11: the user found it noise).
+        bool own = _tab == "overview";
+        if (own) shown = [];
+        _sectionIds = shown.Select(s => s.Id).ToArray();
+        _sectionEls = shown.Select((s, i) => i > 0 && !own && Separator(s) is { } sep ? sep : SectionElement(s.Id)!).ToArray();
         _sectionTops = new double[shown.Count];
         _sectionsDirty = true;
         _forcedSection = null;
@@ -700,6 +1530,27 @@ public sealed partial class GamePage : Page
     }
 
     bool _subTabsQueued, _spyQueued;
+
+    /// <summary>The Dashboard's main sections changed: its sub-tabs are laid out again (one came or went) or only measured again.</summary>
+    void OnDashboardSections(DashboardView view, bool shown)
+    {
+        if (!ReferenceEquals(view, _dashboard) || _tab != "overview") return;
+        _sectionsDirty = true;
+        if (shown) QueueSubTabs(); else QueueSpy();
+    }
+
+    /// <summary>Checks the marked sub-tab again once the current layout pass is done.</summary>
+    void QueueSpy()
+    {
+        if (_spyQueued) return;
+        _spyQueued = true;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            _spyQueued = false;
+            // As a scroll step would: a pill held for an animated jump stays held.
+            UpdateSectionSpy(true);
+        });
+    }
 
     /// <summary>Lays the sub-tabs and separators out again once the current change is done (several sections change together).</summary>
     void QueueSubTabs()
@@ -775,9 +1626,8 @@ public sealed partial class GamePage : Page
         var body = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, MaxWidth = 560, Padding = new Thickness(24, 36, 24, 40) };
         body.Children.Add(new Border
         {
-            Width = 56, Height = 56, CornerRadius = new CornerRadius(28), HorizontalAlignment = HorizontalAlignment.Center,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x30, color.R, color.G, color.B)),
-            Child = new FontIcon { Glyph = info.Glyph, FontSize = 24, Foreground = new SolidColorBrush(color) },
+            Width = 56, Height = 48, HorizontalAlignment = HorizontalAlignment.Center,
+            Child = new FontIcon { Glyph = info.Glyph, FontSize = 36, Foreground = new SolidColorBrush(color) },
         });
         body.Children.Add(new TextBlock { Text = info.Name, Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["SubtitleTextBlockStyle"], HorizontalAlignment = HorizontalAlignment.Center });
         body.Children.Add(new TextBlock
@@ -928,13 +1778,17 @@ public sealed partial class GamePage : Page
         if (LinksToggle.FocusState != FocusState.Keyboard) LinksToggle.Opacity = 0;
     }
 
-    ModContext ModContext() => new()
+    ModContext ModContext()
     {
-        Game = _game!,
+        var game = _game!;
+        return new()
+    {
+        Game = game,
         Settings = _settings,
         Data = _data!,
         TargetDir = () => TargetDir,
-        Token = _pageCts.Token,
+        // The page's token at the time of each read: Resume makes a new one (2.0.0-rc.12). Another game's: cancelled.
+        TokenOf = () => _game == game ? _pageCts.Token : new CancellationToken(true),
         OptiChanged = () =>
         {
             _iniStale = true;
@@ -942,12 +1796,18 @@ public sealed partial class GamePage : Page
             // RenoDX and Luma show how ReShade is loaded too: redrawn with the ReShade section, never left stale.
             if (_renoDxView is { } x) Ui.Safe(x.Refresh);
             if (_lumaView is { } l) Ui.Safe(l.Refresh);
+            if (_dxvkView is { } d) Ui.Safe(d.Refresh);
+            if (_vkd3dView is { } v) Ui.Safe(v.Refresh);
+            // The banner's mod tags and the mod check follow every change to the folder.
+            _ = UpdateModBadgesAsync();
             // Ultra+ reads OptiScaler's file name (both load through a proxy dll beside the exe).
             _ultra?.Refresh();
         },
         ShowTab = OpenTab,
         ReinstallOpti = () => _ = InstallAsync(SelectedRelease, manual: false),
+        SteamAppId = () => _steamAppId,
     };
+    }
 
     // ---------- the tab row stays on top while scrolling ----------
 
@@ -956,12 +1816,25 @@ public sealed partial class GamePage : Page
     /// <summary>Where the tab row sits in the page (its top, from the top of the scrolled content).</summary>
     double TabTop() => TabHost.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
 
-    void Scroller_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    void Scroller_ViewChanged(ScrollView sender, object e)
     {
+        long t = System.Diagnostics.Stopwatch.GetTimestamp();
         UpdateSticky();
-        UpdateSectionSpy(e.IsIntermediate);
+        UpdateSectionSpy(intermediate: true);
         if (_tab == "pcgw") _pcgwView?.UpdateSpy(Root, Scroller.VerticalOffset + StickyHeight + 32);
+        double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t).TotalMilliseconds;
+        ScrollWorkMs += ms;
+        ScrollWorkMax = Math.Max(ScrollWorkMax, ms);
     }
+
+    /// <summary>The arrow on the pinned tab bar: back to the top of the page, the banner, with a glide.</summary>
+    void TopButton_Click(object sender, RoutedEventArgs e) => Scroller.ChangeView(null, 0, null, disableAnimation: false);
+
+    /// <summary>A scroll (a jump to a section, a glide) has ended: the section marker follows the page again.</summary>
+    void Scroller_ScrollCompleted(ScrollView sender, ScrollingScrollCompletedEventArgs e) => UpdateSectionSpy(intermediate: false);
+
+    /// <summary>Self-test (scroll smoothness): the time spent in the page's own scroll handler, in total and at worst.</summary>
+    internal static double ScrollWorkMs, ScrollWorkMax;
 
     /// <summary>
     /// Past the tab row, the same row moves into the bar pinned to the top of the page (its place keeps its height, so nothing
@@ -1010,6 +1883,121 @@ public sealed partial class GamePage : Page
     /// Self-test hook (HybridLauncher.exe --selftest): shows a tab ("opti"), or a section of one ("opti/settings", scrolled to without
     /// animation), and for the settings section one of its views.
     /// </summary>
+    /// <summary>Self-test: what the DXVK and VKD3D-Proton sections show ("loaded …" once they have their releases, "folded: …"
+    /// for a game of the other Direct3D), or why not.</summary>
+    /// <summary>Self-test: the Auto tab's plan (see AutoView.SelfTestDescribe), or "no Auto tab".</summary>
+    internal string SelfTestAuto() => _autoView?.SelfTestDescribe() ?? "no Auto tab";
+    internal int SelfTestAutoAddBuildMenu(bool open) => _autoView?.SelfTestAddBuildMenu(open) ?? -1;
+
+    /// <summary>Self-test: the Auto tab's one click with ReShade ticked (fake games only: it installs for real).</summary>
+    internal string SelfTestAutoDlss5(string way) => _autoView?.SelfTestDlss5(way) ?? "no Auto tab";
+
+    internal string SelfTestAutoDlss5Tick() => _autoView?.SelfTestDlss5Tick() ?? "no Auto tab";
+
+    internal string SelfTestAutoReShadeBuild(bool? addon) => _autoView?.SelfTestReShadeBuild(addon) ?? "no Auto tab";
+
+    internal Task SelfTestAutoRunAsync() => _autoView?.SelfTestRunAsync() ?? Task.CompletedTask;
+
+    /// <summary>Self-test: the game folder (where the Auto tab installed).</summary>
+    internal string? SelfTestTargetDir => TargetDir;
+
+    internal string? SelfTestDxvk() => $"DXVK {_dxvkView?.SelfTestDescribe() ?? "none"} || VKD3D-Proton {_vkd3dView?.SelfTestDescribe() ?? "none"}";
+
+    /// <summary>
+    /// The game folder a self-test step may write in: only a fake game's, inside the test's own data folder (HL_DATA). A real
+    /// game found by a launcher scan is never written to (rc.18: a run without -FakeGame put a sample OptiScaler over the
+    /// user's own install); the step fails instead.
+    /// </summary>
+    string SelfTestFolder()
+    {
+        if (TargetDir is not { } dir) throw new InvalidOperationException("no game folder");
+        string Full(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) + Path.DirectorySeparatorChar;
+        if (!AppInfo.SeparateData || !Full(dir).StartsWith(Full(AppInfo.DataRoot), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"refused: {dir} is not a fake game inside the test data folder (run the self-test with -FakeGame)");
+        return dir;
+    }
+
+    /// <summary>Self-test: puts a RenoDX add-on with no ReShade in the game folder (or takes it out) and checks the banner again.</summary>
+    internal void SelfTestModProblem(bool on)
+    {
+        var dir = SelfTestFolder();
+        var file = Path.Combine(dir, "renodx-selftest.addon64");
+        if (on) File.WriteAllText(file, "self-test");
+        else if (File.Exists(file)) File.Delete(file);
+        _ = UpdateModBadgesAsync();
+    }
+
+    /// <summary>
+    /// Self-test (HL_SELFTEST_OPTI = an OptiScaler.dll): puts it in the game folder as dxgi.dll with an install record, as an
+    /// install would, then shows the file name menu of the status chip.
+    /// </summary>
+    internal void SelfTestDllSwapMenu(string optiDll)
+    {
+        var dir = SelfTestFolder();
+        var dll = Path.Combine(dir, "dxgi.dll");
+        File.Copy(optiDll, dll, true);
+        _settings.Install = new InstallManifest { TargetDir = dir, DllName = "dxgi.dll", Tag = "self-test", Channel = OptiChannel.Stable, InstalledAt = DateTime.Now };
+        _settings.Install.Files["dxgi.dll"] = OptiInstaller.Hash(dll);
+        _settings.Setup.DllName = "dxgi.dll";
+        SettingsStore.Save();
+        ShowTab("opti", remember: false, section: "install");
+        UpdateOptiStatus();
+        ShowDllSwapMenu();
+    }
+
+    /// <summary>Self-test: swaps to <paramref name="name"/> and says what the folder and the chip show then.</summary>
+    internal async Task<string> SelfTestDllSwapAsync(string name)
+    {
+        SelfTestFolder();
+        await SwapDllAsync(name);
+        return $"{_settings.Install?.DllName} chip={OptiDllText.Text} found={(TargetDir is { } d ? OptiDetector.Detect(d)?.FileName : null)} setup={_settings.Setup.DllName}";
+    }
+
+    /// <summary>Self-test: the texts of the banner's mod tags and warnings, in order.</summary>
+    internal string SelfTestBadges() => string.Join(" | ", ModBadges.Children.OfType<Border>()
+        .Select(b => string.Join(" ", (b.Child as Panel)?.Children.OfType<TextBlock>().Select(t => t.Text) ?? []) + (b.Tag is string all ? $" ({all})" : "")));
+
+    /// <summary>Demo walk (MainWindow.Demo): a tab or a tab's section, scrolled to smoothly; nothing else changes.</summary>
+    internal void DemoShow(string tab)
+    {
+        var parts = tab.Split('/');
+        ShowTab(parts[0], remember: false, section: parts.Length > 1 ? parts[1] : null);
+        if (parts.Length > 1) ScrollToSection(parts[1], animated: true);
+    }
+
+    /// <summary>Demo walk: one of the page's named parts (its x:Name), for the recording's camera and pointer.</summary>
+    internal FrameworkElement? DemoPart(string name) => FindName(name) as FrameworkElement;
+
+    /// <summary>Demo walk: a tab's button in the tab bar (the whole bar when it has none by that id).</summary>
+    internal FrameworkElement? DemoTabButton(string id) => Tabs.DemoButton(id) ?? (FrameworkElement)Tabs;
+
+    /// <summary>Demo walk: picks an OptiScaler source card, as a click on it would.</summary>
+    internal void DemoChannel(OptiChannel channel) => ChannelCard(channel).IsChecked = true;
+
+    /// <summary>Demo walk: opens or folds Setup options.</summary>
+    internal void DemoSetup(bool open) => SetupExpander.IsExpanded = open;
+
+    /// <summary>Demo walk: Install and Uninstall, as their buttons do (the confirmations are answered by MainWindow.DemoAnswerAfter).</summary>
+    internal void DemoInstallOpti() => StartInstall(manual: false);
+    internal void DemoUninstallOpti() => Uninstall_Click(UninstallButton, new RoutedEventArgs());
+
+    /// <summary>Demo walk: a change runs in this game's folder.</summary>
+    internal bool DemoBusy => _busy || GameJobs.Busy(_game?.Id);
+
+    /// <summary>Demo walk: OptiScaler is in through Hybrid Launcher.</summary>
+    internal bool DemoOptiInstalled => _settings.Install is not null;
+
+    /// <summary>Demo walk: where the open tab starts in the page's scroll.</summary>
+    internal double DemoTabTop() => Scroller.VerticalOffset + TabTop();
+
+    /// <summary>Demo walk: the game's rarest unlocked achievement as a pop-up in <paramref name="look"/> (null: none read).</summary>
+    internal Toast? DemoToast(string look)
+    {
+        if (_ach is not { } set || _game is not { } game) return null;
+        var a = set.Items.Where(i => i.Unlocked).OrderBy(i => i.GlobalPercent ?? 100).FirstOrDefault() ?? set.Items.FirstOrDefault();
+        return a is null ? null : new Toast(a.Name, a.Description, a.IconUrl, game.Name, a.GlobalPercent, game.Store, a.Points, look, GameId: game.Id, AchievementKey: a.Key);
+    }
+
     public void SelfTestShow(string tab, string? iniView = null)
     {
         var parts = tab.Split('/');
@@ -1023,6 +2011,12 @@ public sealed partial class GamePage : Page
     }
 
     /// <summary>Self-test hook: scrolls past the tab row (it moves to the top bar) or back to the top.</summary>
+    /// <summary>Self-test: scrolls the Dashboard to its side cards (under the main column on a narrow window).</summary>
+    internal void SelfTestScrollToDashboardSide() { if (_dashboard?.SelfTestSide is { } side) ScrollToElement(side, animated: false); }
+
+    /// <summary>Self-test: scrolls the open tab to a place below its top (pictures of a long tab, screen by screen).</summary>
+    internal void SelfTestScrollBelow(double below) => Scroller.ChangeView(null, TabTop() + below, null, disableAnimation: true);
+
     public void SelfTestScroll(bool down) => Scroller.ChangeView(null, down ? TabTop() + (double.TryParse(Environment.GetEnvironmentVariable("HL_SELFTEST_SCROLL"), out var by) ? by : 400) : 0, null, disableAnimation: true);
 
     async void Store_Click(object sender, RoutedEventArgs e)
@@ -1059,7 +2053,6 @@ public sealed partial class GamePage : Page
         AchButtonText.Visibility = width < 560 ? Visibility.Collapsed : Visibility.Visible;
         SaveFolderLabel.Visibility = width < 1400 ? Visibility.Collapsed : Visibility.Visible;
         ConfigFolderLabel.Visibility = width < 1600 ? Visibility.Collapsed : Visibility.Visible;
-        _overview?.ApplyLayout(width);
 
         // Launch bar: arguments get their own full row when narrow; the play stats go first when space runs out.
         _narrowBar = narrow;
@@ -1068,19 +2061,30 @@ public sealed partial class GamePage : Page
 
         // OptiScaler beside the ASI plugins on wide windows, the plugins below it otherwise.
         // The side column takes about a quarter of the page, so the install card does not stretch into a long thin strip.
+        // The tool tabs take most of the page, centred: their own layout follows that width, not the page's.
+        double page = width;
+        FitContent(width - 40);
+        width = Math.Min(width, _contentMax + 40);
         bool stackTop = width < 1100;
         double side = Math.Clamp(Math.Round(width * 0.27), 360, 600);
         OptiTab.ColumnDefinitions[1].Width = stackTop ? new GridLength(0) : new GridLength(side);
         OptiTab.ColumnSpacing = stackTop ? 0 : 16;
         Grid.SetRow(SideColumn, stackTop ? 1 : 0);
         Grid.SetColumn(SideColumn, stackTop ? 0 : 1);
+        // Plugins &amp; DLLs: side by side, one above the other on narrow windows.
+        bool stackPlugins = width < 1000;
+        OptiPluginsGrid.ColumnDefinitions[1].Width = stackPlugins ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        OptiPluginsGrid.ColumnSpacing = stackPlugins ? 0 : 12;
+        Grid.SetRow(CustomDllCard, stackPlugins ? 1 : 0);
+        Grid.SetColumn(CustomDllCard, stackPlugins ? 0 : 1);
 
         // Version step: channel switch above the version list when narrow.
         // Install card: the channel cards stack and the version tools go under the list when the card is narrow;
         // the ini / uninstall buttons drop to a second row.
         double card = (stackTop ? width : width - side - 16) - 40;
         bool narrowCard = card < 640;
-        for (int i = 0; i < 4; i++) ChannelCards.ColumnDefinitions[i].Width = new GridLength(1, GridUnitType.Star);
+        // In one row the forks' card gets more of it: its name is the longest and was cut on a card of reading width.
+        for (int i = 0; i < 4; i++) ChannelCards.ColumnDefinitions[i].Width = new GridLength(i == 2 && !narrowCard ? 1.45 : 1, GridUnitType.Star);
         ChannelCards.ColumnSpacing = narrowCard ? 0 : 8;
         if (ChannelCards.RowDefinitions.Count < 2)
             for (int i = ChannelCards.RowDefinitions.Count; i < 2; i++) ChannelCards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1104,6 +2108,7 @@ public sealed partial class GamePage : Page
 
         LayoutIni(width);
 
+        width = page;
         _achColumns = Math.Max(1, (int)((width - 40) / 340));
         if (_achColumns != _achLaidOutColumns) LayoutAchievements();
     }
@@ -1133,8 +2138,19 @@ public sealed partial class GamePage : Page
                 // Steam heroes are 3840 px wide. Decoded once at the widest the banner can ever be drawn on this PC (the widest
                 // screen, or its tallest crop), never below it: the page's width when the art arrives can be far smaller than the
                 // window will be, and an upscaled bitmap looks blurry.
-                HeroImage.Source = new BitmapImage { DecodePixelWidth = HeroDecodeWidth(), DecodePixelType = DecodePixelType.Physical, UriSource = new Uri(art.HeroImage) };
-                FadeIn(HeroImage);
+                // Shown before in this session: the decoded picture is still in memory, on screen at once with no fade.
+                if (ArtCache.Get(art.HeroImage) is BitmapImage known)
+                {
+                    HeroImage.Source = known;
+                    HeroImage.Opacity = 1;
+                }
+                else
+                {
+                    var hero = new BitmapImage { DecodePixelWidth = HeroDecodeWidth(), DecodePixelType = DecodePixelType.Physical, UriSource = new Uri(art.HeroImage) };
+                    ArtCache.Put(art.HeroImage, hero);
+                    HeroImage.Source = hero;
+                    FadeIn(HeroImage);
+                }
                 _heroUri = art.HeroImage;
                 UpdateFloor();
             }
@@ -1142,26 +2158,58 @@ public sealed partial class GamePage : Page
         }
 
         // The title logo replaces the plain title once it has loaded; a broken file keeps the text.
-        if (art.LogoImage is not null)
+        if (art.LogoImage is not null && ArtCache.Get(art.LogoImage) is BitmapImage knownLogo && ArtCache.Opened(art.LogoImage))
+        {
+            // A logo shown before: in place at once, no fade.
+            LogoImage.Source = knownLogo;
+            LogoImage.Opacity = 1;
+            LogoImage.Visibility = Visibility.Visible;
+            TitleText.Visibility = Visibility.Collapsed;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LogoImage, game.Title);
+            ApplyLayout(Root.ActualWidth);
+        }
+        else if (art.LogoImage is not null)
         {
             try
             {
                 var logo = new BitmapImage();
-                logo.ImageOpened += (_, _) =>
+                var logoUri = art.LogoImage;
+                ArtCache.Put(logoUri, logo);
+                // The picture is shared (ArtCache) and outlives this page: its handlers reach the page weakly and go once it has
+                // loaded (2.0.0-rc.12; a handler using the page held every page that ever loaded a logo).
+                var page = new WeakReference<GamePage>(this);
+                RoutedEventHandler? opened = null;
+                ExceptionRoutedEventHandler? failed = null;
+                opened = (_, _) =>
                 {
-                    if (game != _game) return;
-                    LogoImage.Visibility = Visibility.Visible;
-                    TitleText.Visibility = Visibility.Collapsed;
-                    ApplyLayout(Root.ActualWidth);
-                    FadeIn(LogoImage);
+                    logo.ImageOpened -= opened;
+                    logo.ImageFailed -= failed;
+                    ArtCache.MarkOpened(logoUri);
+                    if (page.TryGetTarget(out var p)) p.ShowLogo(game);
                 };
-                logo.ImageFailed += (_, e) => Log.Warn($"Logo for {game.Name} failed: {e.ErrorMessage}");
+                failed = (_, e) =>
+                {
+                    logo.ImageOpened -= opened;
+                    logo.ImageFailed -= failed;
+                    Log.Warn($"Logo for {game.Name} failed: {e.ErrorMessage}");
+                };
+                logo.ImageOpened += opened;
+                logo.ImageFailed += failed;
                 logo.UriSource = new Uri(art.LogoImage);
                 LogoImage.Source = logo;
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LogoImage, game.Title);
             }
             catch (Exception ex) { Log.Warn($"Logo image failed: {ex.Message}"); }
         }
+    }
+
+    void ShowLogo(Game game)
+    {
+        if (game != _game) return;
+        LogoImage.Visibility = Visibility.Visible;
+        TitleText.Visibility = Visibility.Collapsed;
+        ApplyLayout(Root.ActualWidth);
+        FadeIn(LogoImage);
     }
 
     /// <summary>Physical pixels: the widest display, or the banner's tallest height (640) at the art's 3.1:1, whichever is more.</summary>
@@ -1326,7 +2374,11 @@ public sealed partial class GamePage : Page
     {
         try
         {
+            // The mirror is a blur worked out on the CPU: kept with the banner's other pictures for the next visit.
+            string key = $"floor|{uri}|{aspect:0.00}|{fraction:0.000}";
+            if (ArtCache.Get(key) is ImageSource known) { FloorImage.Source = known; return; }
             var bitmap = await FloorMirror.CreateAsync(uri, aspect, fraction, ct);
+            if (bitmap is not null) ArtCache.Put(key, bitmap);
             if (!ct.IsCancellationRequested) FloorImage.Source = bitmap;
         }
         catch (OperationCanceledException) { }
@@ -1355,6 +2407,7 @@ public sealed partial class GamePage : Page
     {
         var tabs = VisibleTabs();
         if (tabs.Count == 0) return;
+        // From the Dashboard, LB / RB go to the tabs, on the one that was open.
         int i = Math.Max(0, tabs.FindIndex(t => t.Id == _tab));
         ShowTab(tabs[((i + by) % tabs.Count + tabs.Count) % tabs.Count].Id);
     }
@@ -1407,8 +2460,9 @@ public sealed partial class GamePage : Page
         // that lists the game, so this runs again on GamesChanged; without it the page kept showing Download until clicked.
         if ((_game.NotInstalled || _game.Installing) && AppState.Find(_game.Id) is { Installing: false, NotInstalled: false } real)
         {
-            Frame.Navigate(typeof(GamePage), real.Id);
-            if (Frame.BackStack.Count > 0) Frame.BackStack.RemoveAt(Frame.BackStack.Count - 1);
+            RequestFresh(real.Id);
+            App.Window?.NavigateGame(real.Id);
+            App.Window?.DropLastBack();
             return;
         }
         UpdateRunState();
@@ -1838,7 +2892,8 @@ public sealed partial class GamePage : Page
             var timer = DispatcherQueue.CreateTimer();
             timer.Interval = TimeSpan.FromMilliseconds(400);
             timer.IsRepeating = false;
-            timer.Tick += (_, _) => _ = SearchAsync();
+            Windows.Foundation.TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object> tick = (_, _) => _ = SearchAsync();
+            timer.Tick += tick;
             term.TextChanged += (_, _) =>
             {
                 timer.Stop();
@@ -1858,6 +2913,8 @@ public sealed partial class GamePage : Page
             };
             var result = await dialog.ShowAsync();
             timer.Stop();
+            // The timer holds its handler outside the GC's view, and the handler the timer: let go, or the dialog stays in memory.
+            timer.Tick -= tick;
             cts.Cancel();
             if (result != ContentDialogResult.Primary || _game != game) return;
 
@@ -1867,8 +2924,9 @@ public sealed partial class GamePage : Page
             SettingsStore.Save();
             LibraryPage.ForgetCover(game.Id);
             // Open the page again as it is now: the old one is cancelled by leaving it, and does not stay in Back.
-            Frame.Navigate(typeof(GamePage), game.Id);
-            if (Frame.BackStack.Count > 0) Frame.BackStack.RemoveAt(Frame.BackStack.Count - 1);
+            RequestFresh(game.Id);
+            App.Window?.NavigateGame(game.Id);
+            App.Window?.DropLastBack();
         }
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not change the game's page"), ex.Message, ex); }
     }
@@ -1954,16 +3012,19 @@ public sealed partial class GamePage : Page
     async Task UpdateModBadgesAsync()
     {
         int run = ++_modBadgesRun;
-        if (_game is null || _game.NotInstalled || !Part(PageParts.InstalledMods) || TargetDir is not { } dir)
+        // The mod check's warning shows even with the mod tags hidden: it tells something is broken.
+        bool tags = Part(PageParts.InstalledMods);
+        if (_game is null || _game.NotInstalled || TargetDir is not { } dir)
         {
             ModBadges.Visibility = Visibility.Collapsed;
+            StopWatchingModsFolder();
             return;
         }
         var settings = _settings;
         var exeDir = GameScanner.EffectiveExe(_game, settings) is { } exe ? Path.GetDirectoryName(exe) : null;
         // Where the OptiScaler build came from (the fork's name is in the app's settings: read here, on the UI thread).
         var m = settings.Install;
-        string source = m?.Channel switch
+        string source = m is not null && OptiDetector.ReplacedSince(m) ? "" : m?.Channel switch
         {
             OptiChannel.Nightly => L.T("nightly"),
             OptiChannel.Fork => OptiUpdates.Name(OptiUpdates.Key(OptiChannel.Fork, m.Source), AppState.Settings),
@@ -1971,15 +3032,22 @@ public sealed partial class GamePage : Page
             _ => "",
         };
         List<(string Name, string Detail, string Tab, Windows.UI.Color Tint)> found = [];
+        List<Core.Mods.ModProblem> problems = [];
         try
         {
-            found = await Task.Run(() =>
+            // The mod check reads the same folder: things a game update undid, or two mods in each other's way.
+            problems = await Task.Run(() => Core.Mods.ModCheck.Run(settings, dir));
+            if (tags) found = await Task.Run(() =>
             {
                 var list = new List<(string, string, string, Windows.UI.Color)>();
                 if (OptiDetector.Detect(dir) is { } opti)
                 {
-                                        // Just the version number ("10.0.0-dev"), not the commit and build date PrettyVersion adds: the line stays short.
-                    list.Add(("OptiScaler", CustomBuilds.PrettyVersion(opti.Version).Split(" · ")[0].Trim() + (source.Length > 0 ? "  ·  " + source : ""), "opti", Windows.UI.Color.FromArgb(0xFF, 0xB3, 0x8B, 0xFF)));
+                                        // The version as read (a release number, or a dev build by its date and commit): the line stays short.
+                    // A dev build: its major number and day alone ("v10 · 10 Nov"), no channel word; a fork or custom build says which.
+                    bool dev = CustomBuilds.IsDev(opti.Version);
+                    string from = dev && source == L.T("nightly") ? "" : source;
+                    string named = m is not null && !OptiDetector.ReplacedSince(m) && TagNumber(m) is { } tagged ? "v" + tagged : CustomBuilds.Brief(opti.Version);
+                    list.Add(("OptiScaler", named + (from.Length > 0 ? "  ·  " + from : ""), "opti", Windows.UI.Color.FromArgb(0xFF, 0xB3, 0x8B, 0xFF)));
                 }
                 if (Core.Mods.ReShade.Detect(dir) is { } reshade)
                     list.Add(("ReShade", reshade.Version, "mods/reshade", Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xA0, 0x4D)));
@@ -1989,6 +3057,10 @@ public sealed partial class GamePage : Page
                     list.Add(("RenoDX", string.Join(", ", settings.RenoDxFiles.Keys.Select(Path.GetFileNameWithoutExtension)), "mods/renodx", Windows.UI.Color.FromArgb(0xFF, 0x6C, 0xB8, 0xFF)));
                 if (settings.Luma is { } luma)
                     list.Add(("Luma", luma.Mod + (luma.Release.Length > 0 ? "  ·  " + luma.Release : ""), "mods/luma", Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x6B, 0x8A)));
+                if (settings.Dxvk is { } dxvk)
+                    list.Add((Core.Mods.Dxvk.Name(dxvk.Flavor), dxvk.Version + "  ·  " + Core.Mods.Dxvk.Name(dxvk.Api), Core.Mods.Dxvk.Section(dxvk.Flavor == Core.Mods.DxvkFlavor.Vkd3d), Windows.UI.Color.FromArgb(0xFF, 0xE8, 0x4A, 0x5F)));
+                else if (Core.Mods.Dxvk.Detect(dir).Select(d => d.Layer).Distinct().ToList() is { Count: > 0 } layers)
+                    list.Add((string.Join(" + ", layers), L.T("in the folder"), Core.Mods.Dxvk.Section(layers.Contains("VKD3D-Proton")), Windows.UI.Color.FromArgb(0xFF, 0xE8, 0x4A, 0x5F)));
                 return list;
             });
         }
@@ -2010,12 +3082,120 @@ public sealed partial class GamePage : Page
                 Padding = new Thickness(8, 3, 9, 4),
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
-            ToolTipService.SetToolTip(badge, L.F("{0} {1}: open its tab", name, detail));
+            ToolTipService.SetToolTip(badge, L.F("{0} {1}: click for its tab, or to hide these tags", name, detail));
             string open = tab;
-            badge.Tapped += (_, _) => Ui.Safe(() => OpenTab(open));
+            // Either button opens the same small menu: the mod's tab, or hide these tags (Settings → Game page brings them back).
+            var menu = new MenuFlyout();
+            var go = new MenuFlyoutItem { Text = L.F("Open {0}", name), Icon = new FontIcon { Glyph = "" } };
+            go.Click += (_, _) => Ui.Safe(() => OpenTab(open));
+            var hide = new MenuFlyoutItem { Text = L.T("Hide these tags"), Icon = new FontIcon { Glyph = "" } };
+            hide.Click += (_, _) =>
+            {
+                AppState.Settings.HiddenPageParts.Add(PageParts.InstalledMods);
+                SettingsStore.Save();
+                ApplyPageParts();
+                App.Window?.ShowInfo(L.T("Installed mods hidden on the banner of every game. Settings → Appearance → Game page shows them again."));
+            };
+            var filesItem = new MenuFlyoutItem { Text = L.T("All installed mods"), Icon = new FontIcon { Glyph = "\uE8FD" } };
+            filesItem.Click += (_, _) => Ui.Safe(() => OpenTab("mods/installed"));
+            menu.Items.Add(go);
+            menu.Items.Add(filesItem);
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(hide);
+            badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0x00, 0x00, 0x00));
+            badge.Tapped += (_, e) => { e.Handled = true; menu.ShowAt(badge, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft }); };
+            badge.RightTapped += (_, e) => { e.Handled = true; menu.ShowAt(badge, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = e.GetPosition(badge) }); };
             ModBadges.Children.Add(badge);
         }
-        ModBadges.Visibility = Shown(found.Count > 0);
+        // Findings the user set aside stay aside while they last; one that went away and comes back shows again.
+        settings.DismissedModProblems.RemoveWhere(id => !problems.Any(p => p.Id == id));
+        var pending = problems.Where(p => !settings.DismissedModProblems.Contains(p.Id)).ToList();
+        if (pending.Count > 0) ModBadges.Children.Insert(0, ProblemBadge(pending));
+        ModBadges.Visibility = Shown(ModBadges.Children.Count > 0);
+        // The Mods tab's table and the Dashboard's Mods card follow every change to the folder too.
+        if (_tab == "mods") _ = RefreshModsOverviewAsync();
+        _dashboard?.RefreshMods();
+        WatchModsFolder(dir);
+    }
+
+    /// <summary>The banner's warning: how many things stop a mod from working here; a click opens the Mods tab's list of them.</summary>
+    Border ProblemBadge(List<Core.Mods.ModProblem> problems)
+    {
+        var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        line.Children.Add(new FontIcon { Glyph = "", FontSize = 11, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xC0, 0x4D)), VerticalAlignment = VerticalAlignment.Center });
+        line.Children.Add(new TextBlock
+        {
+            Text = problems.Count == 1 ? problems[0].Title : L.F("{0} problems with this game's mods", problems.Count),
+            FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            VerticalAlignment = VerticalAlignment.Center, MaxWidth = 420, TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        var badge = new Border
+        {
+            Child = line,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xB0, 0x8A, 0x1C, 0x1C)),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 9, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        // Several problems: their titles in the tooltip, so the banner says what they are without a click (2.0.0-rc.12).
+        var tip = L.T("Click for what is wrong and how to fix it");
+        ToolTipService.SetToolTip(badge, problems.Count > 1 ? string.Join("\n", problems.Select(p => "• " + p.Title)) + "\n\n" + tip : tip);
+        badge.Tag = string.Join(" | ", problems.Select(p => p.Title));
+        badge.Tapped += (_, e) => { e.Handled = true; Ui.Safe(() => OpenTab("mods/installed")); };
+        return badge;
+    }
+
+    /// <summary>The files the last read of the Mods tab found (the self-test reads them).</summary>
+    List<Core.Mods.ModFile> _lastModFiles = [];
+
+    /// <summary>
+    /// One file: its name, an arrow, the mod and version, what loads it, who put it there, and (not <paramref name="compact"/>)
+    /// a way to its section. Compact under a mod of the Mods tab's table, where the line above already leads there.
+    /// </summary>
+    Border ModFileRow(Core.Mods.ModFile f, bool compact = false)
+    {
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = new TextBlock { Text = f.File, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 13, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, IsTextSelectionEnabled = true };
+        ToolTipService.SetToolTip(name, f.File);
+        grid.Children.Add(name);
+        var arrow = new FontIcon
+        {
+            Glyph = f.Problem ? "\uE7BA" : "\uE72A", FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(f.Problem ? Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xB0, 0x40) : Windows.UI.Color.FromArgb(0x99, 0x99, 0x99, 0x99)),
+        };
+        Grid.SetColumn(arrow, 1);
+        grid.Children.Add(arrow);
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = f.What + (f.Version.Length > 0 ? "  ·  " + f.Version : ""), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        var who = f.ByHybrid ? L.T("put in by Hybrid Launcher") : f.Role == Core.Mods.ModFileRole.Upscaler ? L.T("shipped with the game") : L.T("put in another way");
+        text.Children.Add(new TextBlock { Text = f.How + "  ·  " + who, Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(text, 2);
+        grid.Children.Add(text);
+        if (f.Tab is { } tab && !compact)
+        {
+            var open = new Button { Content = L.T("Open"), Padding = new Thickness(10, 3, 10, 4), VerticalAlignment = VerticalAlignment.Center };
+            open.Click += (_, _) => OpenTab(tab);
+            Grid.SetColumn(open, 3);
+            grid.Children.Add(open);
+        }
+        return new Border { Style = Ui.Style("RowStyle"), Padding = compact ? new Thickness(12, 4, 12, 4) : new Thickness(12, 8, 12, 8), MinHeight = 0, Child = grid };
+    }
+
+    /// <summary>Self-test: opens the Mods tab on its table with every mod's files shown; the next call returns the files as text.</summary>
+    internal void SelfTestModFilesOpen()
+    {
+        ShowTab("mods", remember: false, section: "installed");
+        _modsOpen.UnionWith(["opti", "reshade", "renodx", "luma", "dxvk", "vkd3d", "ultra"]);
+        _ = RefreshModsOverviewAsync();
+    }
+
+    internal string SelfTestModFilesClose()
+    {
+        return string.Join(" | ", _lastModFiles.Select(f => $"{f.File} = {f.What} {f.Version} ({f.How}){(f.ByHybrid ? " [HL]" : "")}{(f.Problem ? " [!]" : "")}"));
     }
 
     void Hide_Click(object sender, RoutedEventArgs e)
@@ -2039,13 +3219,20 @@ public sealed partial class GamePage : Page
         string? build = null;
         Windows.UI.Color tint;
         bool installed = m is not null && detected is not null;
+        // The dll was swapped since the install (a nightly or a test build dropped over it): the record's build no longer applies.
+        bool replaced = installed && OptiDetector.ReplacedSince(m!);
         if (installed)
         {
             // Version (with the release tag as a badge), build, then the facts as chips; the commit is left to the tooltip.
             pill = L.T("Installed");
-            headline = "OptiScaler " + ShortVersion(detected!.Version);
-            build = BuildName(m!);
-            detail = "";
+            // A fork whose release tag is a plain number is named by it (rc.10: janblade's v0.1.37.2 read "0.1.37 pre2", the
+            // number its dll carries); a tag that is not a number (Venom's) leaves the dll's version.
+            // An official nightly reads as its number with its tag as the badge, as in 1.3 ("10.0.0 dev" + nightly-20261111).
+            bool officialNightly = !replaced && m!.Channel == OptiChannel.Nightly && !string.IsNullOrWhiteSpace(m.Tag);
+            headline = "OptiScaler " + (!replaced && TagNumber(m!) is { } number ? number
+                : officialNightly ? NumberOnly(detected!.Version) : ShortVersion(detected!.Version));
+            build = replaced ? L.T("Replaced outside Hybrid Launcher") : BuildName(m!);
+            detail = replaced ? L.F("The DLL in the folder is not the {0} Hybrid Launcher installed: the version above is the one there now. Uninstall still puts the game's own files back.", m!.DisplayVersion) : "";
             glyph = "";
             tint = Palettes.Adapt(Windows.UI.Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43));
         }
@@ -2076,18 +3263,19 @@ public sealed partial class GamePage : Page
         StatusPillText.Text = pill;
         StatusPill.Background = Pill(tint.R, tint.G, tint.B);
         OptiHeadline.Text = headline;
-        ToolTipService.SetToolTip(OptiHeadline, detected is not null ? $"{detected.FileName}  ·  {CustomBuilds.PrettyVersion(detected.Version)}" : null);
+        ToolTipService.SetToolTip(OptiHeadline, detected is not null ? $"{detected.FileName}  ·  {CustomBuilds.Readable(detected.Version)}" : null);
         OptiBuildName.Text = build ?? "";
         OptiBuildName.Visibility = Shown(build is not null);
         OptiStatusDetail.Text = detail;
         OptiStatusDetail.Visibility = Shown(detail.Length > 0);
         OptiDllChip.Visibility = OptiDateChip.Visibility = Shown(installed);
         OptiNrChip.Visibility = Shown(installed && m!.Files.ContainsKey(DlssNr.FileName));
-        var tag = installed ? ReleaseTag(m!, detected!.Version) : null;
+        var tag = installed && !replaced ? ReleaseTag(m!, detected!.Version) : null;
         OptiVersionBadge.Visibility = Shown(tag is not null);
         OptiVersionText.Text = tag ?? "";
         var built = detected is not null ? BuiltOn(detected.Version) : null;
-        OptiBuiltChip.Visibility = Shown(installed && built is not null);
+        // A dev build's day is already in its name (an official nightly is named by its number, so its day shows here).
+        OptiBuiltChip.Visibility = Shown(installed && built is not null && (!CustomBuilds.IsDev(detected!.Version) || m!.Channel == OptiChannel.Nightly && !replaced));
         OptiBuiltText.Text = built is { } b ? L.F("Built {0}", b.ToString("d MMM yyyy")) : "";
         if (installed)
         {
@@ -2095,8 +3283,9 @@ public sealed partial class GamePage : Page
             OptiDateText.Text = m.InstalledAt.ToString("d MMM yyyy, HH:mm");
         }
         StatusIcon.Glyph = glyph;
-        StatusIconCircle.Background = new SolidColorBrush(tint);
-        StatusIcon.Foreground = Contrast.BrushOn(tint);
+        // The state's glyph in the state's colour, with no disc behind it (1.4.0-rc.9).
+        StatusIconCircle.Background = null;
+        StatusIcon.Foreground = new SolidColorBrush(tint);
         // A faint wash of the state's colour behind the header, fading out early so the text sits on the plain card.
         OptiHeader.Background = new LinearGradientBrush
         {
@@ -2120,9 +3309,19 @@ public sealed partial class GamePage : Page
     /// <summary>"10.0.0 dev" from OptiScaler's version ("10.0.0-dev (4420de92) (20261102_145100)"): the number only.</summary>
     static string ShortVersion(string v)
     {
+        // A development build's placeholder number ("10.0.0-dev") is no release: its date and commit name it.
+        if (CustomBuilds.IsDev(v)) return CustomBuilds.Readable(v);
         var number = CustomBuilds.PrettyVersion(v).Split(" · ")[0].Trim();
         int dash = number.IndexOf('-');
         return dash > 0 ? number[..dash] + " " + number[(dash + 1)..] : number;
+    }
+
+    /// <summary>"10.0.0 dev" from "10.0.0-dev (4420de92) (20261102_145100)": the number as OptiScaler gives it, dash as a space.</summary>
+    static string NumberOnly(string v)
+    {
+        var first = v.Replace("(", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.TrimStart('v', 'V') ?? v;
+        int dash = first.IndexOf('-');
+        return dash > 0 ? first[..dash] + " " + first[(dash + 1)..] : first;
     }
 
     /// <summary>The installed build's own name: the custom build's folder, the fork's name, or the channel (its tag is the badge).</summary>
@@ -2134,13 +3333,20 @@ public sealed partial class GamePage : Page
         _ => L.T("Official stable release"),
     };
 
+    /// <summary>A fork's release tag when it is a plain number ("v0.1.37.2" → "0.1.37.2"), else null.</summary>
+    static string? TagNumber(InstallManifest m) =>
+        m.Channel == OptiChannel.Fork && System.Text.RegularExpressions.Regex.IsMatch(m.Tag ?? "", @"^v?\d+(\.\d+)+$") ? m.Tag!.TrimStart('v', 'V') : null;
+
     /// <summary>
     /// The release tag of the installed build ("v0.1.36"), for the badge beside the version: none for custom builds (their tag
     /// is the raw version string, commit included) or when it only repeats the version number already in the title.
     /// </summary>
     static string? ReleaseTag(InstallManifest m, string dllVersion)
     {
-        if (m.Channel == OptiChannel.Custom || string.IsNullOrWhiteSpace(m.Tag) || m.Tag.Contains(' ') || m.Tag.Length > 32) return null;
+        // The title already reads the fork's tag.
+        if (TagNumber(m) is not null && !OptiDetector.ReplacedSince(m)) return null;
+        // A dev build has no tag of its own, save the official nightly's ("nightly-20261111", brought back in 2.0.0-rc.4).
+        if (m.Channel == OptiChannel.Custom || CustomBuilds.IsDev(dllVersion) && m.Channel != OptiChannel.Nightly || string.IsNullOrWhiteSpace(m.Tag) || m.Tag.Contains(' ') || m.Tag.Length > 32) return null;
         static string Plain(string v) => v.Trim().TrimStart('v', 'V').Replace('-', ' ').ToLowerInvariant();
         return Plain(m.Tag) == Plain(ShortVersion(dllVersion)) ? null : m.Tag;
     }
@@ -2258,7 +3464,14 @@ public sealed partial class GamePage : Page
     bool _fillingVersions;
     string? _selectCustom;
 
-    List<OptiRelease> Releases => _channel switch { OptiChannel.Nightly => _nightly, OptiChannel.Fork => _fork, _ => _stable };
+    // A fork's list counts only once it is the picked fork's (rc.10: while another fork's versions loaded, Install took the
+    // previous fork's newest build, Venom instead of the fork just picked).
+    List<OptiRelease> Releases => _channel switch
+    {
+        OptiChannel.Nightly => _nightly,
+        OptiChannel.Fork => _forkLoaded is { } loaded && loaded.Equals(AppState.Settings.SelectedFork, StringComparison.OrdinalIgnoreCase) ? _fork : [],
+        _ => _stable,
+    };
 
     /// <summary>One entry of the fork list: a known fork or one the user added.</summary>
     sealed record ForkItem(string Name, string Repo, bool User)
@@ -2320,8 +3533,12 @@ public sealed partial class GamePage : Page
         AppState.Settings.SelectedFork = item.Repo;
         SettingsStore.Save();
         RemoveForkButton.IsEnabled = !_busy && item.User;
+        // The previous fork's list goes at once, so nothing installs from it while this one loads.
+        _fork = [];
+        _forkLoaded = null;
         VersionCombo.Items.Clear();
         VersionCombo.PlaceholderText = L.T("Loading versions…");
+        SetBusy(_busy);
         await LoadForkAsync(false, _pageCts.Token);
         if (_channel == OptiChannel.Fork) FillVersions();
     }
@@ -2329,52 +3546,15 @@ public sealed partial class GamePage : Page
     /// <summary>Asks for the address of a GitHub repository that publishes OptiScaler builds, checks it has releases, and adds it.</summary>
     async void AddFork_Click(object sender, RoutedEventArgs e)
     {
-        var box = new TextBox { PlaceholderText = "https://github.com/owner/OptiScaler", MinWidth = 380 };
-        var note = new TextBlock { Text = L.T("Paste the GitHub address of a fork that publishes releases with OptiScaler.dll and setup_windows.bat."), TextWrapping = TextWrapping.Wrap, Opacity = 0.8 };
-        var panel = new StackPanel { Spacing = 10 };
-        panel.Children.Add(note);
-        panel.Children.Add(box);
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = L.T("Add an OptiScaler fork"),
-            Content = panel,
-            PrimaryButtonText = L.T("Add"),
-            CloseButtonText = L.T("Cancel"),
-            DefaultButton = ContentDialogButton.Primary,
-            RequestedTheme = ActualTheme,
-        };
-        dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        var repo = OptiForks.ParseRepo(box.Text);
-        if (repo is null)
-        {
-            App.Window?.ShowError(L.T("Could not add the fork"), L.T("That is not a GitHub address. Use https://github.com/owner/name or owner/name."));
-            return;
-        }
-        try
-        {
-            var releases = await OptiReleases.GetForkAsync(repo, force: true, ct: _pageCts.Token);
-            if (releases.Count == 0)
-            {
-                App.Window?.ShowError(L.T("Could not add the fork"), L.F("{0} has no releases with a downloadable archive (.zip or .7z).", repo));
-                return;
-            }
-            if (!OptiForks.All(AppState.Settings).Any(f => f.Repo.Equals(repo, StringComparison.OrdinalIgnoreCase)))
-                AppState.Settings.OptiForks.Add(new OptiFork { Name = repo, Repo = repo });
-            AppState.Settings.SelectedFork = repo;
-            SettingsStore.Save();
-            FillForkList();
-            ForkCard.IsChecked = true;
-            _fork = releases;
-            _forkLoaded = repo;
-            FillVersions();
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Adding fork {repo}: {ex.Message}");
-            App.Window?.ShowError(L.T("Could not add the fork"), L.F("Could not read the releases of {0}: {1}", repo, ex.Message), ex);
-        }
+        // The same dialog and checks as the Auto tab's "Add a build" (2.0.0-rc.18).
+        if (await OptiSourceImport.AddForkAsync(XamlRoot, ActualTheme, _pageCts.Token) is not { } added) return;
+        AppState.Settings.SelectedFork = added.Repo;
+        SettingsStore.Save();
+        FillForkList();
+        ForkCard.IsChecked = true;
+        _fork = added.Releases;
+        _forkLoaded = added.Repo;
+        FillVersions();
     }
 
     void RemoveFork_Click(object sender, RoutedEventArgs e)
@@ -2384,7 +3564,7 @@ public sealed partial class GamePage : Page
         AppState.Settings.SelectedFork = null;
         SettingsStore.Save();
         FillForkList();
-        _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) FillVersions(); }));
+        _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) { FillVersions(); _ = SyncForwarderAsync(); } }));
     }
 
     // Stable / nightly: item 0 of the list is "Latest". Custom: one item per build.
@@ -2517,38 +3697,79 @@ public sealed partial class GamePage : Page
     bool _storingDlssNr;
 
     /// <summary>
-    /// The DLSS NR row (forks and custom builds, or an install that holds the file): one stored nvngx_dlssnr.dll for the builds
-    /// that need DLSS 5 neural rendering. On globally is the default for every game; On for this game follows it (ticking or
-    /// clearing On globally ticks or clears it too) unless it is changed here, which makes this game an exception.
+    /// The DLSS 5 row (1.4.0-rc.13): one line saying what this game has (F5 with NGX or the port, DLSSNR-AMD and its network,
+    /// or nothing yet) and Set up DLSS 5…, which opens the window with everything else. Shown on a game with OptiScaler, or
+    /// while a fork or a custom build is picked.
     /// </summary>
     void UpdateDlssNrRow()
     {
-        // Hidden from Settings → Game page (or this row's own Hide button): the file is still kept and synced, only the row goes.
-        bool shown = (_channel is OptiChannel.Fork or OptiChannel.Custom || _settings.Install?.Files.ContainsKey(DlssNr.FileName) == true) && Part(PageParts.DlssNr);
+        bool shown = (_channel is OptiChannel.Fork or OptiChannel.Custom || _settings.Install is not null) && Part(PageParts.DlssNr);
         DlssNrRow.Visibility = Shown(shown);
-        if (!shown) return;
-        var stored = File.Exists(DlssNr.StoredPath) ? DlssNr.StoredPath : null;
-        bool global = AppState.Settings.UseDlssNr && stored is not null;
-        bool game = stored is not null && DlssNr.OnFor(_settings, AppState.Settings);
-        DlssNrGlobalCheck.IsChecked = global;
-        DlssNrGameCheck.IsChecked = game;
-        DlssNrGlobalCheck.IsEnabled = DlssNrGameCheck.IsEnabled = !_storingDlssNr && !_busy;
-        DlssNrChangeButton.Visibility = Shown(stored is not null);
-        DlssNrChangeButton.IsEnabled = !_storingDlssNr && !_busy;
-        var m = _settings.Install;
-        string here = m is null ? ""
-            : m.Files.ContainsKey(DlssNr.FileName) ? " " + L.T("It is in this game's OptiScaler install.")
-            : game && !DlssNr.NeededBy(m) ? " " + L.T("This game's build doesn't need it.")
-            : "";
-        DlssNrHint.Text = _storingDlssNr ? L.T("Storing the file…")
-            : stored is null ? L.F("Builds with DLSS 5 neural rendering need NVIDIA's {0} beside them. Tick a box and pick yours once: the installs that need it get it.", DlssNr.FileName)
-            : L.F("{0} {1} ({2}), kept by Hybrid Launcher; uninstalling takes it out.", DlssNr.FileName, DlssNr.Version(stored), Core.Hardware.HardwareInfo.FormatBytes((ulong)new FileInfo(stored).Length)) + here;
+        Dlss5SetupButton.IsEnabled = !_busy;
+        if (shown) DlssNrHint.Text = _storingDlssNr ? L.T("Storing the file…") : Dlss5Summary();
+        RefreshDlss5();
+    }
+
+    void SetDlssNrBackend(string backend)
+    {
+        AppState.Settings.DlssNrBackend = backend;
+        SettingsStore.Save();
+        UpdateDlssNrRow();
+        _ = SyncForwarderAsync();
+    }
+
+    /// <summary>The release this game's OptiScaler install came from, when the page has it listed (for its optional downloads).</summary>
+    OptiRelease? InstalledRelease()
+    {
+        if (_settings.Install is not { } m) return null;
+        bool Same(OptiRelease r) => r.Tag == m.Tag && (m.Source is null || string.Equals(r.Repo, m.Source, StringComparison.OrdinalIgnoreCase));
+        if (SelectedRelease is { } sel && Same(sel)) return sel;
+        try { return Releases.FirstOrDefault(Same); } catch { return null; }
+    }
+
+    bool _switchingForwarder;
+
+    /// <summary>
+    /// Puts the forwarder the setting asks for into this game's F5 install now (the vendor-neutral port on a card without RTX,
+    /// or NGX), instead of waiting for a reinstall. Runs only while the game gets the model file: the port has nothing to run
+    /// without it. 1.4.0-rc.11: an install made before the model was stored kept the NGX forwarder, so DLSS 5 never started
+    /// on the user's AMD card.
+    /// </summary>
+    async Task SyncForwarderAsync()
+    {
+        if (_switchingForwarder || _busy || _game is not { } game || _settings.Install is not { } m || InstalledRelease() is not { } release) return;
+        if (DlssNr.Backend(m) is not { } now || DlssNr.PortAddon(release) is null) return;
+        bool want = DlssNr.PortWanted(AppState.Settings) && DlssNr.ActiveFor(_settings, AppState.Settings) is not null;
+        if ((now == "port") == want) return;
+        _switchingForwarder = true;
+        try
+        {
+            bool changed = await Task.Run(() => OptiInstaller.SwitchForwarderAsync(m, release, want, null, _pageCts.Token));
+            if (changed)
+            {
+                SettingsStore.Save();
+                App.Window?.ShowSuccess(want
+                    ? L.F("{0}: the vendor-neutral DLSS 5 forwarder is in, so the model runs on any DirectX 12 card.", game.Title)
+                    : L.F("{0}: NVIDIA's NGX forwarder is back in.", game.Title));
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Could not switch the DLSS 5 forwarder"), ex.Message, ex); }
+        finally { _switchingForwarder = false; }
+        UpdateOptiStatus();
+        UpdateDlssNrRow();
+    }
+
+    void SetF5Low(bool on)
+    {
+        AppState.Settings.F5LowUpdate = on;
+        SettingsStore.Save();
+        UpdateDlssNrRow();
     }
 
     /// <summary>On globally: the default for every game. This game follows it (its own exception, if any, is dropped).</summary>
-    async void DlssNrGlobal_Click(object sender, RoutedEventArgs e)
+    async Task SetDlssNrGlobalAsync(bool on)
     {
-        bool on = DlssNrGlobalCheck.IsChecked == true;
         if (on && !File.Exists(DlssNr.StoredPath) && !await PickDlssNrAsync())
         {
             UpdateDlssNrRow();
@@ -2561,10 +3782,9 @@ public sealed partial class GamePage : Page
     }
 
     /// <summary>On for this game: an exception to On globally while it differs from it; back in line, it follows it again.</summary>
-    async void DlssNrGame_Click(object sender, RoutedEventArgs e)
+    async Task SetDlssNrGameAsync(bool on)
     {
         if (_game is null) return;
-        bool on = DlssNrGameCheck.IsChecked == true;
         if (on && !File.Exists(DlssNr.StoredPath) && !await PickDlssNrAsync())
         {
             UpdateDlssNrRow();
@@ -2575,16 +3795,20 @@ public sealed partial class GamePage : Page
         await SyncDlssNrAsync();
     }
 
-    /// <summary>Hides the DLSS NR row in every game; Settings → Appearance → Game page (or this game's gear) shows it again.</summary>
+    /// <summary>
+    /// Hides the DLSS NR row in this game only; this game's gear (Game page parts) shows it again. Hiding it in every game is
+    /// Settings → Appearance → Game page, like the other parts.
+    /// </summary>
     void DlssNrHide_Click(object sender, RoutedEventArgs e)
     {
-        AppState.Settings.HiddenPageParts.Add(PageParts.DlssNr);
+        if (_settings is null) return;
+        _settings.HiddenPageParts.Add(PageParts.DlssNr);
         SettingsStore.Save();
         UpdateDlssNrRow();
-        App.Window?.ShowInfo(L.T("DLSS NR row hidden in every game. Settings → Appearance → Game page shows it again; files already set up keep working."));
+        App.Window?.ShowInfo(L.T("DLSS NR row hidden for this game. The game's gear shows it again, Settings → Appearance → Game page hides it in every game; files already set up keep working."));
     }
 
-    async void DlssNrChange_Click(object sender, RoutedEventArgs e)
+    async Task ChangeDlssNrAsync()
     {
         if (await PickDlssNrAsync()) await SyncDlssNrAsync();
         else UpdateDlssNrRow();
@@ -2616,6 +3840,7 @@ public sealed partial class GamePage : Page
             _ = UpdateFootprintAsync();
         }
         UpdateDlssNrRow();
+        await SyncForwarderAsync();
     }
 
     /// <summary>Asks for an nvngx_dlssnr.dll and stores a copy. False when the user cancelled or the file is not DLSS NR.</summary>
@@ -2760,17 +3985,14 @@ public sealed partial class GamePage : Page
         VersionCombo.PlaceholderText = L.T("Importing…");
         try
         {
-            var build = await Task.Run(() => CustomBuilds.ImportAsync(AppState.Settings, source));
-            App.Window?.ShowSuccess(L.F("Imported \"{0}\": OptiScaler {1}.", build.Name, build.PrettyVersion));
-            CustomCard.IsChecked = true;
-            await LoadCustomBuildsAsync(build.Name, _pageCts.Token);
-            _ = VersionsList.ReloadAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Import of {source} failed: {ex.Message}");
-            App.Window?.ShowError(L.T("Could not import the build"), ex.Message, ex);
-            VersionCombo.PlaceholderText = L.T("No builds yet: use Import");
+            // The same import as the Auto tab's "Add a build" (2.0.0-rc.18); it says what went wrong itself.
+            if (await OptiSourceImport.ImportAsync(source) is { } build)
+            {
+                CustomCard.IsChecked = true;
+                await LoadCustomBuildsAsync(build.Name, _pageCts.Token);
+                _ = VersionsList.ReloadAsync();
+            }
+            else VersionCombo.PlaceholderText = L.T("No builds yet: use Import");
         }
         finally
         {
@@ -2800,12 +4022,22 @@ public sealed partial class GamePage : Page
 
     // ---------- OptiScaler: setup answers ----------
 
+    /// <summary>
+    /// The smart spoofing default of the game shown (rc.11: off where OptiPatcher supports the game) until the user sets it. Kept
+    /// on the page, never written by itself (2.0.0-rc.13): writing it into the game's settings on a mere visit rebuilt the
+    /// library and every kept page (snappy gate: library 44 -> 120 ms). It goes into the settings with the user's next change
+    /// of the setup or with an install.
+    /// </summary>
+    (string GameId, bool Value)? _smartSpoofing;
+
+    bool EffectiveSpoofing => !_settings.Setup.SpoofingSet && _smartSpoofing is { } smart && smart.GameId == _game?.Id ? smart.Value : _settings.Setup.Spoofing;
+
     void LoadSetupOptions()
     {
         var o = _settings.Setup;
         DllCombo.SelectedItem = OptiSetupOptions.DllNames.FirstOrDefault(n => n.Equals(o.DllName, StringComparison.OrdinalIgnoreCase)) ?? "dxgi.dll";
         GpuCombo.SelectedIndex = o.Nvidia switch { null => 0, false => 1, true => 2 };
-        SpoofToggle.IsOn = o.Spoofing;
+        SpoofToggle.IsOn = EffectiveSpoofing;
         OptiPatcherToggle.IsOn = o.OptiPatcher;
         OldFilesToggle.IsOn = o.DeleteOldFiles;
         bool nvidiaDetected = File.Exists(Path.Combine(Environment.SystemDirectory, "nvapi64.dll"));
@@ -2817,8 +4049,17 @@ public sealed partial class GamePage : Page
     {
         if (_loading || _game is null) return;
         var o = _settings.Setup;
+        var dllBefore = o.DllName;
         o.DllName = DllCombo.SelectedItem as string ?? "dxgi.dll";
+        // OptiScaler already in this game: a new file name is swapped in at once, the next install keeps it.
+        if (!o.DllName.Equals(dllBefore, StringComparison.OrdinalIgnoreCase) && _settings.Install is { } installed
+            && !o.DllName.Equals(installed.DllName, StringComparison.OrdinalIgnoreCase) && OptiDetector.Detect(installed.TargetDir) is not null)
+        {
+            if (OptiDllSwap.Names.Contains(o.DllName, StringComparer.OrdinalIgnoreCase)) _ = SwapDllAsync(o.DllName);
+            else App.Window?.ShowInfo(L.F("{0} needs an ASI loader in the game: it is used at the next install.", o.DllName));
+        }
         o.Nvidia = GpuCombo.SelectedIndex switch { 1 => false, 2 => true, _ => null };
+        if (EffectiveSpoofing != SpoofToggle.IsOn) o.SpoofingSet = true;
         o.Spoofing = SpoofToggle.IsOn;
         o.OptiPatcher = OptiPatcherToggle.IsOn;
         o.DeleteOldFiles = OldFilesToggle.IsOn;
@@ -2827,38 +4068,198 @@ public sealed partial class GamePage : Page
         SetBusy(_busy);
     }
 
+    /// <summary>The names OptiScaler can be renamed to here, each with what it suits and why a taken one cannot be used.</summary>
+    void ShowDllSwapMenu()
+    {
+        if (_settings.Install is not { } m || _busy) return;
+        var menu = new MenuFlyout();
+        menu.Items.Add(new MenuFlyoutItem { Text = L.T("Load OptiScaler as…"), IsEnabled = false });
+        menu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var name in OptiDllSwap.Names)
+        {
+            var why = OptiDllSwap.WhyNot(m, name);
+            bool current = name.Equals(m.DllName, StringComparison.OrdinalIgnoreCase);
+            var hint = OptiDllSwap.Hint(name);
+            var item = new ToggleMenuFlyoutItem
+            {
+                Text = name + (why is not null && !current ? $"  ·  {why}" : hint.Length > 0 ? $"  ·  {hint}" : ""),
+                IsChecked = current,
+                IsEnabled = why is null,
+            };
+            var chosen = name;
+            item.Click += (_, _) => _ = SwapDllAsync(chosen);
+            menu.Items.Add(item);
+        }
+        menu.ShowAt(OptiDllChip, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft });
+    }
+
+    /// <summary>Renames OptiScaler's dll in place (no reinstall); the setup's choice follows, so the next install keeps the name.</summary>
+    async Task SwapDllAsync(string name)
+    {
+        if (_game is not { } game || _settings.Install is not { } m) return;
+        var settings = _settings;
+        if (_busy || Helpers.GameJobs.Busy(game.Id))
+        {
+            App.Window?.ShowInfo(L.T("Wait for the running install or update to finish."));
+            return;
+        }
+        if (OptiInstaller.RunningGameProcess(m.TargetDir) is { } running)
+        {
+            App.Window?.ShowError(L.T("Close the game first"), L.F("{0} is running from this folder.", running));
+            ResetDllCombo(settings);
+            return;
+        }
+        var old = m.DllName;
+        try
+        {
+            await Task.Run(() => OptiDllSwap.Swap(m, name));
+            settings.Setup.DllName = name;
+            SettingsStore.Save();
+            App.Window?.ShowSuccess(L.F("OptiScaler is now {0} in {1} (was {2}). Nothing was reinstalled.", name, game.Title, old));
+        }
+        catch (Exception ex)
+        {
+            App.Window?.ShowError(L.F("Could not rename OptiScaler to {0}", name), ex.Message, ex);
+            settings.Setup.DllName = m.DllName;
+            SettingsStore.Save();
+        }
+        if (_game != game) return;
+        ResetDllCombo(settings);
+        UpdateOptiStatus();
+        _ = UpdateModBadgesAsync();
+        if (_reshadeView is { } r) Ui.Safe(r.Refresh);
+        if (_dxvkView is { } d) Ui.Safe(d.Refresh);
+        if (_vkd3dView is { } v) Ui.Safe(v.Refresh);
+    }
+
+    void ResetDllCombo(GameSettings settings)
+    {
+        if (settings != _settings) return;
+        bool was = _loading;
+        _loading = true;
+        DllCombo.SelectedItem = OptiSetupOptions.DllNames.FirstOrDefault(n => n.Equals(settings.Setup.DllName, StringComparison.OrdinalIgnoreCase)) ?? "dxgi.dll";
+        _loading = was;
+        UpdateSetupState();
+    }
+
     void UpdateSetupState()
     {
         var o = _settings.Setup;
         bool nvidia = o.Nvidia ?? File.Exists(Path.Combine(Environment.SystemDirectory, "nvapi64.dll"));
         SpoofToggle.IsEnabled = !nvidia;
         OptiPatcherToggle.IsEnabled = !nvidia;
-        var parts = new List<string> { o.DllName, nvidia ? "Nvidia" : "AMD / Intel" };
+        // The summary in colour (2.0.0): the file name stands out, and a gold star beside OptiPatcher when it supports this
+        // game, which is why spoofing starts off.
+        var runs = new List<Microsoft.UI.Xaml.Documents.Inline>();
+        void Part(string text, Windows.UI.Color? tint = null, bool strong = false)
+        {
+            if (runs.Count > 0) runs.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "  ·  " });
+            var run = new Microsoft.UI.Xaml.Documents.Run { Text = text };
+            if (tint is { } c) run.Foreground = new SolidColorBrush(c);
+            if (strong) run.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            runs.Add(run);
+        }
+        Part(o.DllName, strong: true);
+        Part(nvidia ? "Nvidia" : "AMD / Intel");
+        bool starred = false;
         if (!nvidia)
         {
-            parts.Add(o.Spoofing ? L.T("spoofing on") : L.T("spoofing off"));
-            parts.Add(o.OptiPatcher ? L.T("OptiPatcher if supported") : L.T("no OptiPatcher"));
+            Part(EffectiveSpoofing ? L.T("spoofing on") : L.T("spoofing off"));
+            if (o.OptiPatcher && _patcherSupported == true)
+            {
+                Part("★ ", Ui.Gold);
+                runs.Add(new Microsoft.UI.Xaml.Documents.Run { Text = L.T("OptiPatcher supports this game"), Foreground = new SolidColorBrush(Ui.Gold) });
+                starred = true;
+            }
+            else Part(o.OptiPatcher ? L.T("OptiPatcher if supported") : L.T("no OptiPatcher"));
         }
-        SetupSummary.Text = string.Join("  ·  ", parts);
+        SetupSummary.Inlines.Clear();
+        foreach (var r in runs) SetupSummary.Inlines.Add(r);
+        ToolTipService.SetToolTip(SetupSummary, starred && !EffectiveSpoofing
+            ? L.T("Spoofing is off because OptiPatcher supports this game: it opens the upscaler options without spoofing.")
+            : null);
     }
+
+    /// <summary>Whether OptiPatcher supports the shown game (null: not known yet or the list could not be read).</summary>
+    bool? _patcherSupported;
 
     async Task UpdateOptiPatcherHintAsync(CancellationToken ct)
     {
         var target = TargetDir;
         if (target is null) return;
+        _patcherSupported = null;
         var supported = await OptiPatcherSupport.IsSupportedAsync(target, ct);
         if (ct.IsCancellationRequested) return;
+        _patcherSupported = supported;
+        // Smart default (rc.11): spoofing off for a game OptiPatcher supports, on for the others, until the user sets it.
+        var o = _settings.Setup;
+        if (supported is { } s && !o.SpoofingSet && o.OptiPatcher && _game is { } shown && EffectiveSpoofing == s)
+        {
+            _smartSpoofing = (shown.Id, !s);
+            bool was = _loading;
+            _loading = true;
+            SpoofToggle.IsOn = !s;
+            _loading = was;
+            UpdateSetupState();
+        }
         OptiPatcherHint.Text = supported switch
         {
             true => L.T("✔ This game is supported: OptiPatcher unlocks DLSS / DLSS-FG inputs without spoofing. Asked only on AMD / Intel."),
             false => L.T("This game is not in OptiPatcher's list, so the setup will skip it. Asked only on AMD / Intel."),
             _ => L.T("Unlocks DLSS / DLSS-FG inputs without spoofing in supported games (could not check the list now)."),
         };
+        // The summary's star follows the answer.
+        UpdateSetupState();
     }
 
     // ---------- OptiScaler: install / uninstall ----------
 
     void Install_Click(object sender, RoutedEventArgs e) => StartInstall(manual: false);
+
+    /// <summary>
+    /// The Auto tab's OptiScaler step: the build picked there, with the plan's file name and spoofing (saved as this game's
+    /// setup options, so the OptiScaler tab shows them), through the same install as the Install button. True when it is in.
+    /// </summary>
+    async Task<bool> IAutoHost.AutoInstallOptiAsync(OptiRelease release, string dllName, bool spoofing)
+    {
+        if (_game is null) return false;
+        var settings = _settings;
+        settings.Setup.DllName = dllName;
+        settings.Setup.Spoofing = spoofing;
+        settings.Setup.OptiPatcher = true;
+        SettingsStore.Save();
+        ResetDllCombo(settings);
+        await InstallAsync(release, manual: false);
+        return settings.Install is { } m && File.Exists(Path.Combine(m.TargetDir, m.DllName));
+    }
+
+    async Task<bool> IAutoHost.AutoRenameOptiAsync(string name)
+    {
+        await SwapDllAsync(name);
+        return _settings.Install?.DllName.Equals(name, StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    async Task<bool> IAutoHost.AutoPrepareAmdAsync()
+    {
+        if (DlssNrAmd.Stage() is null) await PrepareAmdAsync();
+        return DlssNrAmd.Stage() is not null;
+    }
+
+    async Task<bool> IAutoHost.AutoPutAmdAsync()
+    {
+        await PutAmdAsync();
+        return _settings.Install?.DlssNrAmd is not null;
+    }
+
+    async Task<bool> IAutoHost.AutoPutAmdReShadeAsync()
+    {
+        await PutAmdReShadeAsync();
+        return _settings.DlssNrAmdReShade is not null;
+    }
+
+    Task IAutoHost.AutoFinishF5Async() => Dlss5SetUpAsync(Dlss5.F5);
+
+    Task<bool> IAutoHost.AutoPickDlssNrAsync() => PickDlssNrAsync();
 
     /// <summary>Standard .bat install: same backups and uninstall, but setup_windows.bat opens in its own window for the user to answer.</summary>
     void BatInstall_Click(object sender, RoutedEventArgs e) => StartInstall(manual: true);
@@ -2879,6 +4280,12 @@ public sealed partial class GamePage : Page
         var game = _game;
         var settings = _settings;
 
+        // DLSSNR-AMD's ReShade way has its own ReShade as dxgi.dll (1.4.0-rc.20): OptiScaler would go over it.
+        if (settings.DlssNrAmdReShade is not null)
+        {
+            App.Window?.ShowError(L.T("DLSSNR-AMD is in through ReShade"), L.T("Take it out first (Mods → DLSS 5 → DLSSNR-AMD), then install OptiScaler. With OptiScaler, DLSSNR-AMD can go in as its plugin."));
+            return;
+        }
         if (release is null)
         {
             App.Window?.ShowError(L.T("No version available"), L.T("Hybrid Launcher could not list OptiScaler releases. Check the connection and try again."));
@@ -2898,11 +4305,21 @@ public sealed partial class GamePage : Page
             return;
         }
 
+        // A DLSS NR build (janblade's F5 and the like): the model file it needs, asked for now when it is missing or too old.
+        var (go, nrDll) = await PrepareDlssNrAsync(release);
+        if (!go) return;
+
         if (await ModBackups.DecideAsync("OptiScaler", game.Title) is not { } backup) return;
 
         // With the bat installer the file name is picked in the script, which warns about existing files itself.
         var options = settings.Setup.Clone();
         options.Manual = manual;
+        // The smart default shown on the page goes in with the install, and is kept from now on.
+        if (!settings.Setup.SpoofingSet && ReferenceEquals(settings, _settings) && settings.Setup.Spoofing != EffectiveSpoofing)
+        {
+            settings.Setup.Spoofing = options.Spoofing = EffectiveSpoofing;
+            SettingsStore.Save();
+        }
         // Ultra+ loads UE4SS through a proxy dll beside the exe: OptiScaler under that name would stop it, and removing Ultra+
         // later would take OptiScaler's file with it.
         if (!manual && settings.UltraPlus is { } ultra && Core.Mods.UltraPlus.Owns(ultra, Path.Combine(target, settings.Setup.DllName)))
@@ -2940,12 +4357,15 @@ public sealed partial class GamePage : Page
                 CustomDlls = AppState.EnabledCustomDlls(settings),
                 Previous = settings.Install,
                 Backup = backup,
-                DlssNrDll = DlssNr.ActiveFor(settings, AppState.Settings),
+                DlssNrDll = nrDll,
+                Addons = DlssNr.AddonsFor(release, AppState.Settings, nrDll is not null),
             }, progress, job.Token));
 
             settings.Install = manifest;
             SettingsStore.Save();
             App.Window?.ShowSuccess(L.F("OptiScaler {0} installed in {1} as {2}.", manifest.DisplayVersion, game.Title, manifest.DllName));
+            // DLSSNR-AMD chosen for this game: back over the new install (its dlssnr-amd.ini as it was).
+            if (settings.Dlss5Method == Dlss5.Amd) await ReapplyDlssNrAmdAsync(game, settings, manifest);
         }
         catch (OperationCanceledException)
         {
@@ -2994,6 +4414,7 @@ public sealed partial class GamePage : Page
                 case "reshade": _reshadeView?.ShowJob(job); break;
                 case "renodx": _renoDxView?.ShowJob(job); break;
                 case "luma": _lumaView?.ShowJob(job); break;
+                case "dxvk": _dxvkView?.ShowJob(job); _vkd3dView?.ShowJob(job); break;
                 case "ultra": _ultra?.ShowJob(job); break;
             }
         });
@@ -3056,7 +4477,14 @@ public sealed partial class GamePage : Page
         {
             PlayButton.SetMode(mode);
             PlayButton.UpdateLayout();
-            if (PlayButton.ActualWidth > 197 || PlayButton.ActualWidth < 167) throw new InvalidOperationException($"{mode}: {PlayButton.ActualWidth:F0} px");
+            // Between the narrowest face and the one its word needs (a longer word widens the button, never shrinks the word).
+            if (PlayButton.ActualWidth > PlayButton.MaxWidth + 1 || PlayButton.ActualWidth < 191) throw new InvalidOperationException($"{mode}: {PlayButton.ActualWidth:F0} px (max {PlayButton.MaxWidth:F0})");
+            // Every word at Play's size, all of it showing: never smaller, squeezed or cut.
+            var (size, whole, detail) = PlayButton.SelfTestLabel();
+            if (size != 24) throw new InvalidOperationException($"{mode}: the word is {size} px, Play's is 24");
+            if (!whole) throw new InvalidOperationException($"{mode}: the word does not fit in the button: {detail}");
+            // Icon and word centred together on the face (2.0.0-rc.5), no blank beside them.
+            if (PlayButton.SelfTestWordOffCentre() is var off && Math.Abs(off) > 1.5) throw new InvalidOperationException($"{mode}: the word is {off:F1} px off the button's centre");
             widths.Add($"{mode} {PlayButton.ActualWidth:F0}");
         }
         PlayButton.SetMode(before);
@@ -3118,7 +4546,11 @@ public sealed partial class GamePage : Page
     {
         // A change running in this game's folder (GameJobs) keeps the page busy, whatever else asked.
         busy |= GameJobs.Busy(_game?.Id);
+        bool changed = _busy != busy;
         _busy = busy;
+        // DLSS 5 reads OptiScaler from the folder and greys its buttons while the page is busy: drawn again once an install,
+        // an update or an uninstall ends (or marked to be, when the Mods tab is not open).
+        if (changed) RefreshDlss5();
         InstallButton.IsEnabled = BatInstallButton.IsEnabled = !busy && SelectedRelease is not null;
         StableCard.IsEnabled = NightlyCard.IsEnabled = ForkCard.IsEnabled = CustomCard.IsEnabled = VersionCombo.IsEnabled = ForkCombo.IsEnabled = !busy;
         AddForkButton.IsEnabled = UpdateAvailableButton.IsEnabled = !busy;
@@ -3126,7 +4558,7 @@ public sealed partial class GamePage : Page
         ImportBuildButton.IsEnabled = CustomMoreButton.IsEnabled = !busy;
         UninstallButton.IsEnabled = !busy;
         SetupExpander.IsEnabled = !busy;
-        DlssNrGlobalCheck.IsEnabled = DlssNrGameCheck.IsEnabled = DlssNrChangeButton.IsEnabled = !busy && !_storingDlssNr;
+        Dlss5SetupButton.IsEnabled = !busy;
         CancelButton.IsEnabled = busy;
         var (label, hint) = InstallLabel();
         InstallButtonText.Text = label;
@@ -3180,6 +4612,58 @@ public sealed partial class GamePage : Page
             L.F("Windows does not let Hybrid Launcher write to\n{0}\n\nRestart Hybrid Launcher as administrator and try again?", target), L.T("Restart as administrator"));
     }
 
+    /// <summary>
+    /// Before installing a DLSS NR build: the model file goes in unless this game said no (rc.10: it only went in with "On
+    /// globally" ticked, so a fork installed on its own never got it and DLSS 5 did not start). With no stored file, or one
+    /// too old for the vendor-neutral port this PC needs (AMD and Intel: 310.9 or newer), the user picks one or goes on
+    /// without. False: cancelled.
+    /// </summary>
+    async Task<(bool Go, string? NrDll)> PrepareDlssNrAsync(OptiRelease release)
+    {
+        bool nrBuild = $"{release.Repo} {release.AssetName}".Contains("dlssnr", StringComparison.OrdinalIgnoreCase) || DlssNr.PortAddon(release) is not null;
+        if (!nrBuild) return (true, DlssNr.ActiveFor(_settings, AppState.Settings));
+        if (_settings.DlssNrChoice == false) return (true, null);
+        bool port = DlssNr.PortWanted(AppState.Settings) && DlssNr.PortAddon(release) is not null;
+        var gpu = Core.Hardware.HardwareInfo.Gpus().FirstOrDefault(g => g.Vendor != Core.Hardware.GpuVendor.Other)?.Name ?? L.T("this PC's card");
+        for (int round = 0; round < 3; round++)
+        {
+            var stored = File.Exists(DlssNr.StoredPath) ? DlssNr.StoredPath : null;
+            string? ask = null;
+            if (stored is null)
+                ask = L.F("This build runs DLSS 5 neural rendering with NVIDIA's {0}, which no build may include: without it DLSS 5 does not start.", DlssNr.FileName)
+                    + (port ? "\n\n" + L.F("On {0} the vendor-neutral port runs it, and it needs version {1} or newer.", gpu, DlssNr.PortMinimum) : "");
+            else if (port && !DlssNr.PortCanRun(stored))
+                ask = L.F("Your {0} is version {1}. The vendor-neutral port that runs DLSS 5 on {2} works only with {3} or newer, so DLSS 5 will not start with this one.",
+                    DlssNr.FileName, DlssNr.Version(stored), gpu, DlssNr.PortMinimum);
+            if (ask is null)
+            {
+                // Going in with this install: the game follows it from now on, whatever On globally says.
+                if (!AppState.Settings.UseDlssNr && _settings.DlssNrChoice != true) { _settings.DlssNrChoice = true; SettingsStore.Save(); }
+                return (true, stored);
+            }
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = L.T("DLSS 5 model file"),
+                Content = new TextBlock { Text = ask, TextWrapping = TextWrapping.Wrap },
+                PrimaryButtonText = L.F("Pick {0}…", DlssNr.FileName),
+                SecondaryButtonText = stored is null ? L.T("Install without it") : L.T("Install anyway"),
+                CloseButtonText = L.T("Cancel"),
+                DefaultButton = ContentDialogButton.Primary,
+                RequestedTheme = ActualTheme,
+            };
+            var answer = await dialog.ShowAsync();
+            if (answer == ContentDialogResult.None) return (false, null);
+            if (answer == ContentDialogResult.Secondary)
+            {
+                if (stored is not null && !AppState.Settings.UseDlssNr && _settings.DlssNrChoice != true) { _settings.DlssNrChoice = true; SettingsStore.Save(); }
+                return (true, stored);
+            }
+            await PickDlssNrAsync();
+        }
+        return (true, File.Exists(DlssNr.StoredPath) ? DlssNr.StoredPath : null);
+    }
+
     async Task<bool> ConfirmAsync(string title, string message, string primary)
     {
         var dialog = new ContentDialog
@@ -3192,7 +4676,10 @@ public sealed partial class GamePage : Page
             DefaultButton = ContentDialogButton.Close,
             RequestedTheme = ActualTheme,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        // Demo walk only (HL_DEMO): the question stays on screen a moment, then is answered yes.
+        bool demoYes = false;
+        if (MainWindow.DemoAnswerAfter is { } after && App.Window is { } window) _ = window.DemoAnswerAsync(dialog, after, () => demoYes = true);
+        return await dialog.ShowAsync() == ContentDialogResult.Primary || demoYes;
     }
 
     // ---------- ASI plugins ----------
@@ -3512,8 +4999,9 @@ public sealed partial class GamePage : Page
     /// "gog:&lt;product id&gt;" while signed in to GOG (the same ids <see cref="AchievementWatcher.Changed"/> reports).
     /// </summary>
     string? AchAppId => _game is { Store: GameStore.Steam, SteamAppId: { } id } ? id
+        : _game is not null && HybridLauncher.Core.Achievements.XboxAchievements.Applies(_game) ? HybridLauncher.Core.Achievements.XboxAchievements.Key(_game)
         : _game?.EmulatorAppId is { } emu && AppState.Settings.ReadSteamEmulator ? emu
-        : _game is not null && HybridLauncher.Core.Accounts.GogAccount.SignedIn && HybridLauncher.Core.Accounts.GogAchievements.ProductId(_game) is { } gog ? "gog:" + gog : null;
+        : _game is not null && AppState.Settings.ReadGogAchievements && HybridLauncher.Core.Accounts.GogAccount.SignedIn && HybridLauncher.Core.Accounts.GogAchievements.ProductId(_game) is { } gog ? "gog:" + gog : null;
 
     async Task LoadAchievementsAsync(CancellationToken ct)
     {
@@ -3554,7 +5042,7 @@ public sealed partial class GamePage : Page
         _ach = set is { Total: > 0 } ? set : null;
         ApplyPageParts();
         RebuildTabs();
-        _overview?.SetAchievements(_ach);
+        _dashboard?.SetAchievements(_ach);
         _achTiles.Clear();
         AchGrid.Children.Clear();
         _achLaidOutColumns = -1;
@@ -3570,9 +5058,13 @@ public sealed partial class GamePage : Page
         AchButtonText.Text = $"{unlocked} / {_ach.Total}";
         // Gold with depth; platinum once every achievement is unlocked.
         AchIcon.Content = Icons.Trophy(20, platinum: unlocked == _ach.Total);
-        ToolTipService.SetToolTip(AchButton, unlocked == _ach.Total ? L.T("Platinum: every Steam achievement unlocked") : L.T("Steam achievements"));
+        ToolTipService.SetToolTip(AchButton, unlocked == _ach.Total ? L.T("Platinum: every achievement unlocked") : L.T("Achievements"));
         var last = _ach.Items.Where(a => a.UnlockedAt is not null).MaxBy(a => a.UnlockedAt);
         AchSummary.Text = L.F("{0} of {1} unlocked ({2:P0})", unlocked, _ach.Total, share) + (last is not null ? "  ·  " + L.F("latest: {0}, {1:d MMM yyyy}", last.Name, last.UnlockedAt) : "");
+        // Gamerscore (Xbox): earned of the total.
+        if (_ach.Items.Any(a => a.Points is > 0))
+            AchSummary.Text += "  ·  " + L.F("{0} of {1} G", _ach.Items.Where(a => a.Unlocked).Sum(a => a.Points ?? 0), _ach.Items.Sum(a => a.Points ?? 0));
+        EnsureAchExport();
 
         _achStale = true;
         if (_tab == "ach") BuildAchievementTiles();
@@ -3591,10 +5083,13 @@ public sealed partial class GamePage : Page
         // Unlocked first, newest on top; then locked ones from the most common to the rarest, hidden ones last.
         var ordered = _ach.Items.Where(a => a.Unlocked).OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue)
             .Concat(_ach.Items.Where(a => !a.Unlocked).OrderBy(a => a.Hidden).ThenByDescending(a => a.GlobalPercent ?? -1));
+        _achText.Clear();
         foreach (var a in ordered)
         {
             var tile = AchievementTile(a);
             _achTiles.Add(tile);
+            // What the search box looks in: a hidden achievement still locked gives nothing away.
+            _achText[tile] = a.Hidden && !a.Unlocked ? "" : a.Name + " " + a.Description;
             if (tile is Border b) _achTileByKey[a.Key] = b;
         }
         LayoutAchievements();
@@ -3685,6 +5180,19 @@ public sealed partial class GamePage : Page
         });
         var foot = a.Unlocked ? (a.UnlockedAt is { } t ? L.F("Unlocked {0:d MMM yyyy, HH:mm}", t) : L.T("Unlocked")) : L.T("Locked");
         if (a.GlobalPercent is { } p) foot += "  ·  " + L.F("{0:0.#}% of players", p);
+        if (a.Points is > 0) foot += $"  ·  {a.Points} G";
+        // A locked achievement with steps: how far along it is, as a line and a thin bar.
+        if (!a.Unlocked && !secret && a.ProgressMax is > 0 and var max)
+        {
+            var now = Math.Clamp(a.ProgressNow ?? 0, 0, max);
+            text.Children.Add(new TextBlock
+            {
+                Text = max == 100 ? L.F("Progress: {0:0}%", now) : L.F("Progress: {0:0.##} of {1:0.##}", now, max),
+                FontSize = 11,
+                Foreground = (Brush)HybridLauncher.Helpers.ThemeRes.Current["TextFillColorSecondaryBrush"],
+            });
+            text.Children.Add(new ProgressBar { Maximum = max, Value = now, Margin = new Thickness(0, 2, 8, 2), MinHeight = 3 });
+        }
         text.Children.Add(new TextBlock
         {
             Text = foot,
@@ -3709,7 +5217,7 @@ public sealed partial class GamePage : Page
             Opacity = a.Unlocked ? 1 : 0.62,
             Tag = a.Unlocked,
         };
-        if (!secret) ToolTipService.SetToolTip(tile, $"{a.Name}\n{a.Description}\n\n" + L.F("Steam name: {0}", a.ApiName));
+        if (!secret) ToolTipService.SetToolTip(tile, _game?.Store == GameStore.Xbox ? $"{a.Name}\n{a.Description}" : $"{a.Name}\n{a.Description}\n\n" + L.F("Steam name: {0}", a.ApiName));
         return tile;
     }
 
@@ -3719,7 +5227,9 @@ public sealed partial class GamePage : Page
         if (_achTiles.Count == 0) return;
         _achLaidOutColumns = _achColumns;
         var filter = (AchFilterBar.SelectedItem as SelectorBarItem)?.Tag as string ?? "all";
-        var tiles = _achTiles.Where(t => filter == "all" || (t.Tag is true) == (filter == "unlocked")).ToList();
+        var query = _achSearch?.Text.Trim() ?? "";
+        var tiles = _achTiles.Where(t => (filter == "all" || (t.Tag is true) == (filter == "unlocked"))
+            && (query.Length == 0 || (_achText.TryGetValue(t, out var text) && text.Contains(query, StringComparison.CurrentCultureIgnoreCase)))).ToList();
         int cols = Math.Max(1, _achColumns);
         AchGrid.Children.Clear();
         AchGrid.ColumnDefinitions.Clear();
@@ -3735,6 +5245,47 @@ public sealed partial class GamePage : Page
     }
 
     void AchFilter_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => LayoutAchievements();
+
+    Button? _achExport;
+    TextBox? _achSearch;
+    readonly Dictionary<FrameworkElement, string> _achText = [];
+
+    /// <summary>Export beside the filter: the game's whole list (unlocked or not) as CSV or JSON.</summary>
+    void EnsureAchExport()
+    {
+        if (_achExport is not null || AchFilterBar.Parent is not Grid head) return;
+        if (head.ColumnDefinitions.Count < 3) head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _achExport = new Button
+        {
+            Content = new FontIcon { Glyph = "\uEDE1", FontSize = 14 },
+            Padding = new Thickness(9, 6, 9, 6),
+            VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["FlatGlassButton"],
+        };
+        ToolTipService.SetToolTip(_achExport, L.T("Export the list (CSV or JSON)"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_achExport, L.T("Export the list"));
+        _achExport.Click += async (_, _) =>
+        {
+            if (_ach is not { } set || _game is not { } game || App.Window is not { } w) return;
+            try
+            {
+                var path = await Pickers.PickSaveAsync(w, $"{game.Title} achievements", ("CSV", ".csv"), ("JSON", ".json"));
+                if (path is null) return;
+                HybridLauncher.Core.Achievements.AchievementHistory.ExportSet(set, game.Title, path);
+                Log.Info($"Achievements of {game.Name} exported to {path}");
+            }
+            catch (Exception ex) { App.Window?.ShowError(L.T("Export failed"), ex.Message, ex); }
+        };
+        // Search by name or description, beside it.
+        _achSearch = new TextBox { PlaceholderText = L.T("Search achievements"), Width = 220, VerticalAlignment = VerticalAlignment.Center };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_achSearch, L.T("Search achievements"));
+        _achSearch.TextChanged += (_, _) => LayoutAchievements();
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        tools.Children.Add(_achSearch);
+        tools.Children.Add(_achExport);
+        Grid.SetColumn(tools, 2);
+        head.Children.Add(tools);
+    }
 
     void AchButton_Click(object sender, RoutedEventArgs e)
     {

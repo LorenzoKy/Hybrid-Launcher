@@ -16,11 +16,12 @@ public static class CloudSync
     /// <summary>A game's cloud state may have changed (game id): the game page's cloud button follows it.</summary>
     public static event Action<string>? Changed;
 
-    static readonly HashSet<string> Busy = new(StringComparer.OrdinalIgnoreCase);
+    // Changed from the UI thread and from sessions ending on other threads: a plain HashSet could be corrupted.
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> Busy = new(StringComparer.OrdinalIgnoreCase);
 
     public static bool IsBusy(string id)
     {
-        if (Busy.Contains(id)) return true;
+        if (Busy.ContainsKey(id)) return true;
         lock (Sending) return Sending.Any(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -80,7 +81,7 @@ public static class CloudSync
     {
         var settings = AppState.Settings.For(game.Id);
         if (!Ready(game, settings) || game.NotInstalled) return;
-        Busy.Add(game.Id);
+        Busy.TryAdd(game.Id, 0);
         Changed?.Invoke(game.Id);
         try
         {
@@ -106,7 +107,7 @@ public static class CloudSync
         }
         finally
         {
-            Busy.Remove(game.Id);
+            Busy.TryRemove(game.Id, out _);
             Changed?.Invoke(game.Id);
         }
     }
@@ -163,16 +164,25 @@ public static class CloudSync
     {
         var settings = AppState.Settings.For(game.Id);
         if (!Ready(game, settings)) return;
-        Busy.Add(game.Id);
+        Busy.TryAdd(game.Id, 0);
         Changed?.Invoke(game.Id);
         try
         {
             // A few seconds for the game's last writes (some save while closing, or from a helper process).
             await Task.Delay(TimeSpan.FromSeconds(4));
             if (GameSessions.IsActive(game.Id)) return;
-            if ((await PartsAsync(game, settings, fresh: true)).Count == 0) { Log.Info($"Cloud: {game.Name} has no saves folder, nothing to send"); return; }
-            await CloudSaves.AfterSessionAsync(game, settings);
+            // Never busy for ever (rc.10: a check that got no answer left "Cloud syncing" on the game until a restart): the
+            // folder lookup gets a minute, the check and the sending five; past that the next Play or Sync now tries again.
+            using (var look = new CancellationTokenSource(TimeSpan.FromMinutes(1)))
+                if ((await PartsAsync(game, settings, look.Token, fresh: true)).Count == 0) { Log.Info($"Cloud: {game.Name} has no saves folder, nothing to send"); return; }
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            await CloudSaves.AfterSessionAsync(game, settings, cts.Token);
             SettingsStore.Save();
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warn($"Cloud: {game.Name} after the session took too long, left for the next sync");
+            App.Window?.ShowInfo(L.F("{0} is taking long to answer: the saves of {1} are sent at the next sync.", CloudSaves.StoreName, game.Title));
         }
         catch (Exception ex)
         {
@@ -182,7 +192,7 @@ public static class CloudSync
         }
         finally
         {
-            Busy.Remove(game.Id);
+            Busy.TryRemove(game.Id, out _);
             Changed?.Invoke(game.Id);
         }
     }
@@ -196,7 +206,7 @@ public static class CloudSync
             App.Window?.ShowError(L.T("Cloud saves"), L.F("Hybrid Launcher did not find the saves folder of {0}. Pick it in the cloud menu.", game.Title));
             return;
         }
-        Busy.Add(game.Id);
+        Busy.TryAdd(game.Id, 0);
         Changed?.Invoke(game.Id);
         try
         {
@@ -211,7 +221,7 @@ public static class CloudSync
         }
         finally
         {
-            Busy.Remove(game.Id);
+            Busy.TryRemove(game.Id, out _);
             Changed?.Invoke(game.Id);
         }
     }

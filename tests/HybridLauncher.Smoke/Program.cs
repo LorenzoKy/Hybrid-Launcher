@@ -1,16 +1,22 @@
-// End-to-end checks for HybridLauncher.Core that need a real Windows box and network:
+﻿// End-to-end checks for HybridLauncher.Core that need a real Windows box and network:
 //   dotnet run -- scan              list detected games and their exe folders
 //   dotnet run -- ini <file>        parse an OptiScaler.ini and print the option kinds
 //   dotnet run -- decide            prompt classification table for the setup bat
+//   dotnet run -- spotlight         the Dashboard Spotlight rule on made-up posts (featured, major, recent update)
 //   dotnet run -- wiki              OptiScaler wiki page matching for a few known game names
 //   dotnet run -- info [appid] [name]  game overview data: Steam store details, PCGamingWiki, HowLongToBeat, OptiScaler wiki
 //   dotnet run -- hw                hardware overview (cpu, gpu, memory, displays, system, drives)
 //   dotnet run -- api               graphics API per detected game (PCGamingWiki, exe imports) and Xbox package logos
 //   dotnet run -- ach [appid]       Steam achievements read from appcache\stats (read-only)
+//   dotnet run -- localach          local achievement files (INI / JSON / flat formats, temp folders), Steam's public list,
+//                                   the Xbox app's cache on this PC (read-only), the unlock history and its export
 //   dotnet run -- nexus             Nexus Mods page matching for a few known game names
 //   dotnet run -- versions          list saved OptiScaler versions, delete one downloaded release
 //   dotnet run -- renodx            RenoDX mod list parsing and game matching
 //   dotnet run -- reshade           ReShade versions, and Load-through-OptiScaler on a fake folder
+//   dotnet run -- dlssnramd <nvngx_dlssnr.dll>
+//                                   needs HL_DATA: prepares DLSSNR-AMD's newest package from the dll, lays it over a fake
+//                                   OptiScaler folder, changes a setting, takes it out (every file and key back as it was)
 //   dotnet run -- modinstall        real Luma (alone and with OptiScaler) and RenoDX installs into fake folders, then removed
 //   dotnet run -- steamsession [appid|list] [seconds] [download]
 //                                   signs in with HL_DATA's Steam token, reads the library and a game's plan; "download" also
@@ -36,8 +42,18 @@
 //   dotnet run -- customdlls        custom dlls on a fake install: copied in, replaced, a foreign file kept, turned off, uninstalled
 //   dotnet run -- forks           OptiScaler forks: addresses, Update available, notifications once per release, the archive picked
 //   dotnet run -- techversions      My PC's technology versions read from AMD's, Intel's and NVIDIA's SDK releases on GitHub
+//   dotnet run -- names             OptiScaler dev build names, a post's BBCode read as blocks
 //   dotnet run -- ultra             Ultra+ on a fake Unreal folder: lists, install, update keeping settings, add-on variants,
 //                                   custom variables back after a reinstall, taking over an install made elsewhere, uninstall
+//   dotnet run -- stores           Ubisoft Connect, EA app and Rockstar Games Launcher games from fake records and folders
+//   dotnet run -- dxvk             DXVK, DXVK-gplasync and VKD3D-Proton: releases, unpack, install into fake games (64 and 32-bit),
+//                                  dxvk.conf, a ReShade dll refused, a changed file found, uninstall back byte for byte
+//   dotnet run -- modcheck         the mod check on fake folders: add-ons without ReShade or with the normal build, ReShade loaded
+//                                  twice, DXVK without its dxgi.dll, mods a game update removed
+//   dotnet run -- auto             the Auto tab's planner on made-up games (names, ReShade through OptiScaler, HDR mods one at a
+//                                  time, 32-bit, DX9, Vulkan, DXVK), then ReShade put in directly (no installer) into a fake folder
+//   dotnet run -- dllswap          OptiScaler's dll renamed in place (from a saved OptiScaler archive): record updated, the game's own
+//                                  file under the old name put back, a taken name refused
 // Set HL_DATA to keep test data out of %LOCALAPPDATA%\HybridLauncher.
 using System.Security.Cryptography;
 using HybridLauncher.Core;
@@ -45,6 +61,8 @@ using HybridLauncher.Core.Detection;
 using HybridLauncher.Core.Ini;
 using HybridLauncher.Core.Opti;
 using HybridLauncher.Core.Mods;
+using HybridLauncher.Core.Achievements;
+using HybridLauncher.Core.Media;
 
 int failures = 0;
 void Check(bool ok, string what)
@@ -54,8 +72,134 @@ void Check(bool ok, string what)
 }
 
 var cmd = args.Length > 0 ? args[0] : "scan";
+// Never the user's own data folder (2.0.0-rc.13): with no HL_DATA every test runs on a fresh scratch folder. Some tests delete
+// and rewrite settings files; run by hand without HL_DATA, "settings" once deleted the real settings.json. A test that needs
+// real sign-ins takes a copy through HL_DATA, as the comments above say.
+if (!AppInfo.SeparateData)
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "hl-smoke-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(scratch);
+    Environment.SetEnvironmentVariable("HL_DATA", scratch);
+    Console.WriteLine($"HL_DATA not set: using {scratch}");
+}
 switch (cmd)
 {
+    case "steamcommunity":
+    {
+        // Steam achievements of a game Steam has not cached on this PC (2.0.0-rc.14): the account's community page.
+        var sample = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <playerstats><privacyState>public</privacyState><achievements>
+            <achievement closed="1"><iconClosed><![CDATA[https://x/c.jpg]]></iconClosed><iconOpen><![CDATA[https://x/o.jpg]]></iconOpen>
+            <name><![CDATA[The World]]></name><apiname><![CDATA[ACH_ONE]]></apiname><description><![CDATA[Do it.]]></description>
+            <unlockTimestamp>1700000000</unlockTimestamp></achievement>
+            <achievement closed="0"><iconClosed>https://x/c2.jpg</iconClosed><iconOpen>https://x/o2.jpg</iconOpen>
+            <name>Two</name><apiname>ACH_TWO</apiname><description></description></achievement>
+            </achievements></playerstats>
+            """;
+        var set = HybridLauncher.Core.Steam.SteamAchievements.ParseCommunity("1", sample);
+        Check(set is { Total: 2, UnlockedCount: 1 } && set.Items[0].UnlockedAt?.Year == 2023 && set.Items[0].IconUrl == "https://x/c.jpg" && !set.Items[1].Unlocked,
+            "community page: names, unlocks, dates and icons");
+        Check(HybridLauncher.Core.Steam.SteamAchievements.ParseCommunity("1", "<response><error><![CDATA[This profile is private.]]></error></response>") is null, "a private profile gives none");
+        Check(HybridLauncher.Core.Steam.SteamAchievements.ParseCommunity("1", "<!DOCTYPE html><html><body>Sign in</body>") is null, "an HTML page gives none");
+        if (args.Length > 1)
+        {
+            var live = await HybridLauncher.Core.Steam.SteamAchievements.LoadAsync(args[1]);
+            Console.WriteLine($"  {args[1]}: schema here {HybridLauncher.Core.Steam.SteamAchievements.HasSchema(args[1])}, {live?.Total ?? 0} achievements, {live?.UnlockedCount ?? 0} unlocked, " +
+                $"rarest {live?.Items.Where(a => a.GlobalPercent is not null).MinBy(a => a.GlobalPercent)?.Name ?? "-"}");
+            Check(live is { Total: > 0 }, $"app {args[1]} has its achievements");
+        }
+        break;
+    }
+    case "names":
+    {
+        // OptiScaler's dev builds named short (1.4.0-rc.7), and a post's BBCode read as blocks for the in-app reader.
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("en-GB");
+        int year = DateTime.Now.Year;
+        Check(CustomBuilds.Readable($"10.0.0-dev (07aa9da1) ({year}1110_091208)") == "v10 dev-nightly · 10 Nov", "dev build: v10 dev-nightly · 10 Nov (no commit)");
+        Check(CustomBuilds.Readable("11.0.0-dev (fa44a4a8) (20251022_091208)") == "v11 dev-nightly · 22 Oct 2025", "dev build of another year keeps its year");
+        Check(CustomBuilds.Readable("v0.9.4") == "0.9.4" && !CustomBuilds.IsDev("0.9.4") && CustomBuilds.IsDev("10.0.0-dev (x)"), "release numbers stay as they are");
+        var blocks = HybridLauncher.Core.Media.GameEvents.Blocks("[h2]Fixes[/h2][list][*]Fixed a crash.[*]Fixed [b]sound[/b].[/list][p]See [url=https://x]notes[/url].[/p][img]{STEAM_CLAN_IMAGE}/1/a.png[/img][p][dynamiclink href=\"https://x\"][/p]");
+        Check(blocks.Count == 5 && blocks[0] == new HybridLauncher.Core.Media.NoteBlock(HybridLauncher.Core.Media.NoteBlockKind.Heading, "Fixes")
+            && blocks[1].Kind == HybridLauncher.Core.Media.NoteBlockKind.Item && blocks[2].Text == "Fixed sound ."
+            && blocks[3].Text == "See notes ." && blocks[4].Text == "https://clan.akamai.steamstatic.com/images/1/a.png", "post blocks: heading, items, paragraph, picture, no dynamiclink");
+        // Steam's newer picture tag (2.0.0-rc.10): [img src="..."][/img] left '[img src="' at the start of the news text.
+        const string newer = "[p][img src=\"{STEAM_CLAN_IMAGE}/45/b.png\"][/img][/p][p]Fixed an exploit.[/p]";
+        var ex = HybridLauncher.Core.Media.GameNews.Excerpt(newer);
+        Check(ex == "Fixed an exploit.", "news text without the [img src] tag (got: " + ex + ")");
+        var nb = HybridLauncher.Core.Media.GameEvents.Blocks(newer);
+        Check(nb.Count == 2 && nb[0].Text == "https://clan.akamai.steamstatic.com/images/45/b.png" && nb[1].Text == "Fixed an exploit.", "post blocks read [img src] as a picture");
+        Check(HybridLauncher.Core.Media.GameNews.Picture("[img src=\"https://x.test/c.jpg\"][/img]") == "https://x.test/c.jpg", "first picture from [img src]");
+        Console.WriteLine("    " + CustomBuilds.Readable($"10.0.0-dev (07aa9da1) ({year}1110_091208)") + " / " + System.Globalization.CultureInfo.CurrentCulture.Name);
+        break;
+    }
+    case "localach":
+    {
+
+        var ini = LocalAchievements.ParseIni("[SteamAchievements]\nCount=2\n[ACH_ONE]\nAchieved=1\nUnlockTime=1700000000\nCurProgress=0\nMaxProgress=0\n[ACH_TWO]\nAchieved=0\nCurProgress=3\nMaxProgress=10\n");
+        Check(ini.Count == 2 && ini["ACH_ONE"].Unlocked && ini["ACH_ONE"].At?.Year == 2023 && !ini["ACH_TWO"].Unlocked && ini["ACH_TWO"].Now == 3 && ini["ACH_TWO"].Max == 10, "INI with a section per achievement (unlock, time, progress)");
+        var rld = LocalAchievements.ParseIni("[Steam]\nAppID=1\n[ACH_A]\nState = 0101\nTime = 00F15365\n[ACH_B]\nState = 0000\n");
+        Check(rld["ACH_A"].Unlocked && !rld["ACH_B"].Unlocked && rld["ACH_A"].At?.Year == 2023, "INI with State and a hex time");
+        var flat = LocalAchievements.ParseIni("[Achievements]\nACH_X=1\nACH_Y=0\n[AchievementsUnlockTimes]\nACH_X=1650000000\n");
+        Check(flat["ACH_X"].Unlocked && flat["ACH_X"].At?.Year == 2022 && !flat["ACH_Y"].Unlocked, "flat INI section with its times");
+        var json = LocalAchievements.ParseJson("{\"ACH_J\":{\"earned\":true,\"earned_time\":1600000000},\"ACH_K\":{\"earned\":false,\"progress\":2,\"max_progress\":5}}");
+        Check(json["ACH_J"].Unlocked && json["ACH_J"].At?.Year == 2020 && json["ACH_K"].Max == 5, "JSON map with progress");
+        var list = LocalAchievements.ParseJson("[{\"name\":\"L1\",\"achieved\":1,\"unlock_time\":1600000000},{\"name\":\"L2\",\"achieved\":0}]");
+        Check(list["L1"].Unlocked && !list["L2"].Unlocked, "JSON list");
+        var cfg = LocalAchievements.ParseIni("[FIRST_BLOOD]\nachieved=true\nunlocktime=1600000000\n");
+        Check(cfg["FIRST_BLOOD"].Unlocked, "lower-case keys (cfg)");
+
+        // A game folder whose layer names the app id; a user folder with a per-app sub-folder.
+        var tmp = Path.Combine(Path.GetTempPath(), "hl-localach-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(tmp, "game", "bin"));
+        File.WriteAllText(Path.Combine(tmp, "game", "bin", "steam_emu.ini"), "[Settings]\nAppId=1091500\n");
+        File.WriteAllText(Path.Combine(tmp, "game", "bin", "game.exe"), "");
+        Check(LocalAchievements.DetectAppId(Path.Combine(tmp, "game"), Path.Combine(tmp, "game", "bin", "game.exe")) == "1091500", "app id from the layer's settings file");
+        Directory.CreateDirectory(Path.Combine(tmp, "saves", "1091500"));
+        File.WriteAllText(Path.Combine(tmp, "saves", "1091500", "achievements.ini"), "[TheFool]\nAchieved=1\nUnlockTime=1700000000\n[TheLovers]\nAchieved=0\nCurProgress=1\nMaxProgress=4\n");
+        SettingsStore.Current.LocalAchievementFolders.Add(Path.Combine(tmp, "saves"));
+        Check(LocalAchievements.AppIdOf(Path.Combine(tmp, "saves", "1091500", "achievements.ini")) == "1091500", "app id of a changed file in a user folder");
+        var set = await LocalAchievements.LoadAsync("1091500", null, CancellationToken.None);
+        Console.WriteLine($"  set: {set?.UnlockedCount}/{set?.Total}");
+        var fool = set?.Items.FirstOrDefault(a => a.ApiName == "TheFool");
+        Check(set is { Total: > 10 } && fool is { Unlocked: true, Name: "The Fool" } && fool.IconUrl is not null && fool.GlobalPercent is > 0, "Steam's public list named the achievements, with pictures and rarity");
+        Check(LocalAchievements.ParseFile(Path.Combine(tmp, "saves", "1091500", "achievements.ini"))["TheLovers"].Max == 4 && set!.Items.Any(a => a.ApiName == "TheLovers"), "progress read from the file, the achievement in the set");
+
+        // History and export.
+        var hist = new UnlockEntry(DateTime.Now, "lib:test", "Smoke game", "Steam", "TheFool", "The Fool", "Become, a \"mercenary\".", null, 88.5, null, null);
+        var before = AchievementHistory.All().Count;
+        AchievementHistory.Add(hist);
+        AchievementHistory.AttachScreenshot("lib:test", "TheFool", @"C:\shot.png");
+        var all = AchievementHistory.All();
+        Check(all.Count == before + 1 && all[0].Screenshot == @"C:\shot.png", "history written and screenshot attached");
+        var csv = Path.Combine(tmp, "h.csv");
+        AchievementHistory.Export(all.Take(1), csv);
+        Check(File.ReadAllText(csv).Contains("\"Become, a \"\"mercenary\"\".\""), "CSV export quotes commas and quotes");
+        AchievementHistory.ExportSet(set!, "Smoke", Path.Combine(tmp, "s.json"));
+        Check(System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(tmp, "s.json"))).RootElement.GetProperty("achievements").GetArrayLength() == set!.Total, "set export as JSON");
+
+        // The Xbox app's cache (read-only), when this PC has it.
+        if (XboxAchievements.CacheFile is { } xc)
+        {
+            using var db = WinSqlite.Open(xc);
+            var rows = db.Query("SELECT key, value FROM AsyncCache WHERE scope = 'achievements' AND key LIKE 'achievements!_%' ESCAPE '!'", 2);
+            int parsed = 0, withUnlocks = 0;
+            foreach (var r in rows)
+            {
+                var title = r[0]!.Split('_').Last();
+                if (XboxAchievements.Parse(title, r[1]!) is { } x) { parsed++; if (x.UnlockedCount > 0) withUnlocks++; Console.WriteLine($"  xbox {title}: {x.UnlockedCount}/{x.Total}, {x.Items.Sum(a => a.Points ?? 0)} G"); }
+            }
+            Check(rows.Count > 0 && parsed > 0, $"Xbox app cache read with Windows' SQLite ({parsed} lists, {withUnlocks} with unlocks)");
+            foreach (var g in (await GameScanner.ScanAsync(SettingsStore.Current)).Where(g => g.Store == GameStore.Xbox))
+            {
+                var c = XboxAchievements.ReadCache(g);
+                Console.WriteLine($"  {g.Name} ({XboxAchievements.Pfn(g)}): title {c?.TitleId ?? "-"}, {c?.Set?.UnlockedCount}/{c?.Set?.Total}");
+            }
+        }
+        else Console.WriteLine("  (no Xbox app cache on this PC)");
+        try { Directory.Delete(tmp, true); } catch { }
+        break;
+    }
     case "sessions":
     {
         // A fake game shaped like an Xbox / Unreal one: a launcher exe at the top hands over to the game exe in a sub-folder and
@@ -102,6 +246,47 @@ switch (cmd)
         break;
     }
 
+    case "dlssnramd":
+    {
+        if (!AppInfo.SeparateData) { Console.WriteLine("Set HL_DATA to a scratch folder first."); break; }
+        var dll = args.Length > 1 ? args[1] : DlssNr.StoredPath;
+        var (tier, gpu) = Dlss5.Detect();
+        Console.WriteLine($"GPU: {gpu?.Name} ({tier}), driver {gpu?.DriverVersion}, ok={Dlss5.DriverOk(tier, gpu)}; model {Dlss5.Describe(dll)}");
+        var release = await DlssNrAmd.LatestAsync(CancellationToken.None);
+        Check(release is not null, $"newest release: {release?.Tag} {release?.AssetName}");
+        var stage = await DlssNrAmd.PrepareAsync(release!, dll, new Progress<(string Step, double? Share)>(p => { if (p.Share is null) Console.WriteLine(p.Step); }), CancellationToken.None);
+        Check(stage.Networks.Count > 0, $"prepared {stage.Tag}: {string.Join(", ", stage.Networks)}, {DlssNrAmd.StageBytes() / 1048576} MB");
+        var game = Path.Combine(Path.GetTempPath(), "hl-dlssnramd-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(Path.Combine(game, "OptiScaler", "plugins"));
+        const string optiIni = "[Menu]\nFGShortcutKey=auto\n[Plugins]\nPath=auto\nLoadAsiPlugins=false\n";
+        File.WriteAllText(Path.Combine(game, "OptiScaler.ini"), optiIni);
+        var m = new InstallManifest { TargetDir = game, DllName = "dxgi.dll", PluginsDir = @"OptiScaler\plugins", Channel = OptiChannel.Nightly };
+        Check(DlssNrAmd.CannotGoInto(m) is null, "can go into the fake install");
+        DlssNrAmd.Apply(m, stage.Networks[0], renoDx: true);
+        Check(File.Exists(Path.Combine(game, @"OptiScaler\plugins\dlssnr-amd.asi")), "plugin in OptiScaler\\plugins");
+        Check(stage.Networks.All(n => File.Exists(Path.Combine(game, "dlssnr-amd", n + ".bin"))), "every network's weights in dlssnr-amd");
+        Check(DlssNrAmd.Get(m, "Network", "Model") == stage.Networks[0], "dlssnr-amd.ini starts with the chosen network");
+        Check(DlssNrAmd.IniGet(Path.Combine(game, "OptiScaler.ini"), "Plugins", "LoadAsiPlugins") == "true", "LoadAsiPlugins=true");
+        Check(DlssNrAmd.IniGet(Path.Combine(game, "OptiScaler.ini"), "Menu", "FGShortcutKey") == "-1", "FGShortcutKey=-1");
+        Check(DlssNrAmd.Set(m, "Network", "Memory Guard", "1") && DlssNrAmd.Get(m, "Network", "Memory Guard") == "1", "a setting changed");
+        DlssNrAmd.Remove(m);
+        Check(!Directory.Exists(Path.Combine(game, "dlssnr-amd")) && !File.Exists(Path.Combine(game, "dlssnr-amd.ini")), "taken out");
+        Check(File.ReadAllText(Path.Combine(game, "OptiScaler.ini")) == optiIni, "OptiScaler.ini as it was");
+        DlssNrAmd.Apply(m, stage.Networks[0], renoDx: true);
+        Check(DlssNrAmd.Get(m, "Network", "Memory Guard") == "1", "its dlssnr-amd.ini comes back on the next install");
+        DlssNrAmd.Remove(m);
+        // A put-in that fails half way (the plugin's name taken by a folder) leaves nothing behind.
+        var blocker = Path.Combine(game, @"OptiScaler\plugins\dlssnr-amd.asi");
+        Directory.CreateDirectory(blocker);
+        bool threw = false;
+        try { DlssNrAmd.Apply(m, stage.Networks[0], renoDx: true); } catch { threw = true; }
+        Check(threw && m.DlssNrAmd is null && !Directory.Exists(Path.Combine(game, "dlssnr-amd")) && File.ReadAllText(Path.Combine(game, "OptiScaler.ini")) == optiIni,
+            "a failed put-in is taken out again");
+        Directory.Delete(blocker);
+        DlssNrAmd.ForgetSavedIni(game);
+        Directory.Delete(game, recursive: true);
+        break;
+    }
     case "customdlls":
     {
         // Needs HL_DATA (the shared folder is written). A fake install with OptiScaler in its own "OptiScaler" folder, as the bat
@@ -476,6 +661,452 @@ switch (cmd)
             var file = await RenoDx.InstallSnapshotAsync(link, renoDir, null, CancellationToken.None);
             Check(File.Exists(file) && RenoDx.Installed(renoDir).Count == 1, $"snapshot installed: {Path.GetFileName(file)} {new FileInfo(file).Length / 1024} KB");
         }
+        Directory.Delete(root, true);
+        break;
+    }
+    case "stores":
+    {
+        // The three launchers read from fake records (what their registry entries and installed-programs entries hold).
+        var root = Path.Combine(Path.GetTempPath(), "hl-stores-test");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        string Folder(string rel) => Directory.CreateDirectory(Path.Combine(root, rel)).FullName;
+        var ac = Folder(@"Ubisoft\games\Assassin's Creed Test");
+        var ubi = UbisoftScanner.From([new UbisoftScanner.Install("4923", ac.Replace('\\', '/') + "/"), new UbisoftScanner.Install("99", Path.Combine(root, "gone"))],
+            [new UninstallEntry("Uplay Install 4923", "Assassin's Creed Test", null, @"""C:\Ubisoft\upc.exe"" uplay://uninstall/4923", "Ubisoft")]);
+        Check(ubi.Count == 1 && ubi[0].Id == "ubisoft:4923" && ubi[0].Name == "Assassin's Creed Test" && ubi[0].Store == GameStore.Ubisoft, "Ubisoft: named from its installed-programs entry, missing folder skipped");
+        Check(ubi.Count == 1 && ubi[0].LaunchUri == "uplay://launch/4923/0" && ubi[0].InstallDir == ac, "Ubisoft: uplay://launch link, folder with forward slashes read as a Windows path");
+
+        var ea = Folder(@"EA Games\Test Racer");
+        Directory.CreateDirectory(Path.Combine(ea, "__Installer"));
+        Directory.CreateDirectory(Path.Combine(ea, "bin"));
+        File.WriteAllText(Path.Combine(ea, "bin", "TestRacer.exe"), "fake");
+        File.WriteAllText(Path.Combine(ea, "__Installer", "installerdata.xml"), """
+            <DiPManifest version="4.0">
+              <contentIDs><contentID>1234567</contentID></contentIDs>
+              <gameTitles><gameTitle locale="de_DE">Testrennen</gameTitle><gameTitle locale="en_US">Test Racer</gameTitle></gameTitles>
+              <runtime>
+                <launcher><filePath>[HKEY_LOCAL_MACHINE\SOFTWARE\EA Games\Test Racer\Install Dir]bin\Trial.exe</filePath><trial>1</trial></launcher>
+                <launcher><filePath>[HKEY_LOCAL_MACHINE\SOFTWARE\EA Games\Test Racer\Install Dir]bin\TestRacer.exe</filePath><trial>0</trial></launcher>
+              </runtime>
+            </DiPManifest>
+            """);
+        var eaGames = EaScanner.From([
+            new UninstallEntry("{EA-TEST}", null, ea + "\\", @"""C:\Program Files\Common Files\EAInstaller\Test Racer\Cleanup.exe"" uninstall_game -autologging", "Electronic Arts"),
+            new UninstallEntry("EA app", "EA app", Folder("EA Desktop"), @"""C:\Program Files\Electronic Arts\EA Desktop\EA Desktop\EAUninstall.exe"" /uninstall", "Electronic Arts"),
+            new UninstallEntry("Other", "Some App", Folder("Other"), @"C:\Other\uninstall.exe", "Someone")]);
+        Check(eaGames.Count == 1 && eaGames[0].Id == "ea:1234567" && eaGames[0].Name == "Test Racer", "EA: only the EAInstaller entry, id from installerdata.xml, English title");
+        Check(eaGames.Count == 1 && eaGames[0].StoreExe == Path.Combine(ea, "bin", "TestRacer.exe"), "EA: exe from the first launcher that is not a trial");
+
+        var gta = Folder(@"Rockstar Games\Test Theft Auto");
+        var rock = RockstarScanner.From([new RockstarScanner.Install("Test Theft Auto", gta)],
+            [new UninstallEntry("Rockstar Games Launcher", "Rockstar Games Launcher", Folder("Launcher"), @"""C:\Rockstar\Launcher\uninstall.exe"" -uninstall=launcher", "Rockstar Games"),
+             new UninstallEntry("Test Theft Auto", "Test Theft Auto V", gta, @"""C:\Rockstar\Launcher\uninstall.exe"" -enableFullMode -uninstall=tta5", "Rockstar Games")], @"C:\Rockstar\Launcher\Launcher.exe");
+        Check(rock.Count == 1 && rock[0].Id == "rockstar:tta5" && rock[0].Name == "Test Theft Auto V", "Rockstar: title id and name from its installed-programs entry");
+        Check(rock.Count == 1 && rock[0].LauncherCommand?.Args == $"-launchTitleInFolder \"{gta}\"", "Rockstar: started by the launcher with -launchTitleInFolder");
+        Check(Uninstaller.SplitCommand("\"" + Path.Combine(ea, "bin", "TestRacer.exe") + "\" uninstall_game") is { Args: "uninstall_game" }, "an uninstall command split into exe and arguments");
+        Check(Uninstaller.Route(rock[0]) == UninstallRoute.Launcher && Uninstaller.Route(eaGames[0]) == UninstallRoute.Launcher, "uninstall goes through the launcher's own entry");
+
+        // This PC: what the real scans find (read-only).
+        foreach (var g in UbisoftScanner.Scan().Concat(EaScanner.Scan()).Concat(RockstarScanner.Scan()))
+            Console.WriteLine($"    this PC: {g.Store} {g.Name} [{g.Id}] {g.InstallDir}");
+        Directory.Delete(root, true);
+        break;
+    }
+    case "dxvk":
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hl-dxvk-test");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var releases = new Dictionary<DxvkFlavor, List<DxvkRelease>>();
+        foreach (var f in Enum.GetValues<DxvkFlavor>())
+        {
+            releases[f] = await Dxvk.GetReleasesAsync(f);
+            Check(releases[f].Count > 0, $"{Dxvk.Name(f)}: {releases[f].Count} releases, newest {releases[f].FirstOrDefault()?.Display} ({releases[f].FirstOrDefault()?.ArchiveName})");
+        }
+        if (releases.Values.Any(r => r.Count == 0)) break;
+        Check(Dxvk.FromApis(["DX11", "DX12", "Vulkan"]).SequenceEqual([D3dVersion.D3D12, D3dVersion.D3D11]), "APIs read as Direct3D versions, newest first");
+
+        foreach (var (flavor, api, is64) in new[] { (DxvkFlavor.Dxvk, D3dVersion.D3D11, true), (DxvkFlavor.Dxvk, D3dVersion.D3D9, false), (DxvkFlavor.GplAsync, D3dVersion.D3D11, true), (DxvkFlavor.Vkd3d, D3dVersion.D3D12, true) })
+        {
+            var dir = Directory.CreateDirectory(Path.Combine(root, $"{flavor}-{api}-{(is64 ? 64 : 32)}")).FullName;
+            File.WriteAllText(Path.Combine(dir, "Game.exe"), "fake");
+            File.WriteAllText(Path.Combine(dir, "d3d9.dll"), "the game's own d3d9");
+            File.WriteAllText(Path.Combine(dir, "dxvk.conf"), "# the player's own\ndxgi.maxFrameRate = 60\n");
+            var before = Snapshot(dir);
+            var dxgi = flavor == DxvkFlavor.Vkd3d ? releases[DxvkFlavor.Dxvk][0] : null;
+            var state = await Dxvk.InstallAsync(releases[flavor][0], api, dir, is64, null, dxgi, null, CancellationToken.None);
+            var label = $"{Dxvk.Name(flavor)} {Dxvk.Name(api)} {(is64 ? 64 : 32)}-bit";
+            var want = Dxvk.Files(flavor, api).Concat(flavor == DxvkFlavor.Vkd3d ? ["dxgi.dll"] : Array.Empty<string>()).ToList();
+            Check(want.All(f => state.Files.ContainsKey(f)) && state.Files.Count == want.Count, $"{label}: {string.Join(", ", state.Files.Keys)}");
+            var found = Dxvk.Detect(dir);
+            Check(want.All(f => found.Any(d => d.File == f)), $"{label}: found again by their own setting names ({string.Join(", ", found.Select(d => d.File + "=" + d.Layer))})");
+            Check(RenoDx.Is64Bit(Path.Combine(dir, want[0])) == is64, $"{label}: the {(is64 ? 64 : 32)}-bit dlls went in");
+            Check((Dxvk.GetConf(dir, "dxvk.enableAsync") == "True") == (flavor == DxvkFlavor.GplAsync) && Dxvk.GetConf(dir, "dxgi.maxFrameRate") == "60", $"{label}: async {(flavor == DxvkFlavor.GplAsync ? "on" : "untouched")}, the player's line kept");
+            Check(Dxvk.Changed(state, dir).Count == 0 && ModCheck.Run(new GameSettings { Dxvk = state }, dir).Count == 0, $"{label}: nothing changed, the mod check is quiet");
+            if (api == D3dVersion.D3D9)
+            {
+                Check(state.Backups.ContainsKey("d3d9.dll"), $"{label}: the game's own d3d9.dll backed up");
+                File.WriteAllText(Path.Combine(dir, "d3d9.dll"), "a game update put its own back");
+                Check(Dxvk.Changed(state, dir).SequenceEqual(["d3d9.dll"]) && ModCheck.Run(new GameSettings { Dxvk = state }, dir).Any(p => p.Id == "dxvk-changed"), $"{label}: the replaced dll is found, the mod check says so");
+                File.WriteAllText(Path.Combine(dir, "d3d9.dll"), "the game's own d3d9");
+            }
+            if (flavor != DxvkFlavor.Vkd3d && api == D3dVersion.D3D11)
+            {
+                File.Delete(Path.Combine(dir, "dxgi.dll"));
+                Check(ModCheck.Run(new GameSettings(), dir).Any(p => p.Id == "dxvk-dxgi"), $"{label}: d3d11.dll without DXVK's dxgi.dll is reported");
+                state = await Dxvk.InstallAsync(releases[flavor][0], api, dir, is64, state, null, null, CancellationToken.None);
+                Check(File.Exists(Path.Combine(dir, "dxgi.dll")) && Dxvk.Changed(state, dir).Count == 0, $"{label}: reinstall over the old one puts dxgi.dll back");
+            }
+            var problems = Dxvk.Uninstall(state, dir);
+            Check(problems.Count == 0, $"{label}: uninstalled without problems " + string.Join("; ", problems));
+            var after = Snapshot(dir);
+            var diff = before.Keys.Union(after.Keys).Where(k => !before.TryGetValue(k, out var a) || !after.TryGetValue(k, out var b) || a != b).ToList();
+            Check(diff.Count == 0, $"{label}: folder back byte for byte" + (diff.Count > 0 ? ": " + string.Join(", ", diff) : ""));
+        }
+
+        // A new dxvk.conf is Hybrid Launcher's own and goes with the layer; a ReShade dll is never replaced.
+        var clean = Directory.CreateDirectory(Path.Combine(root, "clean")).FullName;
+        var s1 = await Dxvk.InstallAsync(releases[DxvkFlavor.GplAsync][0], D3dVersion.D3D11, clean, true, null, null, null, CancellationToken.None);
+        Check(s1.ConfCreated && File.Exists(Path.Combine(clean, "dxvk.conf")), "gplasync without a dxvk.conf: one is made");
+        Dxvk.Uninstall(s1, clean);
+        Check(Directory.GetFiles(clean).Length == 0, "uninstall leaves the folder empty, dxvk.conf included");
+        var reshadeDll = ReShadeSample();
+        if (reshadeDll is not null)
+        {
+            File.Copy(reshadeDll, Path.Combine(clean, "dxgi.dll"));
+            string? refused = null;
+            try { await Dxvk.InstallAsync(releases[DxvkFlavor.Dxvk][0], D3dVersion.D3D11, clean, true, null, null, null, CancellationToken.None); }
+            catch (InvalidOperationException ex) { refused = ex.Message; }
+            Check(refused?.Contains("ReShade") == true && ReShade.IsReShade(Path.Combine(clean, "dxgi.dll")) && !File.Exists(Path.Combine(clean, "d3d11.dll")), $"ReShade's dxgi.dll is not replaced: {refused}");
+        }
+        else Console.WriteLine("    (no saved ReShade installer: the ReShade refusal is not tried)");
+        Directory.Delete(root, true);
+        break;
+    }
+    case "spotlight":
+    {
+        // The Dashboard's Spotlight (GameEvents.Spotlight) on made-up posts: Steam's featured post as well as major updates.
+        var now = new DateTime(2026, 11, 12, 12, 0, 0, DateTimeKind.Utc);
+        GameEvent Post(string id, GameEventKind kind, int daysAgo, bool featured = false, int? endsDaysAgo = null, int changes = 0) =>
+            new(id, "1", kind, id, "", "", now.AddDays(-daysAgo), null, null,
+                [.. Enumerable.Range(0, changes).Select(i => new UpdateSection("Section " + i, 1, "change"))], [], "", featured,
+                endsDaysAgo is { } e ? now.AddDays(-e) : null);
+        GameEvent? Pick(params GameEvent[] posts) => GameEvents.Spotlight([.. posts.OrderByDescending(p => p.Date)], now);
+        Check(Pick(Post("news", GameEventKind.News, 2, featured: true), Post("major", GameEventKind.MajorUpdate, 20, changes: 4))?.Gid == "news",
+            "a featured post newer than the last major update comes first (Steam's Featured)");
+        Check(Pick(Post("news", GameEventKind.News, 30, featured: true), Post("major", GameEventKind.MajorUpdate, 5, changes: 4))?.Gid == "major",
+            "a major update newer than the featured post comes first");
+        Check(Pick(Post("news", GameEventKind.News, 2), Post("small", GameEventKind.SmallUpdate, 10, changes: 4))?.Gid == "small",
+            "with nothing featured and no major update: the newest recent update");
+        Check(Pick(Post("old", GameEventKind.News, 90, featured: true)) is null, "a featured post older than 60 days is not shown");
+        Check(Pick(Post("sale", GameEventKind.Event, 3, featured: true, endsDaysAgo: 1), Post("major", GameEventKind.MajorUpdate, 40, changes: 4))?.Gid == "major",
+            "a featured sale that has ended is left out");
+        var notes = Pick(Post("news", GameEventKind.News, 1, featured: true), Post("small", GameEventKind.SmallUpdate, 3, changes: 5));
+        Check(notes?.Gid == "news" && notes.Outline.Count == 0, "a featured news post does not take another update's notes");
+        break;
+    }
+    case "modcheck":
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hl-modcheck-test");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        string Fresh(string name) => Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        List<string> Ids(GameSettings s, string dir) => ModCheck.Run(s, dir).Select(p => p.Id).ToList();
+
+        var empty = Fresh("empty");
+        Check(Ids(new GameSettings(), empty).Count == 0, "an empty folder has nothing to report");
+
+        var addon = Fresh("addon");
+        File.WriteAllText(Path.Combine(addon, "renodx-testgame.addon64"), "fake");
+        Check(Ids(new GameSettings(), addon).SequenceEqual(["addon-no-reshade"]), "an add-on with no ReShade is reported");
+
+        var normal = ReShadeSample(addonBuild: false);
+        var full = ReShadeSample(addonBuild: true);
+        if (normal is not null && full is not null)
+        {
+            File.Copy(normal, Path.Combine(addon, "dxgi.dll"));
+            Check(ModCheck.LimitedAddons(Path.Combine(addon, "dxgi.dll")) && !ModCheck.LimitedAddons(full), "the normal ReShade build is told from the add-on one");
+            Check(Ids(new GameSettings(), addon).SequenceEqual(["addon-limited"]), "an add-on beside the normal ReShade build is reported");
+            File.Copy(full, Path.Combine(addon, "dxgi.dll"), true);
+            Check(Ids(new GameSettings(), addon).Count == 0, "with the add-on build nothing is reported");
+
+            var twice = Fresh("twice");
+            File.Copy(full, Path.Combine(twice, "d3d11.dll"));
+            File.Copy(full, Path.Combine(twice, ReShade.OptiDllName));
+            File.WriteAllText(Path.Combine(twice, "OptiScaler.ini"), "[Plugins]\nLoadReshade=true\n");
+            var s = new GameSettings();
+            s.IniOverrides[ReShade.IniKey] = "true";
+            Check(Ids(s, twice).SequenceEqual(["reshade-twice"]), "ReShade as d3d11.dll and through OptiScaler: loads twice");
+            ModCheck.StopOptiLoadingReShade(s, twice);
+            Check(ReShade.OptiLoadsReShade(twice) == false && !s.IniOverrides.ContainsKey(ReShade.IniKey) && Ids(s, twice).Count == 0, "the fix turns LoadReshade off in the ini and the saved choices");
+        }
+        else Console.WriteLine("    (no saved ReShade installers: the ReShade checks are not tried)");
+
+        var gone = Fresh("gone");
+        var settings = new GameSettings
+        {
+            Install = new InstallManifest { TargetDir = gone, DllName = "dxgi.dll", Tag = "v0.9.0" },
+            Luma = new LumaState { Mod = "Test Luma" },
+        };
+        settings.RenoDxFiles["renodx-gone.addon64"] = "snapshot";
+        Check(Ids(settings, gone).OrderBy(x => x).SequenceEqual(["luma-gone", "opti-gone", "renodx-gone"]), "mods a game update removed: OptiScaler, RenoDX, Luma");
+        File.WriteAllText(Path.Combine(gone, "dxgi.dll"), "not OptiScaler");
+        Check(Ids(settings, gone).Contains("opti-replaced"), "OptiScaler's dll replaced by another file is reported");
+        Directory.Delete(root, true);
+        break;
+    }
+    case "dlssnrreshade":
+    {
+        // DLSSNR-AMD's ReShade way (1.4.0-rc.20): a stage made from the package zip (HL_DLSSNR_ZIP) in a scratch HL_DATA, put
+        // into a fake game that has a dxgi.dll, a ReShade.ini and another add-on of its own, by each route, then taken out.
+        var zipPath = Environment.GetEnvironmentVariable("HL_DLSSNR_ZIP");
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HL_DATA")) || zipPath is null || !File.Exists(zipPath)) { Console.WriteLine("    (needs HL_DATA and HL_DLSSNR_ZIP)"); break; }
+        var stageDir = Path.Combine(AppInfo.DataRoot, "DlssNrAmd", "stage");
+        if (Directory.Exists(stageDir)) Directory.Delete(stageDir, true);
+        Directory.CreateDirectory(Path.Combine(stageDir, "dlssnr-amd"));
+        File.WriteAllText(Path.Combine(stageDir, "dlssnr-amd", "CC_SILVER_AARDWOLD.bin"), "weights");
+        File.WriteAllText(Path.Combine(stageDir, "dlssnr-amd.asi"), "plugin");
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zipPath))
+            foreach (var e in z.Entries)
+            {
+                var top = e.FullName.Split('/')[0];
+                if (top is not ("reshade" or "vulkan" or "dxvk" or "ini") || e.FullName.EndsWith('/')) continue;
+                var to = Path.Combine(stageDir, e.FullName.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                System.IO.Compression.ZipFileExtensions.ExtractToFile(e, to, true);
+            }
+        File.WriteAllText(Path.Combine(stageDir, "hl-stage.json"), "{\"Tag\":\"test\",\"ModelVersion\":\"310.8.0\",\"Networks\":[\"CC_SILVER_AARDWOLD\"]}");
+        Check(DlssNrAmd.StageHasReShade(), "the stage has the ReShade way's files");
+        var game = Path.Combine(Path.GetTempPath(), "hl-dlssnr-reshade-game");
+        if (Directory.Exists(game)) Directory.Delete(game, true);
+        Directory.CreateDirectory(game);
+        File.WriteAllText(Path.Combine(game, "game.exe"), "exe");
+        File.WriteAllText(Path.Combine(game, "dxgi.dll"), "the game's own dxgi");
+        File.WriteAllText(Path.Combine(game, "ReShade.ini"), "the game's own ReShade.ini");
+        File.WriteAllText(Path.Combine(game, "other.addon64"), "another add-on");
+        string FolderState() => string.Join("|", Directory.EnumerateFileSystemEntries(game, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(game, f) + (File.Exists(f) ? ":" + File.ReadAllText(f).Length : "")).Order());
+        var before = FolderState();
+        var reshade64 = new FileInfo(Path.Combine(stageDir, "reshade", "ReShade64.dll")).Length;
+        foreach (var route in DlssNrAmd.ReShadeRoutes)
+        {
+            var gs = new GameSettings();
+            DlssNrAmd.ApplyReShade(gs, game, route, "CC_SILVER_AARDWOLD", renoDx: true);
+            bool layer = route != "reshade-feeder";
+            Check(gs.DlssNrAmdReShade is { } i && i.Route == route, $"{route}: recorded");
+            Check(File.Exists(Path.Combine(game, "dlssnr_amd.addon64")) && Directory.Exists(Path.Combine(game, "reshade-shaders")) && File.Exists(Path.Combine(game, "dlssnr-amd", "CC_SILVER_AARDWOLD.bin")), $"{route}: add-on, shaders and networks in");
+            Check(!File.Exists(Path.Combine(game, "other.addon64")), $"{route}: the other add-on kept aside");
+            if (!layer) Check(new FileInfo(Path.Combine(game, "dxgi.dll")).Length == reshade64 && !File.Exists(Path.Combine(game, "ReShade64.dll")), $"{route}: ReShade is dxgi.dll");
+            else Check(File.Exists(Path.Combine(game, "vulkan-1.dll")) && File.Exists(Path.Combine(game, "ReShade64.dll")) && Directory.Exists(Path.Combine(game, "vk-override")), $"{route}: Vulkan loader and ReShade's layer in");
+            if (route == "reshade-feeder-dx9") Check(File.Exists(Path.Combine(game, "d3d9.dll")) && new FileInfo(Path.Combine(game, "dxgi.dll")).Length > 1000, $"{route}: DXVK's d3d9.dll and dxgi.dll in");
+            Check(DlssNrAmd.GetAt(game, "Network", "Model") == "CC_SILVER_AARDWOLD" && DlssNrAmd.GetAt(game, "RenoDX", "Enabled") == "1", $"{route}: dlssnr-amd.ini with the network and the RenoDX style");
+            DlssNrAmd.RemoveReShade(gs);
+            Check(gs.DlssNrAmdReShade is null && FolderState() == before, $"{route}: taken out, the folder exactly as before");
+            DlssNrAmd.ForgetSavedReShadeIni(game);
+        }
+        var withOpti = new GameSettings { Install = new InstallManifest { TargetDir = game } };
+        Check(DlssNrAmd.CannotGoIntoReShade(withOpti, game) is not null, "refused over Hybrid Launcher's OptiScaler");
+        Check(DlssNrAmd.RouteFor(["Vulkan"]) == "reshade-feeder-vulkan" && DlssNrAmd.RouteFor(["DX9"]) == "reshade-feeder-dx9" && DlssNrAmd.RouteFor(["DX11", "Vulkan"]) == "reshade-feeder", "route picked from the graphics APIs");
+        Directory.Delete(game, true);
+        break;
+    }
+    case "auto":
+    {
+        static Dictionary<string, string> F(params (string, string)[] x) => x.ToDictionary(t => t.Item1, t => t.Item2, StringComparer.OrdinalIgnoreCase);
+        void Show(string title, AutoPlan p)
+        {
+            Console.WriteLine($"-- {title}: opti {p.OptiDll}, reshade {p.ReShadeDll}{(p.ReShadeThroughOpti ? " (through OptiScaler)" : "")}{(p.ReShadeAddon ? " addon" : "")}");
+            foreach (var i in p.Items) Console.WriteLine($"   {i.Id,-8} {i.State,-11} {(i.Selected ? "[x]" : "[ ]")} {i.Why}");
+            foreach (var r in p.Resolved) Console.WriteLine($"   resolved: {r}");
+        }
+        var renodx = new AutoCandidate("Some Game", true, true);
+        var luma = new AutoCandidate("Luma-Some Game", true, true);
+
+        // A plain DX12 game on AMD, no HDR: OptiScaler only, as dxgi.dll, spoofing on; ReShade offered, not ticked.
+        var p1 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], RenoDx = renodx, Luma = luma });
+        Show("DX12, AMD, SDR", p1);
+        Check(p1["opti"]!.Acts && p1.OptiDll == "dxgi.dll" && p1.Spoofing, "SDR: OptiScaler as dxgi.dll, spoofing on");
+        Check(!p1["reshade"]!.Selected && !p1["renodx"]!.Selected && !p1["luma"]!.Selected, "SDR: no ReShade, no HDR mod");
+
+        // HDR on: RenoDX ticked, ReShade forced with full add-on support and loaded by OptiScaler; Luma left out.
+        var p2 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11", "DX12"], Hdr = true, RenoDx = renodx, Luma = luma });
+        Show("DX11/12, HDR", p2);
+        Check(p2["renodx"]!.Acts && !p2["luma"]!.Selected, "HDR: RenoDX, not Luma");
+        Check(p2["reshade"]!.Acts && p2["reshade"]!.Locked && p2.ReShadeAddon && p2.ReShadeThroughOpti && p2.ReShadeDll == "ReShade64.dll", "HDR: ReShade add-on build as ReShade64.dll through OptiScaler");
+        // ReShade's build (2.0.0-rc.13): RenoDX forces the add-on build even when standard is picked; alone it follows the pick.
+        var p2s = AutoSetup.Plan(new AutoFacts { Apis = ["DX11", "DX12"], Hdr = true, RenoDx = renodx, Luma = luma }, new AutoChoice { ReShadeAddon = false });
+        Check(p2s.ReShadeAddon && p2s.ReShadeAddonNeeded, "RenoDX keeps the add-on build when standard is picked");
+        var pStd = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"] }, new AutoChoice { ReShade = true });
+        var pAdd = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"] }, new AutoChoice { ReShade = true, ReShadeAddon = true });
+        Check(pStd["reshade"]!.Acts && !pStd.ReShadeAddon && pAdd.ReShadeAddon && !pAdd.ReShadeAddonNeeded, "ReShade alone: standard by default, add-on when picked");
+
+        // Luma picked by hand: RenoDX goes out, ReShade is covered by Luma.
+        var p3 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Hdr = true, RenoDx = renodx, Luma = luma }, new AutoChoice { Luma = true, RenoDx = false });
+        Show("Luma by hand", p3);
+        Check(p3["luma"]!.Acts && !p3["renodx"]!.Selected && p3["reshade"]!.State == AutoState.Covered, "Luma: RenoDX out, ReShade covered");
+
+        // Generic mods (2.0.0-rc.18): offered, never ticked by themselves even with HDR on, and their row says so.
+        var genericReno = new AutoCandidate("Unreal Engine Extended", true, true, "Unreal");
+        var genericLuma = new AutoCandidate("Unreal Engine (generic)", true, true, "Unreal");
+        var pg = AutoSetup.Plan(new AutoFacts { Apis = ["DX11", "DX12"], Hdr = true, RenoDx = genericReno, Luma = genericLuma });
+        Show("generic RenoDX and Luma, HDR", pg);
+        Check(pg["renodx"]!.State == AutoState.Install && !pg["renodx"]!.Selected && !pg["renodx"]!.Recommended
+            && !pg["luma"]!.Selected && !pg["luma"]!.Recommended, "generic mods offered, not ticked");
+        Check(pg["renodx"]!.Why.StartsWith("Generic mod for Unreal Engine games") && pg["luma"]!.Why.StartsWith("Generic mod for Unreal Engine games"), "generic mods flagged in their rows");
+        Check(!p2["luma"]!.Why.Contains("An HDR mod") && p2["renodx"]!.Why.StartsWith("Mainly an HDR mod"), "Luma not described as an HDR mod; RenoDX as mainly HDR");
+        var pgPicked = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Hdr = true, RenoDx = genericReno }, new AutoChoice { RenoDx = true });
+        Check(pgPicked["renodx"]!.Acts, "a generic mod goes in when ticked by hand");
+
+        // The wiki says winmm.dll and no spoofing; dxgi.dll holds ReShade already: OptiScaler as winmm.dll, ReShade stays.
+        var rsDxgi = new DetectedReShade(@"C:\g\dxgi.dll", "6.3.0");
+        var p4 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], WikiFilename = "winmm.dll", WikiSpoofing = false, ReShade = rsDxgi, Files = F(("dxgi.dll", "reshade")) });
+        Show("wiki winmm, ReShade dxgi", p4);
+        Check(p4.OptiDll == "winmm.dll" && !p4.Spoofing && p4.MoveReShadeFirst is null, "wiki name and no spoofing kept, ReShade left alone");
+
+        // No wiki name, ReShade on dxgi.dll: OptiScaler takes dxgi.dll and ReShade moves to ReShade64.dll first.
+        var p5 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], ReShade = rsDxgi, Files = F(("dxgi.dll", "reshade")) });
+        Show("ReShade dxgi", p5);
+        Check(p5.OptiDll == "dxgi.dll" && p5.MoveReShadeFirst == "dxgi.dll", "ReShade moved out of OptiScaler's way");
+
+        // An unknown dxgi.dll and the wiki's name taken: the next free name.
+        var p6 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], WikiFilename = "winmm.dll", Files = F(("dxgi.dll", "other"), ("winmm.dll", "other")) });
+        Show("names taken", p6);
+        Check(p6.OptiDll == "version.dll" && p6.Resolved.Count > 0, "OptiScaler as version.dll, said why");
+
+        // 32-bit DX9: no OptiScaler; ReShade as d3d9.dll when ticked.
+        var p7 = AutoSetup.Plan(new AutoFacts { Is64 = false, Apis = ["DX9"] }, new AutoChoice { ReShade = true });
+        Show("32-bit DX9", p7);
+        Check(p7["opti"]!.State == AutoState.NotPossible && p7["reshade"]!.Acts && p7.ReShadeDll == "d3d9.dll", "DX9: ReShade as d3d9.dll, no OptiScaler");
+
+        // Vulkan only: OptiScaler as winmm.dll, ReShade not possible here.
+        var p8 = AutoSetup.Plan(new AutoFacts { Apis = ["Vulkan"] });
+        Show("Vulkan", p8);
+        Check(p8.OptiDll == "winmm.dll" && p8["reshade"]!.State == AutoState.NotPossible, "Vulkan: winmm.dll, no ReShade");
+
+        // DXVK in (2.0.0-rc.16: the others are still offered, the user decides): OptiScaler under a name the layer does not hold.
+        var p9 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Hdr = true, Layer = true, RenoDx = renodx, Files = F(("dxgi.dll", "layer"), ("d3d11.dll", "layer")) });
+        Show("DXVK", p9);
+        Check(p9["opti"]!.State == AutoState.Install && p9.OptiDll != "dxgi.dll" && p9.OptiDll != "d3d11.dll", "DXVK in: OptiScaler still offered, not as dxgi.dll or d3d11.dll");
+
+        // Normal ReShade build already in, RenoDX ticked: ReShade replaced with the add-on build.
+        var p10 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Hdr = true, OptiFile = "dxgi.dll", RenoDx = renodx,
+            ReShade = new DetectedReShade(@"C:\g\ReShade64.dll", "6.3.0"), ReShadeLimited = true, Files = F(("dxgi.dll", "opti")) });
+        Show("limited ReShade", p10);
+        Check(p10["reshade"]!.State == AutoState.Update && p10["reshade"]!.Acts && p10.ReShadeThroughOpti, "normal build replaced for RenoDX");
+        Check(AutoSetup.SpoofingFromWiki("Dxgi = false for Intel/AMD as Spoofing is unnecessary") == false, "wiki spoofing text read");
+
+        // DLSS 5, F5 on an RTX card: OptiScaler is needed and fixed to janblade's F5 build; the official channels are not offered.
+        var p11 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], Nvidia = true, Dlss5Tier = Dlss5Gpu.NvidiaRtx }, new AutoChoice { Dlss5 = AutoSetup.F5 });
+        Show("DLSS 5 F5", p11);
+        Check(p11["dlss5"]!.Acts && p11["opti"]!.Acts && p11["opti"]!.Locked && p11.OptiSource == AutoSetup.F5Source, "F5: OptiScaler locked to the F5 build");
+        Check(!p11.AllowsSource(AutoSetup.Stable) && p11.AllowsSource("custom:my build"), "F5: stable refused, an imported build allowed");
+        // The F5 way with an official OptiScaler in: it is replaced.
+        var p12 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], Nvidia = true, Dlss5Tier = Dlss5Gpu.NvidiaRtx, OptiFile = "dxgi.dll", Files = F(("dxgi.dll", "opti")) }, new AutoChoice { Dlss5 = AutoSetup.F5 });
+        Show("F5 over an official build", p12);
+        Check(p12["opti"]!.State == AutoState.Update && p12["opti"]!.Locked && p12.OptiDll == "dxgi.dll", "F5: the official build in is replaced, same name");
+        // DLSSNR-AMD on RDNA 4: the nightly first, NR forks refused; a hand-picked F5 source is overridden and said.
+        var p13 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], Dlss5Tier = Dlss5Gpu.AmdRdna4 }, new AutoChoice { Dlss5 = AutoSetup.Amd, OptiSource = AutoSetup.F5Source });
+        Show("DLSSNR-AMD", p13);
+        Check(p13.OptiSource == AutoSetup.Nightly && !p13.AllowsSource(AutoSetup.F5Source) && p13.Resolved.Count > 0, "DLSSNR-AMD: nightly, not the F5 build, said why");
+        // DLSSNR-AMD with a DLSS NR build in: replaced by an official one.
+        var p14 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], Dlss5Tier = Dlss5Gpu.AmdRdna4, OptiFile = "dxgi.dll", OptiIsDlssNr = true, OptiSourceNow = AutoSetup.F5Source, Files = F(("dxgi.dll", "opti")) },
+            new AutoChoice { Dlss5 = AutoSetup.Amd });
+        Show("DLSSNR-AMD over F5", p14);
+        Check(p14["opti"]!.State == AutoState.Update && p14.OptiSource == AutoSetup.Nightly, "DLSSNR-AMD: the NR build in is replaced by the nightly");
+        // DLSSNR-AMD's ReShade way: no OptiScaler, ReShade comes with it, the HDR mods stay out.
+        var p15 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Hdr = true, Dlss5Tier = Dlss5Gpu.AmdRdna3, RenoDx = renodx, Luma = luma }, new AutoChoice { Dlss5 = AutoSetup.AmdReShade });
+        Show("DLSSNR-AMD through ReShade", p15);
+        Check(!p15["opti"]!.Selected && p15["reshade"]!.State == AutoState.Covered && !p15["renodx"]!.Selected && !p15["luma"]!.Selected, "ReShade way: no OptiScaler, ReShade covered, no HDR mod");
+        // A card that cannot run DLSSNR-AMD is not offered it.
+        var p16 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], Dlss5Tier = Dlss5Gpu.Intel }, new AutoChoice { Dlss5 = AutoSetup.Amd });
+        Check(p16.Dlss5 == AutoSetup.Off && !AutoSetup.Dlss5Ways(Dlss5Gpu.Intel).Contains(AutoSetup.Amd), "Intel: DLSSNR-AMD not offered");
+        // A source picked by hand without DLSS 5 is kept.
+        var p17 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"] }, new AutoChoice { OptiSource = "fork:LorenzoKy/Optiscaler-Venom" });
+        Check(p17.OptiSource == "fork:LorenzoKy/Optiscaler-Venom" && p17.Resolved.Count == 0, "a fork picked by hand is kept");
+        // Ultra+ ticked: OptiScaler never takes a name UE4SS loads through (the wiki's winmm.dll is skipped).
+        var p18 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], UltraFits = true, WikiFilename = "winmm.dll" }, new AutoChoice { Ultra = true });
+        Show("Ultra+", p18);
+        Check(p18["ultra"]!.Acts && p18.OptiDll == "dxgi.dll", "Ultra+: OptiScaler as dxgi.dll, not winmm.dll");
+        // OptiScaler already winmm.dll and Ultra+ ticked: renamed in place first.
+        var p19 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], UltraFits = true, OptiFile = "winmm.dll", Files = F(("winmm.dll", "opti")) }, new AutoChoice { Ultra = true });
+        Check(p19.OptiRename == "dxgi.dll" && p19.Resolved.Count > 0, "Ultra+: OptiScaler renamed from winmm.dll to dxgi.dll");
+        // DXVK ticked with OptiScaler: both go in, OptiScaler under a name DXVK does not use.
+        var p20 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"] }, new AutoChoice { Dxvk = true, Opti = true });
+        Show("DXVK ticked", p20);
+        Check(p20["dxvk"]!.Acts && p20["opti"]!.Acts && p20.OptiDll is not ("dxgi.dll" or "d3d11.dll"), "DXVK ticked with OptiScaler: both in, OptiScaler as " + p20.OptiDll);
+        // A ReShade in, ticked: put in again with the version picked, under its own name.
+        var p21 = AutoSetup.Plan(new AutoFacts { Apis = ["DX11"], Is64 = false, ReShade = new DetectedReShade(@"C:\g\d3d11.dll", "6.1.0"), Files = F(("d3d11.dll", "reshade")) }, new AutoChoice { ReShade = true });
+        Check(p21["reshade"]!.State == AutoState.Update && p21.ReShadeDll == "d3d11.dll", "ReShade in: replaced under its own name");
+        // OptiScaler in, ticked: put in again from the source it came from.
+        var p22 = AutoSetup.Plan(new AutoFacts { Apis = ["DX12"], OptiFile = "version.dll", OptiSourceNow = AutoSetup.Nightly, Files = F(("version.dll", "opti")) }, new AutoChoice { Opti = true });
+        Check(p22["opti"]!.State == AutoState.Update && p22.OptiSource == AutoSetup.Nightly && p22.OptiDll == "version.dll", "OptiScaler in: replaced from its own source, same name");
+
+        // Direct install: the add-on build's ReShade64.dll out of the installer, ReShade.ini, standard effects.
+        var dir = Path.Combine(Path.GetTempPath(), "hl-auto-test");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "ReShade32.dll"), "not reshade");
+        var version = await ReShade.InstallDirectAsync(dir, "ReShade64.dll", addon: true, is64: true, null, CancellationToken.None);
+        var placed = Path.Combine(dir, "ReShade64.dll");
+        Check(File.Exists(placed) && ReShade.IsReShade(placed), $"ReShade {version} put in as ReShade64.dll");
+        Check(!ModCheck.LimitedAddons(placed), "the build with full add-on support");
+        Check(File.ReadAllText(Path.Combine(dir, "ReShade.ini")).Contains("PerformanceMode=1"), "recommended ReShade.ini written");
+        Check(Directory.GetFiles(Path.Combine(dir, "reshade-shaders", "Shaders"), "*.fx*", SearchOption.AllDirectories).Length > 5, "standard effects in reshade-shaders");
+        Check(File.Exists(Path.Combine(dir, "ReShade32.dll")), "a file that is not ReShade left alone");
+        File.WriteAllText(Path.Combine(dir, "ReShade.ini"), "[GENERAL]\nmine=1\n");
+        await ReShade.InstallDirectAsync(dir, "dxgi.dll", addon: false, is64: true, null, CancellationToken.None);
+        Check(File.Exists(Path.Combine(dir, "dxgi.dll")) && !File.Exists(placed), "moved to dxgi.dll: one ReShade per folder");
+        Check(ModCheck.LimitedAddons(Path.Combine(dir, "dxgi.dll")), "the normal build this time");
+        Check(File.ReadAllText(Path.Combine(dir, "ReShade.ini")).Contains("mine=1"), "the user's own ReShade.ini kept");
+        Directory.Delete(dir, true);
+        break;
+    }
+    case "dllswap":
+    {
+        // A real OptiScaler.dll from an archive Hybrid Launcher saved, in a fake game as dxgi.dll over the game's own dxgi.dll.
+        var archive = Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HybridLauncher", "cache", "downloads"))
+            ? Directory.GetFiles(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HybridLauncher", "cache", "downloads"), "OptiScaler*.7z", SearchOption.AllDirectories).FirstOrDefault()
+            : null;
+        if (archive is null) { Console.WriteLine("    (no saved OptiScaler archive: nothing to try)"); break; }
+        var root = Path.Combine(Path.GetTempPath(), "hl-dllswap-test");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        var unpacked = Path.Combine(root, "unpacked");
+        await ArchiveExtractor.ExtractAsync(archive, unpacked, CancellationToken.None);
+        var opti = Directory.GetFiles(unpacked, "OptiScaler.dll", SearchOption.AllDirectories)[0];
+        var game = Directory.CreateDirectory(Path.Combine(root, "game")).FullName;
+        var backups = Directory.CreateDirectory(Path.Combine(root, "backups")).FullName;
+        File.WriteAllText(Path.Combine(backups, "dxgi.dll"), "the game's own dxgi");
+        File.Copy(opti, Path.Combine(game, "dxgi.dll"));
+        File.WriteAllText(Path.Combine(game, "OptiScaler.ini"), "[Plugins]\n");
+        File.WriteAllText(Path.Combine(game, "version.dll"), "someone else's version.dll");
+        var m = new InstallManifest { TargetDir = game, DllName = "dxgi.dll", Tag = "test" };
+        m.Files["dxgi.dll"] = OptiInstaller.Hash(Path.Combine(game, "dxgi.dll"));
+        m.Files["OptiScaler.ini"] = "x";
+        m.Backups["dxgi.dll"] = Path.Combine(backups, "dxgi.dll");
+
+        Check(OptiDllSwap.WhyNot(m, "version.dll") is { } taken && taken.Contains("taken"), $"a name another file holds is refused: {OptiDllSwap.WhyNot(m, "version.dll")}");
+        Check(!OptiDllSwap.Names.Any(n => n.EndsWith(".asi")), "OptiScaler.asi is not offered for a quick swap");
+        OptiDllSwap.Swap(m, "winmm.dll");
+        Check(OptiDetector.IsOptiScaler(Path.Combine(game, "winmm.dll")) && OptiDetector.Detect(game)?.FileName == "winmm.dll", "OptiScaler is winmm.dll now");
+        Check(File.ReadAllText(Path.Combine(game, "dxgi.dll")) == "the game's own dxgi" && !m.Backups.ContainsKey("dxgi.dll"), "the game's own dxgi.dll is back");
+        Check(m.DllName == "winmm.dll" && m.Files.ContainsKey("winmm.dll") && !m.Files.ContainsKey("dxgi.dll") && !OptiDetector.ReplacedSince(m), "the record follows: name, files, hash");
+        Check(ModCheck.Run(new GameSettings { Install = m }, game).Count == 0, "the mod check sees nothing wrong");
+        string? refused = null;
+        try { OptiDllSwap.Swap(m, "dxgi.dll"); } catch (InvalidOperationException ex) { refused = ex.Message; }
+        Check(refused is not null && File.Exists(Path.Combine(game, "winmm.dll")), $"back to dxgi.dll is refused while the game's own is there: {refused}");
+        File.Delete(Path.Combine(game, "dxgi.dll"));
+        OptiDllSwap.Swap(m, "dxgi.dll");
+        Check(m.DllName == "dxgi.dll" && OptiDetector.Detect(game)?.FileName == "dxgi.dll" && !File.Exists(Path.Combine(game, "winmm.dll")), "and once it is free, swapped back");
+
+        // The user's case (rc.18): the install's "backup" of dxgi.dll was an older OptiScaler it had replaced. The swap must not
+        // put it back, and a stray OptiScaler under another name is taken out.
+        File.Copy(opti, Path.Combine(backups, "old-opti.dll"));
+        m.Backups["dxgi.dll"] = Path.Combine(backups, "old-opti.dll");
+        m.BackupRoot = Path.Combine(root, "backup-root");
+        OptiDllSwap.Swap(m, "winmm.dll");
+        Check(!File.Exists(Path.Combine(game, "dxgi.dll")) && !m.Backups.ContainsKey("dxgi.dll"), "an older OptiScaler backed up as dxgi.dll is not put back");
+        File.Copy(opti, Path.Combine(game, "d3d12.dll"));
+        File.Copy(opti, Path.Combine(game, "dxgi.dll"));
+        var removed = OptiDllSwap.RemoveOtherCopies(m);
+        Check(removed.Count == 2 && !File.Exists(Path.Combine(game, "d3d12.dll")) && !File.Exists(Path.Combine(game, "dxgi.dll"))
+            && File.Exists(Path.Combine(game, "winmm.dll")) && File.Exists(Path.Combine(game, "version.dll")), $"other OptiScaler copies taken out, everything else kept: {string.Join(", ", removed)}");
         Directory.Delete(root, true);
         break;
     }
@@ -1399,6 +2030,18 @@ switch (cmd)
         File.WriteAllText(Path.Combine(dir, "dxgi.dll"), "not optiscaler - pretend this is ReShade");
         File.WriteAllText(Path.Combine(dir, "nvngx.dll"), "pre-0.9 leftover");
         if (dlssnr) File.WriteAllText(Path.Combine(dir, DlssNr.FileName), "the user's own older model file");
+        // useropti (2.0.0-rc.17): an OptiScaler the user put in by hand, as dxgi.dll and a second copy as winmm.dll. Uninstalling
+        // Hybrid Launcher's must bring both back (it deleted the user's dxgi.dll before).
+        if (args.Contains("useropti"))
+        {
+            var stable = (await OptiReleases.GetAsync(OptiChannel.Stable))[0];
+            var own = Path.Combine(Path.GetTempPath(), "hl-useropti-src");
+            ArchiveExtractor.ResetDir(own);
+            await ArchiveExtractor.ExtractAsync(await OptiReleases.DownloadAsync(stable, null, CancellationToken.None), own, CancellationToken.None);
+            var ownDll = Directory.GetFiles(own, "OptiScaler.dll", SearchOption.AllDirectories)[0];
+            File.Copy(ownDll, Path.Combine(dir, "dxgi.dll"), true);
+            File.Copy(ownDll, Path.Combine(dir, "winmm.dll"), true);
+        }
         var before = Snapshot(dir);
         var nrFile = Path.Combine(Path.GetTempPath(), "hl-fake-" + DlssNr.FileName);
         if (dlssnr) File.WriteAllText(nrFile, "stand-in for NVIDIA's DLSS NR runtime");
@@ -1487,6 +2130,29 @@ switch (cmd)
         m = System.Text.Json.JsonSerializer.Deserialize(json, HybridJson.Default.InstallManifest)!;
         m.Files = new(m.Files, StringComparer.OrdinalIgnoreCase);
 
+        // update (2.0.0-rc.18): the same build put in again over the first install (Previous set), as Update does. The user's own
+        // OptiScaler, put back by the update's uninstall and backed up again, must still be the user's afterwards.
+        if (args.Contains("update"))
+        {
+            m = await OptiInstaller.InstallAsync(new InstallRequest
+            {
+                GameId = "test:fake",
+                TargetDir = dir,
+                Release = release,
+                Options = options,
+                Previous = m,
+                IniOverrides = new Dictionary<string, string> { ["Upscalers/Dx12Upscaler"] = "fsr31" },
+                AsiPlugins = ["TestPlugin.asi"],
+                DlssNrDll = dlssnr ? nrFile : null,
+            }, progress, CancellationToken.None);
+            await Task.Delay(300);
+            Check(OptiDetector.IsOptiScaler(Path.Combine(dir, "dxgi.dll")), "update: dxgi.dll is OptiScaler");
+            if (args.Contains("useropti")) Check(m.UserOptiBackups.Count > 0, "update: the user's own OptiScaler still recorded as theirs");
+            json = System.Text.Json.JsonSerializer.Serialize(m, HybridJson.Default.InstallManifest);
+            m = System.Text.Json.JsonSerializer.Deserialize(json, HybridJson.Default.InstallManifest)!;
+            m.Files = new(m.Files, StringComparer.OrdinalIgnoreCase);
+        }
+
         File.WriteAllText(Path.Combine(dir, "OptiScaler.log"), "runtime log");
         var warnings = OptiInstaller.Uninstall(m);
         foreach (var w in warnings) Console.WriteLine($"  warning: {w}");
@@ -1508,6 +2174,32 @@ static string? BatDriver_Decide(string text, OptiSetupOptions o, bool expectUnkn
     var r = (string?)m.Invoke(null, a);
     if (expectUnknown && !(bool)a[2]!) return "not-unknown";
     return r;
+}
+
+// A ReShade dll for the tests, taken from the installers Hybrid Launcher saved (the normal one or the one with full add-on support).
+static string? ReShadeSample(bool addonBuild = true)
+{
+    try
+    {
+        var saved = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HybridLauncher", "ReShade");
+        var installer = Directory.Exists(saved) ? Directory.GetFiles(saved, "ReShade_Setup_*.exe").Where(f => f.EndsWith("_Addon.exe", StringComparison.OrdinalIgnoreCase) == addonBuild).OrderDescending().FirstOrDefault() : null;
+        if (installer is null) return null;
+        var outDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "hl-reshade-sample", addonBuild ? "addon" : "normal")).FullName;
+        var dll = Path.Combine(outDir, "ReShade64.dll");
+        if (!File.Exists(dll))
+        {
+            // The installer is an exe with the zip appended: where the zip starts is where its central directory says it is,
+            // less the central directory's own offset (the end record holds both).
+            var bytes = File.ReadAllBytes(installer);
+            int end = bytes.AsSpan().LastIndexOf("PK"u8);
+            uint cdSize = BitConverter.ToUInt32(bytes, end + 12), cdOffset = BitConverter.ToUInt32(bytes, end + 16);
+            int start = (int)(end - cdSize - cdOffset);
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes, start, bytes.Length - start));
+            System.IO.Compression.ZipFileExtensions.ExtractToFile(zip.GetEntry("ReShade64.dll")!, dll, true);
+        }
+        return dll;
+    }
+    catch (Exception ex) { Console.WriteLine($"    (ReShade sample: {ex.Message})"); return null; }
 }
 
 static Dictionary<string, string> Snapshot(string dir) =>

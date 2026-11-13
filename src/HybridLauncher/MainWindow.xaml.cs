@@ -1,4 +1,4 @@
-using HybridLauncher.Core;
+﻿using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Detection;
 using HybridLauncher.Core.Net;
@@ -22,7 +22,14 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Room for every main page and a page per recent game (MainWindow.GameSlots): none is dropped and built again.
+        ContentFrame.CacheSize = 24;
         Loc.Apply(RootGrid);
+        // Interface size (GitHub issue #7) and hidden scroll bars (#8), Settings → Appearance.
+        Helpers.UiScale.Attach(this, RootGrid, AppState.Settings.InterfaceSize);
+        Helpers.ScrollBars.UpdateStyles();
+        RootGrid.Loaded += (_, _) => { if (Helpers.ScrollBars.Hidden) Helpers.ScrollBars.Apply(RootGrid); };
+        RootGrid.SizeChanged += (_, e) => Helpers.ScrollBars.FitToWindow(e.NewSize.Width * Helpers.UiScale.Factor);
         Title = AppInfo.Name;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -41,6 +48,9 @@ public sealed partial class MainWindow : Window
         CaptionButtons.SizeChanged += (_, _) => UpdateTitleBarRegions();
         StartGamepad();
         StartHomeButton();
+        // A game in front keeps the focus: a Hybrid Launcher window that takes it by itself gives it back (and the log says which).
+        Helpers.FocusGuard.Start();
+        Closed += (_, _) => Helpers.FocusGuard.Stop();
         GuardSearchFocus();
         Helpers.GameUpdater.Start(DispatcherQueue);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
@@ -56,19 +66,29 @@ public sealed partial class MainWindow : Window
         var st = AppState.Settings;
         if (st.WindowWidth is > 400 and var ww && st.WindowHeight is > 300 and var wh) AppWindow.Resize(new SizeInt32(ww, wh));
         CenterOnScreen();
-        if (st.WindowMaximized && AppWindow.Presenter is OverlappedPresenter op) op.Maximize();
+        // Maximized again only when the window is first shown: Maximize() on a window not shown yet shows it, which opened the
+        // window at sign-in although Hybrid Launcher was set to start in the notification area.
+        _maximizeOnShow = st.WindowMaximized;
 
         ApplyTheme(AppState.Settings.Theme);
         RootGrid.ActualThemeChanged += (_, _) => { UpdateCaptionButtons(); UpdateTint(); };
+        RootGrid.SizeChanged += (_, _) => QueueBackdropRepaint();
         Http.GitHubLimitReached += OfferGitHubSignIn;
 
         // The built-in item follows the Windows language; keep the UI in one language.
-        Nav.Loaded += (_, _) => { if (Nav.SettingsItem is NavigationViewItem s) s.Content = L.T("Settings"); };
+        Nav.Loaded += (_, _) =>
+        {
+            if (Nav.SettingsItem is NavigationViewItem s) { s.Content = L.T("Settings"); PaneTip(s, null); }
+            // The footer's items say what they are beside their icon: no tip of their own, and none from NavigationView
+            // over the page while the list is folded.
+            PaneTip(FriendsItem, null);
+            PaneTip(AddGameItem, null);
+        };
 
         // In the narrow (minimal) mode the menu button floats over the content: leave it room.
         Nav.DisplayModeChanged += (_, e) =>
         {
-            ContentFrame.Margin = e.DisplayMode == NavigationViewDisplayMode.Minimal ? new Thickness(0, 40, 0, 0) : new Thickness(0);
+            PageHost.Margin = e.DisplayMode == NavigationViewDisplayMode.Minimal ? new Thickness(0, 40, 0, 0) : new Thickness(0);
             // On narrow windows the pane floats over the page: then only the stock menu button can bring it back.
             Nav.IsPaneToggleButtonVisible = e.DisplayMode == NavigationViewDisplayMode.Minimal;
             UpdatePaneButton();
@@ -97,6 +117,26 @@ public sealed partial class MainWindow : Window
             new Microsoft.UI.Xaml.Media.Animation.NavigationThemeTransition { DefaultNavigationTransitionInfo = new Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo() },
         };
         ContentFrame.Navigated += (_, e) => { if (e.Content is UIElement page) FadeInPage(page); };
+        // From the first page on, the games likely to be opened next get their pages made in the quiet moments (GameSlots).
+        ContentFrame.Navigated += (_, _) => StartPreparingPages();
+        // The frame clock stays awake while the mouse is in use over the window: a wheel answers at the next refresh.
+        var warmthHost = new Border { Width = 1, Height = 1, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        RootGrid.Children.Add(warmthHost);
+        Helpers.FrameWarmth.Attach(RootGrid, warmthHost);
+        Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) Helpers.FrameWarmth.WindowActivated(); };
+        // Stalls of the UI thread and slow clicks go to the log (Helpers.UiPerf; every click with HL_PERF=1 or the self-test).
+        Helpers.UiPerf.Attach(DispatcherQueue, RootGrid, () => Shown is GamePage { GameId: { } gid } ? "game page " + (AppState.Find(gid)?.Name ?? gid) : Shown?.GetType().Name ?? "no page");
+        // The game list beside the pages glides on the mouse wheel too (its scroller is a part of the NavigationView's template).
+        Nav.Loaded += (_, _) =>
+        {
+            var queue = new Queue<DependencyObject>([Nav]);
+            while (queue.Count > 0)
+            {
+                var d = queue.Dequeue();
+                if (d is ScrollViewer { Name: "MenuItemsScrollViewer" } menu) { Helpers.SmoothWheel.Attach(menu); break; }
+                for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(d); i++) queue.Enqueue(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(d, i));
+            }
+        };
         // The game list's width: the saved one, changed by dragging its edge.
         PaneGrip.Relative = Nav;
         PaneGrip.Dragged += x => SetPaneWidth(x);
@@ -109,7 +149,7 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                if (ContentFrame.Content is not LibraryPage) ContentFrame.Navigate(typeof(LibraryPage), _filter);
+                if (Shown is not LibraryPage) ContentFrame.Navigate(typeof(LibraryPage), _filter);
                 SyncSelection();
             }
             catch (Exception ex) { ShowError(L.T("Could not open the library"), ex.Message, ex); }
@@ -117,6 +157,12 @@ public sealed partial class MainWindow : Window
         Nav.Loaded += (_, _) => UpdateTitleBrand();
         // The page reads its game in OnNavigatedTo, after this event: look once it has.
         ContentFrame.Navigated += (_, _) => DispatcherQueue.TryEnqueue(UpdatePageTitle);
+        // Lists inside a new page take the scroll bar setting once they are on screen (their templates are built by then).
+        ContentFrame.Navigated += (_, e) =>
+        {
+            if (Helpers.ScrollBars.Hidden && e.Content is FrameworkElement page)
+                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => Helpers.ScrollBars.Apply(page));
+        };
         AppTitleBar.SizeChanged += (_, _) => UpdateTitleBarRegions();
         PageTitle.SizeChanged += (_, _) => UpdateTitleBarRegions();
         // Mouse back / forward buttons (and Alt+Left / Alt+Right) walk the page history, like a browser.
@@ -156,6 +202,7 @@ public sealed partial class MainWindow : Window
             AchievementWatcher.Stop();
             AchievementPopup.CloseAll();
             SettingsStore.Save();
+            SettingsStore.Flush();
             _tray?.Dispose();
             _tray = null;
             App.ExitForSure();
@@ -164,10 +211,12 @@ public sealed partial class MainWindow : Window
         GameSessions.Changed += _ => UpdateTrayTip();
         GameSessions.Changed += MarkRunning;
         GameSessions.Changed += HideWhilePlaying;
+        GameSessions.Changed += id => { if (GameSessions.State(id) == GameRunState.Stopped) DispatcherQueue.TryEnqueue(Helpers.TaskbarJumpList.Update); };
         if (AppState.Settings.CloseToTray) EnsureTray();
         ShowLoading();
         _ = StartAsync();
         AchievementWatcher.Start(DispatcherQueue);
+        UnlockExtras.Start();
     }
 
     // ---------- start, notification area ----------
@@ -178,6 +227,7 @@ public sealed partial class MainWindow : Window
     // The window went to the notification area by itself for a game (Settings → General): it comes back when the last game closes,
     // unless the user opened it meanwhile.
     bool _hiddenForGame;
+    DateTime _hiddenForGameAt;
 
     /// <summary>
     /// A game started from Hybrid Launcher is up (its process found, not just asked to start): the window steps aside to the
@@ -190,18 +240,86 @@ public sealed partial class MainWindow : Window
             if (_closed || _quitting) return;
             if (GameSessions.State(id) == GameRunState.Running && GameSessions.WasLaunched(id))
             {
+                // The window's real state, not only the flag: a window shown some other way while the flag said hidden was left
+                // on screen over the game.
+                if (AppWindow.IsVisible) _hidden = _hiddenForGame = false;
                 if (!AppState.Settings.HideWhilePlaying || _hidden || _hiddenForGame) return;
                 Log.Info($"Window to the notification area while {id} runs");
                 HideToTray();
                 _hiddenForGame = true;
+                _hiddenForGameAt = DateTime.UtcNow;
             }
             else if (_hiddenForGame && GameSessions.Active().Count == 0)
             {
-                Log.Info("Every game closed: window back from the notification area");
-                ShowFromTray();
+                // A game gone within seconds of starting has often only restarted itself (a launcher exe, Steam's wrapper,
+                // anti-cheat): the window waits a little, so it does not flash back between the two. Those restarts come in the
+                // first seconds; a game played longer brings the window back at once (1.4.0-rc.20: was 60 s then 20 s, and
+                // the window looked as if it never came back).
+                if (DateTime.UtcNow - _hiddenForGameAt < TimeSpan.FromSeconds(12))
+                {
+                    var at = _hiddenForGameAt;
+                    Log.Info("The game closed soon after starting: window back in 8 s unless it starts again");
+                    Later.Run(DispatcherQueue, TimeSpan.FromSeconds(8), () =>
+                    {
+                        if (_closed || _quitting) return;
+                        if (!_hiddenForGame || at != _hiddenForGameAt) { Log.Info("Window back after the game: already brought back or hidden again"); return; }
+                        if (GameSessions.Active() is { Count: > 0 } active) { Log.Info($"Window back after the game: still waiting, {string.Join(", ", active)} running"); return; }
+                        BackFromGame("The game closed soon after starting and did not come back");
+                    });
+                    return;
+                }
+                BackFromGame("Every game closed");
             }
         }
         catch (Exception ex) { Log.Warn($"Hide while playing: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// The window back from the notification area after the last game closed, in front unless another app is (2.0: the focus
+    /// guard, which hands the foreground back to a game the window takes it from without input, gave it back to the closing
+    /// game's last window or to Steam, and the window stayed behind). Checked again a moment later and brought forward once more
+    /// if something took the front meanwhile.
+    /// </summary>
+    void BackFromGame(string why)
+    {
+        bool activate = NothingElseInFront();
+        Log.Info($"{why}: window back from the notification area{(activate ? ", in front" : ", behind the app in front")}");
+        if (activate) Helpers.FocusGuard.Allow(4000);
+        ShowFromTray(activate);
+        if (!activate) return;
+        Later.Run(DispatcherQueue, TimeSpan.FromMilliseconds(1200), () =>
+        {
+            if (_closed || _quitting || _hidden || GameSessions.Active().Count > 0) return;
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (GetForegroundWindow() == hwnd || !NothingElseInFront()) return;
+            Log.Info("Window back after the game: not in front, brought forward again");
+            Helpers.FocusGuard.Allow(2500);
+            ShowFromTray(activate: true);
+        });
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+
+    /// <summary>
+    /// After a game closed: true when nothing the user is busy with is in front (no window, the desktop or taskbar, a game
+    /// launcher, Hybrid Launcher itself), so the window comes back in front, as a console's home screen does. Another app in
+    /// front (a browser, a chat) keeps it: the window then comes back behind it.
+    /// </summary>
+    static bool NothingElseInFront()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == 0) return true;
+            _ = GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == 0 || pid == Environment.ProcessId) return true;
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            var name = p.ProcessName.ToLowerInvariant();
+            return name is "explorer" or "steam" or "steamwebhelper" or "epicgameslauncher" or "galaxyclient" or "galaxyclient helper"
+                or "ubisoftconnect" or "upc" or "eadesktop" or "launcher" or "xboxpcapp" or "gamebar" or "shellexperiencehost"
+                or "searchhost" or "startmenuexperiencehost" or "lockapp" or "applicationframehost";
+        }
+        catch { return true; }
     }
 
     async Task StartAsync()
@@ -213,6 +331,8 @@ public sealed partial class MainWindow : Window
         HybridLauncher.Core.Accounts.Downloads.Changed += UpdateDownloadsBadge;
         HybridLauncher.Core.Accounts.Downloads.Watch();
         await AppState.RescanAsync();
+        // The taskbar button's right-click list: the games played last, each started through Hybrid Launcher.
+        Helpers.TaskbarJumpList.Update();
         // Every game is watched, however it is started (Steam, a shortcut, its own exe, before Hybrid Launcher opened): the list is a
         // snapshot made here on the UI thread after each scan, so the watcher's thread never touches the settings.
         List<(Game, GameSettings)> watched = [];
@@ -238,6 +358,8 @@ public sealed partial class MainWindow : Window
         // Ultra+: the installed mods with a newer build (a notification when the user asked for one).
         UltraChecksChanged();
         if (SteamAccount.SignedIn) _ = Task.Delay(TimeSpan.FromSeconds(8)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => _ = (_friends ??= new FriendsView()).LoadAsync(quiet: true)), TaskScheduler.Default);
+        // Every game's page data fetched ahead of the click, in the background (Helpers.WarmUp).
+        Helpers.WarmUp.Start(DispatcherQueue);
         // The cache stays within its budget (game pages load from it); in the background, once things have settled.
         _ = Task.Delay(TimeSpan.FromSeconds(20)).ContinueWith(_ => CacheJanitor.RunAsync(), TaskScheduler.Default);
         // HDR Hybrid Launcher turned on for a game that closed while Hybrid Launcher was not running goes back off.
@@ -300,6 +422,23 @@ public sealed partial class MainWindow : Window
         _tray.Update(running.Count == 0 ? AppInfo.Name : $"{AppInfo.Name} · " + L.F("playing {0}", string.Join(", ", running)));
     }
 
+    bool _maximizeOnShow;
+
+    /// <summary>The first time the window shows: maximized again when it was maximized in the last session.</summary>
+    void ApplyMaximizeOnShow()
+    {
+        if (!_maximizeOnShow) return;
+        _maximizeOnShow = false;
+        if (AppWindow.Presenter is OverlappedPresenter op) op.Maximize();
+    }
+
+    /// <summary>A normal start: the window opens (maximized when it was last time).</summary>
+    public void ShowAtStart()
+    {
+        ApplyMaximizeOnShow();
+        Activate();
+    }
+
     /// <summary>Started with Windows: only the icon in the notification area; the window opens from there.</summary>
     public void StartInTray()
     {
@@ -317,7 +456,7 @@ public sealed partial class MainWindow : Window
     {
         _cloudWaitStarted = true;
         Log.Info("Quit: waiting for the saves still going to the cloud");
-        (ContentFrame.Content as GamePage)?.StopMedia();
+        (Shown as GamePage)?.StopMedia();
         AppWindow.Hide();
         _hidden = true;
         await CloudSync.WaitForSendingAsync(TimeSpan.FromMinutes(3));
@@ -330,22 +469,38 @@ public sealed partial class MainWindow : Window
         SettingsStore.Save();
         EnsureTray();
         // A trailer must not keep playing in a window nobody sees.
-        (ContentFrame.Content as GamePage)?.StopMedia();
+        (Shown as GamePage)?.StopMedia();
         AppWindow.Hide();
         _hidden = true;
         MediaPolicy.SetWindowHidden(true);
     }
 
     /// <summary>Brings the window back (tray icon, a second start of Hybrid Launcher).</summary>
-    public void ShowFromTray()
+    public void ShowFromTray() => ShowFromTray(activate: true);
+
+    /// <param name="activate">False when the app brings the window back by itself: it shows behind what is in front (a game in
+    /// full screen keeps the focus) instead of taking the focus.</param>
+    public void ShowFromTray(bool activate)
     {
         _hiddenForGame = false;
         try
         {
+            if (!activate)
+            {
+                if (_hidden)
+                {
+                    AppWindow.Show(false);
+                    _hidden = false;
+                    if (_maximizeOnShow) { _maximizeOnShow = false; if (AppWindow.Presenter is OverlappedPresenter mp) mp.Maximize(); }
+                }
+                MediaPolicy.SetWindowHidden(AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized });
+                return;
+            }
             if (_hidden)
             {
                 AppWindow.Show();
                 _hidden = false;
+                ApplyMaximizeOnShow();
                 // Started in the notification area after an update: the new version's welcome when the window first opens.
                 MaybeShowWhatsNew();
             }
@@ -433,7 +588,7 @@ public sealed partial class MainWindow : Window
         {
             a.Handled = true;
             // On Settings, its own search through every tab.
-            if (ContentFrame.Content is SettingsPage settings) { settings.FocusSearch(); return; }
+            if (Shown is SettingsPage settings) { settings.FocusSearch(); return; }
             if (!Nav.IsPaneOpen) Nav.IsPaneOpen = true;
             _searchWanted = true;
             DispatcherQueue.TryEnqueue(() => { SearchBox.Focus(FocusState.Keyboard); _searchWanted = false; });
@@ -471,7 +626,7 @@ public sealed partial class MainWindow : Window
 
     void AfterHistoryMove()
     {
-        if (ContentFrame.Content is GamePage { GameId: { } id }) AppState.Settings.LastGameId = id;
+        if (Shown is GamePage { GameId: { } id }) AppState.Settings.LastGameId = id;
         SyncSelection();
         UpdatePageTitle();
     }
@@ -537,6 +692,7 @@ public sealed partial class MainWindow : Window
             else Motion.Turn(PaneButtonArrowTurn, angle, 220);
         }
         ToolTipService.SetToolTip(PaneButton, open ? L.T("Hide the game list") : L.T("Show the game list"));
+        UpdatePaneTips(open);
         // On narrow windows the pane floats over the page and the stock menu button closes it: only the search stays.
         PaneButton.Visibility = minimal ? Visibility.Collapsed : Visibility.Visible;
         SearchBox.Visibility = PaneFilterButton.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
@@ -635,7 +791,8 @@ public sealed partial class MainWindow : Window
 
     bool SearchHasFocus()
     {
-        if (Content.XamlRoot is null) return false;
+        // A check queued just before the window closed runs after it: Content then throws (0xC000027B at exit, rc.18 self-test).
+        if (_closed || _quitting || Content?.XamlRoot is null) return false;
         for (var d = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Content.XamlRoot) as DependencyObject; d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
             if (d == SearchBox) return true;
         return false;
@@ -689,7 +846,12 @@ public sealed partial class MainWindow : Window
     /// the focus to the first control of the window: the search box, which then looked clicked. The page takes it back instead.
     /// </summary>
     /// <summary>For a page that rebuilds itself under the focused control (Settings → Cloud saves after one of its buttons).</summary>
-    public void KeepFocusOffSearch() => KeepFocusOffSearch(SearchHasFocus());
+    public void KeepFocusOffSearch()
+    {
+        KeepFocusOffSearch(SearchHasFocus());
+        // Settings has a search box of its own, the first control of its page.
+        if (Shown is SettingsPage settings) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => settings.KeepFocusOffSearch());
+    }
 
     /// <summary>
     /// The user put the focus in the search box (click, touch, Tab, gamepad, Ctrl+F). Only then is a search box with the focus
@@ -710,7 +872,7 @@ public sealed partial class MainWindow : Window
         if (searchHadFocus && _searchByUser) return;
         void Check()
         {
-            if (!SearchHasFocus()) return;
+            if (_closed || _quitting || !SearchHasFocus()) return;
             ContentFrame.IsTabStop = true;
             ContentFrame.Focus(FocusState.Programmatic);
         }
@@ -723,8 +885,24 @@ public sealed partial class MainWindow : Window
     /// Rebuilds the pane: My PC, the library (grid view), the pinned games, then (list view) every other game by store.
     /// The page shown stays the same when it still makes sense; otherwise the last game, the library or the home page.
     /// </summary>
+    /// <summary>The games listed around <paramref name="id"/> in the game list, nearest first (the next one a hand picks).</summary>
+    internal List<string> GamesNear(string id, int count)
+    {
+        var ids = Nav.MenuItems.OfType<NavigationViewItem>().Select(i => i.Tag as string)
+            .Where(t => t is not null && AppState.Find(t) is not null).Select(t => t!).ToList();
+        int at = ids.FindIndex(t => t.Equals(id, StringComparison.OrdinalIgnoreCase));
+        var near = new List<string>();
+        for (int d = 1; near.Count < count && (at - d >= 0 || at + d < ids.Count); d++)
+        {
+            if (at + d < ids.Count) near.Add(ids[at + d]);
+            if (near.Count < count && at - d >= 0) near.Add(ids[at - d]);
+        }
+        return near;
+    }
+
     void RebuildNav()
     {
+        using var __perf = Helpers.UiPerf.Scope("MainWindow.RebuildNav");
         KeepFocusOffSearch(SearchHasFocus());
         _rebuilding = true;
         try
@@ -734,17 +912,17 @@ public sealed partial class MainWindow : Window
             // The PC overview sits on top, above the game list.
             var hardware = new NavigationViewItem { Content = L.T("My PC"), Tag = HardwareTag, Icon = PaneIcon("", 0xFF5AB8FF, 0xFF7C6CFF) };
             BigIcon(hardware);
-            ToolTipService.SetToolTip(hardware, L.T("Your PC: hardware, display settings and the upscalers your card supports"));
+            PaneTip(hardware, L.T("Your PC: hardware, display settings and the upscalers your card supports"));
             Nav.MenuItems.Add(hardware);
 
             // The library (every game as covers, with filters) and the downloads are always there, under My PC.
             var library = new NavigationViewItem { Content = L.T("Library"), Tag = LibraryTag, Icon = PaneIcon("\uE8F1", 0xFFFF6B8A, 0xFFE0142B) };
             BigIcon(library);
-            ToolTipService.SetToolTip(library, L.T("All your games as a grid of covers"));
+            PaneTip(library, L.T("All your games as a grid of covers"));
             Nav.MenuItems.Add(library);
             var downloads = new NavigationViewItem { Content = L.T("Downloads"), Tag = DownloadsTag, Icon = PaneIcon("\uE896", 0xFF5EE0A0, 0xFF1FA3A3) };
             BigIcon(downloads);
-            ToolTipService.SetToolTip(downloads, L.T("Games you own on your launchers: install them and follow the downloads"));
+            PaneTip(downloads, L.T("Games you own on your launchers: install them and follow the downloads"));
             _downloadsItem = downloads;
             UpdateDownloadsBadge();
             Nav.MenuItems.Add(downloads);
@@ -794,7 +972,7 @@ public sealed partial class MainWindow : Window
                     foreach (var g in owned) Nav.MenuItems.Add(items[g.Id] = CreateOwnedItem(g));
             }
 
-            switch (ContentFrame.Content)
+            switch (Shown)
             {
                 case HardwarePage:
                     Nav.SelectedItem = hardware;
@@ -826,7 +1004,7 @@ public sealed partial class MainWindow : Window
                         Nav.SelectedItem = hardware;
                         ContentFrame.Navigate(typeof(HardwarePage));
                     }
-                    else if (ContentFrame.Content is LibraryPage || lastGame is null)
+                    else if (Shown is LibraryPage || lastGame is null)
                     {
                         // Hybrid Launcher opens on the library, like a launcher's home, unless a game was open last time.
                         Nav.SelectedItem = library;
@@ -835,12 +1013,12 @@ public sealed partial class MainWindow : Window
                     else if (lastGame is not null)
                     {
                         Nav.SelectedItem = items.GetValueOrDefault(lastGame.Id);
-                        ContentFrame.Navigate(typeof(GamePage), lastGame.Id);
+                        NavigateGame(lastGame.Id);
                     }
                     else
                     {
                         Nav.SelectedItem = null;
-                        if (ContentFrame.Content is not HomePage) ContentFrame.Navigate(typeof(HomePage));
+                        if (Shown is not HomePage) ContentFrame.Navigate(typeof(HomePage));
                     }
                     break;
             }
@@ -987,7 +1165,7 @@ public sealed partial class MainWindow : Window
                 Library.SetCollapsed(key, !Library.IsCollapsed(key));
                 ApplyFold(key);
                 // The grid's group folds with it when the library is the page shown.
-                (ContentFrame.Content as LibraryPage)?.ApplyFold(key);
+                (Shown as LibraryPage)?.ApplyFold(key);
                 return;
             }
             dragging = false;
@@ -1037,16 +1215,24 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { Log.Warn($"Shortcut after install: {ex.Message}"); }
     }
 
+    /// <summary>Opens a game's page on one of its achievements (the Library's Latest achievements panel).</summary>
+    public void OpenAchievement(string gameId, string key)
+    {
+        OpenGame(gameId);
+        (Shown as GamePage)?.ShowAchievement(key);
+    }
+
     /// <summary>Opens a game page (from the library grid, a pop-up...), selecting it in the pane when it is listed there.</summary>
     public void OpenGame(string id)
     {
+        using var __perf = Helpers.UiPerf.Scope("MainWindow.OpenGame");
         if (AppState.FindAny(id) is null) return;
         AppState.Settings.LastGameId = id;
         KeepFocusOffSearch(SearchHasFocus());
         _rebuilding = true;
         try
         {
-            if ((ContentFrame.Content as GamePage)?.GameId != id) ContentFrame.Navigate(typeof(GamePage), id);
+            if ((Shown as GamePage)?.GameId != id) NavigateGame(id);
             Nav.SelectedItem = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag is string t && t.Equals(id, StringComparison.OrdinalIgnoreCase));
         }
         finally
@@ -1056,6 +1242,30 @@ public sealed partial class MainWindow : Window
     }
 
     const string HardwareTag = "hw";
+
+    // The tips of the pane's items, to hide them while the pane is folded (see PaneTip).
+    readonly List<WeakReference<ToolTip>> _paneTips = [];
+
+    /// <summary>
+    /// The tip of an item of the game list. Shown only while the list is open (a long name cut at the pane's edge, the
+    /// game's folder): folded to its strip of icons, no tip comes up over the page beside it (2.0), neither ours nor the
+    /// one NavigationView would put there by itself (an item with a tip of its own gets none from it).
+    /// </summary>
+    void PaneTip(DependencyObject item, string? text)
+    {
+        var tip = new ToolTip { Content = text ?? "", Visibility = text is not null && PaneShowsTips ? Visibility.Visible : Visibility.Collapsed, Tag = text };
+        _paneTips.Add(new WeakReference<ToolTip>(tip));
+        ToolTipService.SetToolTip(item, tip);
+    }
+
+    bool PaneShowsTips => Nav.DisplayMode == NavigationViewDisplayMode.Minimal || Nav.IsPaneOpen;
+
+    void UpdatePaneTips(bool open)
+    {
+        _paneTips.RemoveAll(w => !w.TryGetTarget(out _));
+        foreach (var w in _paneTips)
+            if (w.TryGetTarget(out var tip)) tip.Visibility = open && tip.Tag is string ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     /// <summary>A game's name in the list: a long one ends in "…" at the pane's edge, as names do everywhere else.</summary>
     static TextBlock ItemName(string name) => new() { Text = name, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap };
@@ -1069,7 +1279,7 @@ public sealed partial class MainWindow : Window
             Icon = new FontIcon { Glyph = "" },
         };
         BigIcon(item);
-        ToolTipService.SetToolTip(item, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
+        PaneTip(item, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
 
         item.ContextFlyout = GameMenu(game);
         // Resting on a game warms its art (after a short pause, so a pointer sweeping over the list asks for nothing).
@@ -1096,7 +1306,7 @@ public sealed partial class MainWindow : Window
     {
         var item = new NavigationViewItem { Content = ItemName(game.Name), Tag = game.Id, Opacity = 0.62, Icon = new FontIcon { Glyph = "" } };
         BigIcon(item);
-        ToolTipService.SetToolTip(item, $"{game.Name}\n{StoreLogos.Label(game.Store)} · {L.T("not installed")}");
+        PaneTip(item, $"{game.Name}\n{StoreLogos.Label(game.Store)} · {L.T("not installed")}");
         if (game.Store == GameStore.Steam && game.Id.StartsWith("steam:", StringComparison.OrdinalIgnoreCase))
             _ = LoadIconAsync(item, OwnedLibrary.AsGame(game));
         return item;
@@ -1152,7 +1362,7 @@ public sealed partial class MainWindow : Window
         else AppState.Settings.GameNames[game.Id] = picked;
         SettingsStore.Save();
         RebuildNav();
-        switch (ContentFrame.Content)
+        switch (Shown)
         {
             case LibraryPage library: library.Reload(library.Filter); break;
             case GamePage page when page.GameId == game.Id: page.Refresh(); break;
@@ -1258,27 +1468,32 @@ public sealed partial class MainWindow : Window
 
     void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        using var __perf = Helpers.UiPerf.Scope("MainWindow.NavSelection");
         if (_rebuilding) return;
         KeepFocusOffSearch(SearchHasFocus());
         if (args.IsSettingsSelected)
         {
+            // Settings already open: the pane reports it selected again when the game list is redrawn (a game started or
+            // closed, a folder change, a scan). Navigating again ran OnNavigatedTo on the cached page: back to the top, the
+            // search box focused, the tab picked again (1.4.0-rc.20).
+            if (Shown is SettingsPage) { Log.Info("Nav: Settings selected again, page kept"); return; }
             ContentFrame.Navigate(typeof(SettingsPage));
             return;
         }
         if (args.SelectedItem is NavigationViewItem { Tag: HardwareTag })
         {
-            if (ContentFrame.Content is not HardwarePage) ContentFrame.Navigate(typeof(HardwarePage));
+            if (Shown is not HardwarePage) ContentFrame.Navigate(typeof(HardwarePage));
             return;
         }
         if (args.SelectedItem is NavigationViewItem { Tag: LibraryTag })
         {
             AppState.Settings.LastGameId = LibraryTag;
-            if (ContentFrame.Content is not LibraryPage) ContentFrame.Navigate(typeof(LibraryPage), _filter);
+            if (Shown is not LibraryPage) ContentFrame.Navigate(typeof(LibraryPage), _filter);
             return;
         }
         if (args.SelectedItem is NavigationViewItem { Tag: DownloadsTag })
         {
-            if (ContentFrame.Content is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
+            if (Shown is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
             return;
         }
         if (args.SelectedItem is NavigationViewItem { Tag: string id } && id != "add" && id != DownloadsTag)
@@ -1286,8 +1501,8 @@ public sealed partial class MainWindow : Window
             // A game listed as not installed opens on its Download page.
             if (AppState.Find(id) is null && OwnedLibrary.Find(id) is { } owned) AppState.AddOwned(OwnedLibrary.AsGame(owned));
             AppState.Settings.LastGameId = id;
-            if ((ContentFrame.Content as GamePage)?.GameId != id)
-                ContentFrame.Navigate(typeof(GamePage), id);
+            if ((Shown as GamePage)?.GameId != id)
+                NavigateGame(id);
         }
     }
 
@@ -1378,7 +1593,141 @@ public sealed partial class MainWindow : Window
 
     void Rescan_Click(object sender, RoutedEventArgs e) => _ = AppState.RescanAsync();
 
+    // Files dragged onto the window: a game's .exe is added as a game, a folder as a games folder.
+    void RootGrid_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
+        e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Link;
+        e.DragUIOverride.Caption = L.T("Add to Hybrid Launcher");
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    async void RootGrid_Drop(object sender, DragEventArgs e)
+    {
+        try
+        {
+            if (!e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
+            var items = await e.DataView.GetStorageItemsAsync();
+            int games = 0, folders = 0;
+            string? last = null;
+            foreach (var item in items)
+            {
+                var path = item.Path;
+                if (string.IsNullOrEmpty(path)) continue;
+                if (Directory.Exists(path))
+                {
+                    if (!AppState.Settings.GameLibraries.Contains(path, StringComparer.OrdinalIgnoreCase)) { AppState.Settings.GameLibraries.Add(path); folders++; }
+                }
+                else if (path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                {
+                    var id = GameScanner.CustomId(path);
+                    if (!AppState.Settings.CustomGames.Any(c => GameScanner.CustomId(c.ExePath) == id)) AppState.Settings.CustomGames.Add(new CustomGame { ExePath = path });
+                    AppState.Settings.HiddenGames.Remove(id);
+                    last = id;
+                    games++;
+                }
+            }
+            if (games == 0 && folders == 0)
+            {
+                ShowInfo(L.T("Drop a game's .exe to add it as a game, or a folder to add it as a games folder."));
+                return;
+            }
+            if (last is not null) AppState.Settings.LastGameId = last;
+            SettingsStore.Save();
+            Log.Info($"Dropped on the window: {games} game exe, {folders} folders");
+            await AppState.RescanAsync();
+            if (folders > 0) ShowInfo(L.T("Folder added. Each sub-folder with an .exe is listed as a game."));
+        }
+        catch (Exception ex)
+        {
+            ShowError(L.T("Could not add the game"), ex.Message, ex);
+        }
+    }
+
     // ---------- self-test ----------
+
+    /// <summary>Self-test "local unlock" (see HL_SELFTEST_LOCALACH): file → watcher → pop-up → history.</summary>
+    async Task<int> SelfTestLocalUnlockAsync(string? shots)
+    {
+        try
+        {
+            var root = Path.Combine(AppInfo.DataRoot, "selftest-local-achievements");
+            var file = Path.Combine(root, "480", "achievements.ini");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            const string locked = "[ACH_WIN_ONE_GAME]\nAchieved=0\n[ACH_WIN_100_GAMES]\nAchieved=0\n";
+            File.WriteAllText(file, locked);
+            AppState.Settings.ReadSteamEmulator = true;
+            AppState.Settings.AchievementPopups = true;
+            if (!AppState.Settings.LocalAchievementFolders.Contains(root, StringComparer.OrdinalIgnoreCase)) AppState.Settings.LocalAchievementFolders.Add(root);
+            AchievementWatcher.RestartLocal();
+            await Task.Delay(1500);
+            // A first change: the watcher reads the file and remembers what is unlocked (nothing).
+            File.WriteAllText(file, locked + "\n");
+            await Task.Delay(5000);
+            AchievementPopup.CloseAll();
+            int before = HybridLauncher.Core.Achievements.AchievementHistory.All().Count;
+            File.WriteAllText(file, $"[ACH_WIN_ONE_GAME]\nAchieved=1\nUnlockTime={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}\n[ACH_WIN_100_GAMES]\nAchieved=0\n");
+            bool popup = false, kept = false;
+            for (int i = 0; i < 200 && !(popup && kept); i++)
+            {
+                await Task.Delay(100);
+                if (!popup && AchievementPopup.CurrentHandle is { } h and not 0)
+                {
+                    popup = true;
+                    if (!string.IsNullOrWhiteSpace(shots)) { await Task.Delay(900); await SaveShotAsync(Path.Combine(shots, "local unlock pop-up.png"), h); }
+                }
+                kept = HybridLauncher.Core.Achievements.AchievementHistory.All().Count > before;
+            }
+            if (!popup) throw new InvalidOperationException("no pop-up for the unlock written to the local file");
+            if (!kept) throw new InvalidOperationException("the unlock is not in the history");
+            Log.Info("Self-test: local unlock pop-up and history");
+            AchievementPopup.CloseAll();
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Self-test FAILED: local unlock", ex);
+            return 1;
+        }
+    }
+
+    /// <summary>Self-test "play restart" (see HL_SELFTEST_PLAY): hidden while the restarted game runs, back after it closes.</summary>
+    async Task<int> SelfTestPlayRestartAsync(string exe)
+    {
+        try
+        {
+            var id = GameScanner.CustomId(exe);
+            if (!AppState.Settings.CustomGames.Any(c => GameScanner.CustomId(c.ExePath) == id)) AppState.Settings.CustomGames.Add(new CustomGame { ExePath = exe });
+            await AppState.RescanAsync();
+            var game = AppState.Find(id) ?? throw new InvalidOperationException("the restarting game was not listed");
+            bool savedHide = AppState.Settings.HideWhilePlaying;
+            AppState.Settings.HideWhilePlaying = true;
+            OpenGame(id);
+            await Task.Delay(1500);
+            await AppState.LaunchAsync(game);
+            // Hidden once the game runs, and still hidden after it restarted itself.
+            bool hiddenSeen = false;
+            for (int i = 0; i < 150 && !hiddenSeen; i++) { await Task.Delay(100); hiddenSeen = !AppWindow.IsVisible; }
+            if (!hiddenSeen) throw new InvalidOperationException("the window did not go to the notification area when the game started");
+            for (int i = 0; i < 100 && !GameSessions.Active().Contains(id, StringComparer.OrdinalIgnoreCase); i++) await Task.Delay(100);
+            await Task.Delay(6000);
+            if (AppWindow.IsVisible) throw new InvalidOperationException("the window came back on screen while the restarted game runs");
+            Log.Info("Self-test: play restart hidden while the restarted game runs");
+            // Back once the game is gone (the restart wait is 20 s after a short session).
+            bool back = false;
+            for (int i = 0; i < 1200 && !back; i++) { await Task.Delay(100); back = AppWindow.IsVisible; }
+            AppState.Settings.HideWhilePlaying = savedHide;
+            if (!back) throw new InvalidOperationException("the window did not come back after the game closed");
+            Log.Info("Self-test: play restart window back after the game closed");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Self-test FAILED: play restart", ex);
+            if (!AppWindow.IsVisible) ShowFromTray(activate: false);
+            return 1;
+        }
+    }
 
     /// <summary>
     /// HybridLauncher.exe --selftest: walks every page, game, tab and view, both game views and the pop-up, then closes.
@@ -1401,7 +1750,7 @@ public sealed partial class MainWindow : Window
                 action();
                 await Task.Delay(waitMs);
                 // No step clicks the search box: holding the focus after one means it grabbed it by itself (an old bug).
-                if (SearchHasFocus()) throw new InvalidOperationException($"the game list's search box took the focus by itself (page shown: {ContentFrame.Content?.GetType().Name})");
+                if (SearchHasFocus()) throw new InvalidOperationException($"the game list's search box took the focus by itself (page shown: {Shown?.GetType().Name})");
                 Log.Info($"Self-test: {what}");
                 if (!string.IsNullOrWhiteSpace(shots)) await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-{string.Concat(what.Split(Path.GetInvalidFileNameChars()))}.png"));
             }
@@ -1413,14 +1762,83 @@ public sealed partial class MainWindow : Window
         }
 
         for (int i = 0; i < 100 && AppState.Games.Count == 0; i++) await Task.Delay(200);
+        // HL_DEMO=1: the demo walk for the video and the site's pictures instead of the tests (MainWindow.Demo).
+        if (Environment.GetEnvironmentVariable("HL_DEMO") == "1")
+        {
+            int demo = await RunDemoAsync();
+            Log.Info($"Self-test finished: {demo} failure(s)");
+            Close();
+            return;
+        }
+        if (only.Any(o => o.StartsWith("perf", StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestPerfAsync((what, action, wait) => Step(what, action, wait));
+        else Helpers.UiPerf.EnableDetailed();
+        // How quick the app feels, with budgets (MainWindow.Snappy): no input, the same numbers run after run.
+        if (only.Any(o => o.StartsWith("snappy", StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestSnappyAsync();
+        // Many game switches in a row, past the live pages' limit, with idle warm-ups between (2.0.0-rc.4 showed "Value does
+        // not fall within the expected range" and an empty page after a while).
+        if (only.Length == 0 || only.Any(o => "pages".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestPageChurnAsync();
         await Step("library", () => ContentFrame.Navigate(typeof(LibraryPage), ""), 2500);
         await Step("library search", () => SearchBox.Text = "a");
         await Step("library search cleared", () => SearchBox.Text = "");
         var savedFilter = AppState.Settings.Library;
         foreach (var sort in new[] { "recent", "added", "playtime", "achievements", "tech", "name" })
-            await Step($"library sort {sort}", () => { AppState.Settings.Library = new LibraryFilter { Sort = sort, GroupByLauncher = sort != "tech" }; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
-        await Step("library filters", () => { AppState.Settings.Library = new LibraryFilter { OptiOnly = true, Tech = { "DLSS" } }; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
-        await Step("library filters off", () => { AppState.Settings.Library = savedFilter; (ContentFrame.Content as LibraryPage)?.Reload(""); }, 400);
+            await Step($"library sort {sort}", () => { AppState.Settings.Library = new LibraryFilter { Sort = sort, GroupByLauncher = sort != "tech" }; (Shown as LibraryPage)?.Reload(""); }, 400);
+        await Step("library filters", () => { AppState.Settings.Library = new LibraryFilter { OptiOnly = true, Tech = { "DLSS" } }; (Shown as LibraryPage)?.Reload(""); }, 400);
+        await Step("library filters off", () => { AppState.Settings.Library = savedFilter; (Shown as LibraryPage)?.Reload(""); }, 400);
+        await Step("library cover hover", () => (Shown as LibraryPage)?.SelfTestHover(true), 700);
+        await Step("library cover hover off", () => (Shown as LibraryPage)?.SelfTestHover(false), 500);
+        // Mouse-wheel scrolling, measured frame by frame (MainWindow.Smoothness): the library, then a game page.
+        // HL_SELFTEST_NOINPUT=1: no real wheel or mouse (the PC is in use); the "snappy" step measures scrolling without input.
+        bool noInput = Environment.GetEnvironmentVariable("HL_SELFTEST_NOINPUT") == "1";
+        if (!noInput && (only.Length == 0 || only.Any(o => "scroll".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+        {
+            foreach (var target in new[] { "library", "game page", "settings" })
+            {
+                try
+                {
+                    if (target == "game page" && AppState.VisibleGames.FirstOrDefault(g => !g.NotInstalled) is { } g) { OpenGame(g.Id); await Task.Delay(2500); }
+                    if (target == "settings") { OpenSettings("achievements"); await Task.Delay(1500); }
+                    Microsoft.UI.Xaml.FrameworkElement? sv = (Shown as LibraryPage)?.SelfTestScroller ?? (Microsoft.UI.Xaml.FrameworkElement?)(Shown as GamePage)?.SelfTestScroller ?? (Shown as SettingsPage)?.SelfTestScroller;
+                    if (sv is null || (sv is ScrollViewer sva ? sva.ScrollableHeight : sv is ScrollView svb ? svb.ScrollableHeight : 0) < 200) { Log.Info($"Scroll smoothness {target}: nothing to scroll"); continue; }
+                    Activate();
+                    var r = await MeasureWheelScrollAsync(sv, target);
+                    // A healthy scroll: the view answers the wheel within a few frames (the clock kept awake by the mouse,
+                    // Helpers.FrameWarmth) and goes the whole way. On a ScrollView the motion runs on the compositor
+                    // (Helpers.CompositorWheel): the UI thread's frames and the offset it reads lag behind the screen, so
+                    // missed UI frames and offset stalls say nothing about what is shown there (measured from outside with
+                    // Tools\media\measure-scroll-smoothness.py); they are checked on a ScrollViewer only.
+                    bool onCompositor = sv is ScrollView;
+                    if (!onCompositor && r.UiHitches > Math.Max(3, r.Frames / 20)) throw new InvalidOperationException("missed frames: " + r);
+                    if (r.AnswerMs is < 0 or > 80) throw new InvalidOperationException("slow to answer the wheel: " + r);
+                    if (!onCompositor && r.Stalls > 2) throw new InvalidOperationException("stops while scrolling: " + r);
+                    if (r.Distance < 100) throw new InvalidOperationException("did not scroll: " + r);
+                    Log.Info($"Self-test: scroll {target}");
+                }
+                catch (Exception ex) { failures++; Log.Error($"Self-test FAILED: scroll {target}", ex); }
+            }
+            ContentFrame.Navigate(typeof(LibraryPage), "");
+            await Task.Delay(800);
+        }
+        // Game switches as a click makes them (the mouse in use, so the frame clock is awake): each one's first frame and
+        // settled time are logged by the game page ("Game page …: first frame").
+        if (only.Length == 0 || only.Any(o => "switch".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
+        {
+            var installed = AppState.VisibleGames.Where(g => !g.NotInstalled).Take(4).ToList();
+            for (int round = 0; round < 2 && installed.Count > 1; round++)
+                foreach (var g in installed)
+                {
+                    Helpers.FrameWarmth.Poke();
+                    await Task.Delay(120);
+                    Helpers.FrameWarmth.Poke();
+                    OpenGame(g.Id);
+                    await Task.Delay(1200);
+                }
+            ContentFrame.Navigate(typeof(LibraryPage), "");
+            await Task.Delay(800);
+        }
         // Resizing a maximized window leaves it "maximized" at the new, small size (Restore shown, Maximize doing nothing):
         // restore it first, and maximize it again afterwards if it was.
         var wasMaximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
@@ -1464,10 +1882,17 @@ public sealed partial class MainWindow : Window
                 var cut = CutOnTheRight(ContentFrame);
                 if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
                 // Every tab the same column: as wide as the page up to 1600, centred.
-                if (ContentFrame.Content is SettingsPage sp && sp.SelfTestColumn() is var (w, expected, off) && (Math.Abs(w - expected) > 1 || off > 2))
-                    throw new InvalidOperationException($"column {w:0} wide (should be {expected:0}), {off:0} px off centre");
+                if (Shown is SettingsPage sp && sp.SelfTestColumn() is var (w, expected, off, sub) && (Math.Abs(w - expected) > 1 || off > 2 || sub > 0.05))
+                    throw new InvalidOperationException($"column {w:0} wide (should be {expected:0}), {off:0} px off centre, {sub:0.00} px off a whole pixel");
             }, 50);
         }
+        // Achievements → Sources (1.4.0): every source's tile and the folders local files are read from.
+        await Step("settings sources", () =>
+        {
+            OpenSettings("achievements");
+            if (Shown is SettingsPage sp && !sp.SelfTestGoTo("achievements", L.T("Local achievement folders")))
+                throw new InvalidOperationException("the Sources section has no Local achievement folders row");
+        }, 1500);
         // The other pages and every tab of a game page, at the same size.
         foreach (var (name, type) in new[] { ("library", typeof(LibraryPage)), ("downloads", typeof(DownloadsPage)), ("my pc", typeof(HardwarePage)) })
         {
@@ -1481,9 +1906,9 @@ public sealed partial class MainWindow : Window
         if (AppState.Games.FirstOrDefault() is { } fitGame)
         {
             await Step("page game fits", () => OpenGame(fitGame.Id), 2500);
-            foreach (var tab in (ContentFrame.Content as GamePage)?.SelfTestTabIds() ?? [])
+            foreach (var tab in (Shown as GamePage)?.SelfTestTabIds() ?? [])
             {
-                await Step($"page game tab {tab} fits", () => (ContentFrame.Content as GamePage)?.SelfTestShow(tab), 1500);
+                await Step($"page game tab {tab} fits", () => (Shown as GamePage)?.SelfTestShow(tab), 1500);
                 await Step($"page game tab {tab} nothing cut", () =>
                 {
                     var cut = CutOnTheRight(ContentFrame);
@@ -1534,21 +1959,220 @@ public sealed partial class MainWindow : Window
         {
             AppState.Settings.GamepadInput = false;
             GamepadSettingChanged();
-            if (_padTimer?.IsRunning == true) throw new InvalidOperationException("the controller is still read with Controller navigation off");
+            if (PadReading) throw new InvalidOperationException("the controller is still read with Controller navigation off");
         }, 200);
         await Step("controller on", () => { AppState.Settings.GamepadInput = true; GamepadSettingChanged(); }, 200);
-        await Step("pane folded", () => { Nav.IsPaneOpen = false; }, 500);
-        await Step("pane open", () => { Nav.IsPaneOpen = true; }, 500);
+        // Through the pane button's own path (SetPaneOpen: NavigationView refuses with E_FAIL while its last change is still
+        // under way, and that is retried on the next tick), then checked.
+        await Step("pane folded", () => SetPaneOpen(false), 500);
+        await Step("pane folded: checked", () => { if (Nav.IsPaneOpen) throw new InvalidOperationException("the game list is still open"); }, 50);
+        await Step("pane open", () => SetPaneOpen(true), 500);
+        await Step("pane open: checked", () => { if (!Nav.IsPaneOpen) throw new InvalidOperationException("the game list did not open"); }, 50);
         foreach (var game in AppState.VisibleGames.ToList())
         {
             await Step($"open {game.Name}", () => OpenGame(game.Id), 2500);
             await Step($"{game.Name}: pin", () => AppState.SetPinned(game.Id, true));
-            foreach (var (tab, view) in new[] { ("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/notes", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/reshade", null), ("ultra", null), ("ultra/addons", null), ("ultra/settings", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview", null) })
-                await Step($"{game.Name}: {tab} {view}", () => (ContentFrame.Content as GamePage)?.SelfTestShow(tab, view), tab is "overview" or "opti/wiki" or "opti/notes" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" or "ultra" ? 2500 : 600);
-            await Step($"{game.Name}: scroll (tabs pinned on top)", () => (ContentFrame.Content as GamePage)?.SelfTestScroll(true), 600);
+            foreach (var (tab, view) in new[] { ("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/notes", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/dlss5", null), ("mods/dxvk", null), ("mods/vkd3d", null), ("mods/reshade", null), ("mods/installed", null), ("auto", null), ("ultra", null), ("ultra/addons", null), ("ultra/settings", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview/news", null), ("overview/reviews", null), ("overview", null) })
+                await Step($"{game.Name}: {tab} {view}", () => (Shown as GamePage)?.SelfTestShow(tab, view), tab is "overview" or "opti/wiki" or "opti/notes" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" or "mods/dxvk" or "mods/vkd3d" or "mods/installed" or "auto" or "ultra" ? 2500 : 600);
+            // The Auto tab (rc.7) read the game and made a plan; then, on a fake game, its one click with ReShade ticked puts
+            // OptiScaler and ReShade in together: ReShade as ReShade64.dll, loaded by OptiScaler.
+            await Step($"{game.Name}: auto plan", () =>
+            {
+                var plan = (Shown as GamePage)?.SelfTestAuto() ?? "no page";
+                Log.Info($"Self-test Auto plan: {plan}");
+                if (!plan.Contains("opti:") || !plan.Contains("reshade:")) throw new InvalidOperationException($"no Auto plan: {plan}");
+                // 2.0.0-rc.18: a generic RenoDX or Luma mod is offered, never ticked by itself.
+                if (plan.Contains("renodx-generic=True") && plan.Contains("renodx:Install[x]"))
+                    throw new InvalidOperationException($"a generic RenoDX mod was ticked by itself: {plan}");
+                if (plan.Contains("luma-generic=True") && plan.Contains("luma:Install[x]"))
+                    throw new InvalidOperationException($"a generic Luma mod was ticked by itself: {plan}");
+            }, 1500);
+            // 2.0.0-rc.18: OptiScaler's builds can be added from the Auto tab as on the OptiScaler tab (folder, archive, GitHub fork).
+            await Step($"{game.Name}: auto add build menu", () =>
+            {
+                int n = (Shown as GamePage)?.SelfTestAutoAddBuildMenu(true) ?? -1;
+                if (n is >= 0 and not 3) throw new InvalidOperationException($"the Add a build menu has {n} entries, not 3");
+            }, 900);
+            await Step($"{game.Name}: auto add build menu closed", () => (Shown as GamePage)?.SelfTestAutoAddBuildMenu(false), 400);
+            // DLSS 5's F5 way picked: OptiScaler's build follows to janblade's F5 fork, its releases read; then back to Off.
+            await Step($"{game.Name}: auto dlss5 f5", () => (Shown as GamePage)?.SelfTestAutoDlss5("f5"), 6000);
+            await Step($"{game.Name}: auto dlss5 f5 build", () =>
+            {
+                var plan = (Shown as GamePage)?.SelfTestAuto() ?? "no page";
+                Log.Info($"Self-test Auto plan with F5: {plan}");
+                if (!plan.Contains("dlss5=f5") || !plan.Contains("source=fork:janblade/") || plan.Contains("build=-")) throw new InvalidOperationException($"OptiScaler's build did not follow F5: {plan}");
+            }, 1500);
+            await Step($"{game.Name}: auto dlss5 off", () => (Shown as GamePage)?.SelfTestAutoDlss5("off"), 3000);
+            // 2.0.0-rc.13: DLSS 5 ticked with no method: "Select one", and Install waits for a method.
+            await Step($"{game.Name}: auto dlss5 ticked without a method", () =>
+            {
+                var plan = (Shown as GamePage)?.SelfTestAutoDlss5Tick() ?? "no page";
+                Log.Info($"Self-test Auto with DLSS 5 ticked: {plan}");
+                if (!plan.Contains("dlss5=pending") || !plan.Contains("install-enabled=False")) throw new InvalidOperationException("DLSS 5 ticked without a method did not stop Install: " + plan);
+            }, 800);
+            await Step($"{game.Name}: auto dlss5 untick", () => (Shown as GamePage)?.SelfTestAutoDlss5("off"), 1500);
+            // 2.0.0-rc.13: ReShade's build picked by hand, then back to the recommendation.
+            await Step($"{game.Name}: auto reshade build", () =>
+            {
+                var page = Shown as GamePage;
+                var addon = page?.SelfTestAutoReShadeBuild(true) ?? "no page";
+                var standard = page?.SelfTestAutoReShadeBuild(false) ?? "no page";
+                Log.Info($"Self-test Auto ReShade builds: {addon} || {standard}");
+                page?.SelfTestAutoReShadeBuild(null);
+                if (addon.Contains("reshade:NotPossible")) return;
+                if (!addon.Contains("reshade-build=addon") || !standard.Contains("reshade-build=standard")) throw new InvalidOperationException("ReShade's build did not follow the pick: " + addon + " || " + standard);
+            }, 1500);
+            if (Environment.GetEnvironmentVariable("HL_SELFTEST_AUTO") == "1")
+            {
+                await Step($"{game.Name}: auto install", () => _ = (Shown as GamePage)?.SelfTestAutoRunAsync(), 90_000);
+                await Step($"{game.Name}: auto installed", () =>
+                {
+                    var page = Shown as GamePage;
+                    var dir = page?.SelfTestTargetDir ?? throw new InvalidOperationException("no game folder");
+                    var plan = page.SelfTestAuto();
+                    Log.Info($"Self-test Auto after the one click: {plan}");
+                    bool opti = Core.Opti.OptiDetector.Detect(dir) is not null;
+                    var rs = Core.Mods.ReShade.Loaded(dir);
+                    if (!opti || rs is null || !rs.LoadedByOpti) throw new InvalidOperationException($"OptiScaler {(opti ? "in" : "missing")}, ReShade {(rs is null ? "not loaded" : rs.FileName)}; plan {plan}");
+                }, 3000);
+                // 2.0.0-rc.12: away to the library and back, as a person does. The page comes back as it was left (Resume) with
+                // a new token; the Auto tab kept the cancelled one and never read the folder again.
+                await Step($"{game.Name}: auto away to the library", () => ContentFrame.Navigate(typeof(LibraryPage), ""), 1500);
+                await Step($"{game.Name}: auto back", () => OpenGame(game.Id), 2500);
+                await Step($"{game.Name}: auto back on the tab", () => (Shown as GamePage)?.SelfTestShow("auto", null), 2500);
+                // 2.0.0-rc.10: the plan follows the folder by itself. ReShade's dll taken out by hand (as Explorer would) shows as
+                // not installed without leaving the tab.
+                await Step($"{game.Name}: auto follows the folder", () =>
+                {
+                    var page = Shown as GamePage;
+                    var dir = page?.SelfTestTargetDir ?? throw new InvalidOperationException("no game folder");
+                    if (Core.Mods.ReShade.Detect(dir) is { } rs) File.Delete(rs.Path);
+                }, 3000);
+                await Step($"{game.Name}: auto saw ReShade go", () =>
+                {
+                    var plan = (Shown as GamePage)?.SelfTestAuto() ?? "no page";
+                    Log.Info($"Self-test Auto after ReShade was deleted: {plan}");
+                    if (plan.Contains("reshade:Installed", StringComparison.Ordinal)) throw new InvalidOperationException("the Auto tab still shows ReShade installed: " + plan);
+                }, 50);
+            }
+            // The DXVK and VKD3D-Proton sections filled themselves: the one for the game's Direct3D loaded (version picked, releases
+            // listed, hint written), the other loaded too or folded to one line (both folded for a Vulkan game); none still
+            // waiting or missing releases.
+            await Step($"{game.Name}: dxvk section loaded", () =>
+            {
+                var state = (Shown as GamePage)?.SelfTestDxvk() ?? "no DXVK section";
+                Log.Info($"Self-test DXVK sections: {state}");
+                var parts = state.Split(" || ");
+                // A game that draws with Vulkan needs neither: both fold to one line saying so (DOOM: The Dark Ages, Indiana Jones).
+                bool vulkan = parts.Length == 2 && parts.All(p => p.Contains("draws with Vulkan", StringComparison.Ordinal));
+                if (parts.Length != 2 || (!vulkan && !parts.Any(p => p.Contains(" loaded", StringComparison.Ordinal)))
+                    || parts.Any(p => !p.Contains(" loaded", StringComparison.Ordinal) && !p.Contains(" folded:", StringComparison.Ordinal)))
+                    throw new InvalidOperationException(state);
+            }, 300);
+            // The mod check: an add-on with no ReShade beside it puts a warning on the banner, and it goes once the add-on does.
+            await Step($"{game.Name}: mod check warns", () => { var page = Shown as GamePage; page?.SelfTestScroll(false); page?.SelfTestModProblem(true); }, 1500);
+            await Step($"{game.Name}: mod check warning shown", () =>
+            {
+                var badges = (Shown as GamePage)?.SelfTestBadges() ?? "";
+                Log.Info($"Self-test banner tags: {badges}");
+                if (!badges.Contains("no ReShade to load", StringComparison.Ordinal)) throw new InvalidOperationException($"no mod check warning on the banner: {badges}");
+            }, 200);
+            // The same finding in the Mods tab's table, with its fix and Ignore (rc.18).
+            await Step($"{game.Name}: mod check in the Mods table", () => (Shown as GamePage)?.SelfTestShow("mods/installed"), 1800);
+            await Step($"{game.Name}: mod check in the Mods table listed", () =>
+            {
+                var table = (Shown as GamePage)?.SelfTestModsTable() ?? "no page";
+                Log.Info($"Self-test mods table with a finding: {table}");
+                if (table.EndsWith("problems=0", StringComparison.Ordinal) || table is "no page" or "not read") throw new InvalidOperationException($"the finding is not in the Mods table: {table}");
+            }, 50);
+            await Step($"{game.Name}: mod check clears", () => (Shown as GamePage)?.SelfTestModProblem(false), 1500);
+            await Step($"{game.Name}: mod check warning gone", () =>
+            {
+                var badges = (Shown as GamePage)?.SelfTestBadges() ?? "";
+                if (badges.Contains("renodx-selftest")) throw new InvalidOperationException($"the warning stayed: {badges}");
+            }, 200);
+            // OptiScaler's file name swapped in place (needs HL_SELFTEST_OPTI = an OptiScaler.dll).
+            if (Environment.GetEnvironmentVariable("HL_SELFTEST_OPTI") is { Length: > 0 } optiDll && File.Exists(optiDll))
+            {
+                await Step($"{game.Name}: dll swap menu", () => (Shown as GamePage)?.SelfTestDllSwapMenu(optiDll), 1200);
+                string swapped = "";
+                if (Shown is GamePage swapPage && (only.Length == 0 || only.Any(o => $"{game.Name}: dll swap".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+                {
+                    try { swapped = await swapPage.SelfTestDllSwapAsync("winmm.dll"); }
+                    catch (Exception ex) { swapped = ex.Message; }
+                    Log.Info($"Self-test dll swap: {swapped}");
+                    if (!swapped.StartsWith("winmm.dll chip=winmm.dll found=winmm.dll setup=winmm.dll", StringComparison.Ordinal)) { failures++; Log.Error($"Self-test FAILED: dll swap: {swapped}"); }
+                }
+                await Step($"{game.Name}: dll swap done", () => { }, 1200);
+                // What is installed as what: OptiScaler shows as winmm.dll now, put in by Hybrid Launcher.
+                await Step($"{game.Name}: dll swap mod files", () => (Shown as GamePage)?.SelfTestModFilesOpen(), 1500);
+                await Step($"{game.Name}: dll swap mod files listed", () =>
+                {
+                    var rows = (Shown as GamePage)?.SelfTestModFilesClose() ?? "";
+                    Log.Info($"Self-test mod files: {rows}");
+                    if (!rows.Contains("winmm.dll = OptiScaler", StringComparison.Ordinal) || !rows.Contains("[HL]", StringComparison.Ordinal))
+                        throw new InvalidOperationException($"OptiScaler as winmm.dll is not listed: {rows}");
+                }, 600);
+            }
+            await Step($"{game.Name}: scroll (tabs pinned on top)", () => (Shown as GamePage)?.SelfTestScroll(true), 600);
             // A second picture of the same place a little later: what moves on its own (the clips of a description) differs between the two.
             await Step($"{game.Name}: scroll (still there)", () => { }, 1500);
-            await Step($"{game.Name}: scroll back", () => (ContentFrame.Content as GamePage)?.SelfTestScroll(false), 600);
+            await Step($"{game.Name}: scroll back", () => (Shown as GamePage)?.SelfTestScroll(false), 600);
+            // The Dashboard tab (1.4.0): the cards shown, nothing past the right edge, a post read in the app.
+            await Step($"{game.Name}: dashboard", () => (Shown as GamePage)?.SelfTestDashboard(), 3500);
+            await Step($"{game.Name}: dashboard shown", () =>
+            {
+                if ((Shown as GamePage)?.SelfTestDashboard() is not { } d) throw new InvalidOperationException("the dashboard was not made");
+                Log.Info($"Self-test dashboard: {d.Cards} cards, news {(d.NewsLoaded ? "read" : "still loading")}, {d.Activity} activity lines");
+                if (d.Cards == 0 && AppState.Settings.DashboardHidden.Count < Views.DashboardView.All.Length) throw new InvalidOperationException("no card shown");
+                var cut = CutOnTheRight(ContentFrame);
+                if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
+            }, 50);
+            // Cards reordered and hidden as the customize panel does it, then back (2.0.0-rc.6: building them all again lost their parts).
+            await Step($"{game.Name}: dashboard reorder", () =>
+            {
+                int errors = App.UiErrors;
+                Log.Info("Self-test dashboard reorder: " + ((Shown as GamePage)?.SelfTestDashboardReorder() ?? "no page"));
+                if (App.UiErrors != errors) throw new InvalidOperationException("a UI error while reordering");
+            }, 1200);
+            await Step($"{game.Name}: dashboard scrolled", () => (Shown as GamePage)?.SelfTestScroll(true), 600);
+            // The rest of the Dashboard, screen by screen (pictures; nothing is checked).
+            for (int screen = 1; screen <= 4; screen++)
+            {
+                double below = screen * 1150;
+                await Step($"{game.Name}: dashboard lower {screen}", () => (Shown as GamePage)?.SelfTestScrollBelow(below), 900);
+            }
+            // A window too narrow for two columns: the side cards go under the main column.
+            {
+                bool maximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+                if (maximized && AppWindow.Presenter is OverlappedPresenter restore) restore.Restore();
+                await Step($"{game.Name}: dashboard narrow", () => { AppWindow.Resize(new SizeInt32((int)(1320 * GetDpiScale()), (int)(940 * GetDpiScale()))); (Shown as GamePage)?.SelfTestScrollBelow(0); }, 1200);
+                // A picture only: at this width the tab row itself scrolls sideways, which the right-edge check would report.
+                await Step($"{game.Name}: dashboard narrow, side cards", () => (Shown as GamePage)?.SelfTestScrollToDashboardSide(), 900);
+                if (maximized && AppWindow.Presenter is OverlappedPresenter again) again.Maximize();
+                await Task.Delay(700);
+            }
+            await Step($"{game.Name}: dashboard post", () => { (Shown as GamePage)?.SelfTestScroll(false); (Shown as GamePage)?.SelfTestReadPost(); }, 1800);
+            await Step($"{game.Name}: dashboard post closed", () => CloseDialogs(), 500);
+            // The Achievements card on made-up achievements (rc.11: the latest and the rarest drawn alike, tier trophies).
+            await Step($"{game.Name}: dashboard achievements", () => { (Shown as GamePage)?.SelfTestSampleAchievements(); (Shown as GamePage)?.SelfTestScrollBelow(0); }, 1500);
+            // The version history (rc.11: tiles a year, a bar a month, the table at full width).
+            await Step($"{game.Name}: version history", () => (Shown as GamePage)?.SelfTestHistory(true), 1500);
+            await Step($"{game.Name}: version history closed", () => (Shown as GamePage)?.SelfTestHistory(false), 400);
+            // DLSS 5 (rc.13 a window, rc.18 a section of the Mods tab): every page drawn, then back to its overview.
+            foreach (var dlssPage in new[] { "overview", "model", "amd", "f5", "logs" })
+                await Step($"{game.Name}: dlss5 {dlssPage}", () => (Shown as GamePage)?.SelfTestDlss5(dlssPage), 700);
+            await Step($"{game.Name}: dlss5 back to overview", () => (Shown as GamePage)?.SelfTestDlss5(null), 300);
+            // The Mods tab's table of installed mods (rc.18): read and drawn, one line per mod.
+            await Step($"{game.Name}: mods table", () => (Shown as GamePage)?.SelfTestShow("mods/installed"), 2000);
+            await Step($"{game.Name}: mods table drawn", () =>
+            {
+                var table = (Shown as GamePage)?.SelfTestModsTable() ?? "no page";
+                Log.Info($"Self-test mods table: {table}");
+                if (table is "no page" or "not read") throw new InvalidOperationException($"the Mods table was not drawn: {table}");
+                var cut = CutOnTheRight(ContentFrame);
+                if (cut.Count > 0) throw new InvalidOperationException($"past the right edge: {string.Join("; ", cut.Take(6))}");
+            }, 50);
             await Step($"{game.Name}: unpin", () => AppState.SetPinned(game.Id, false));
         }
         // An install keeps showing when its game is left and opened again (the page is made again): busy, its progress and
@@ -1556,7 +2180,7 @@ public sealed partial class MainWindow : Window
         if (AppState.VisibleGames.FirstOrDefault() is { } jobGame)
         {
             Helpers.GameJobs.Job? fake = null;
-            GamePage Page() => ContentFrame.Content as GamePage ?? throw new InvalidOperationException("the game page is not open");
+            GamePage Page() => Shown as GamePage ?? throw new InvalidOperationException("the game page is not open");
             await Step("play button widths", () => Log.Info("Play button: " + Page().SelfTestPlayWidths()), 300);
             await Step("install kept: started", () =>
             {
@@ -1579,7 +2203,23 @@ public sealed partial class MainWindow : Window
         }
         await Step("my PC", () => ContentFrame.Navigate(typeof(HardwarePage)), 2000);
         await Step("settings", () => ContentFrame.Navigate(typeof(SettingsPage)), 1500);
-        await Step("settings tabs", () => (ContentFrame.Content as SettingsPage)?.SelfTestTabs(), 800);
+        await Step("settings tabs", () => (Shown as SettingsPage)?.SelfTestTabs(), 800);
+        // 1.4.0-rc.20: the game list redrawn (a game started or closed, a scan) sent Settings back to its top with the search
+        // box focused. Scrolled down, the list redrawn twice: the page must stay where it was.
+        double settingsAt = 0;
+        await Step("settings scrolled down", () =>
+            (Shown as SettingsPage)?.SelfTestScroller.ScrollTo(0, 700, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled)), 500);
+        await Step("settings list redrawn", () =>
+        {
+            settingsAt = (Shown as SettingsPage)?.SelfTestScroller.VerticalOffset ?? 0;
+            RebuildNav();
+            RebuildNav();
+        }, 900);
+        await Step("settings kept its place", () =>
+        {
+            var now = (Shown as SettingsPage)?.SelfTestScroller.VerticalOffset ?? -1;
+            if (settingsAt > 100 && Math.Abs(now - settingsAt) > 4) throw new InvalidOperationException($"Settings moved from {settingsAt:0} to {now:0} when the game list was redrawn");
+        }, 300);
         // Hybrid Launcher's own play time record: hours added to a game come back for the same game added again under another
         // id or store (by its name or app id), older time kept in a game's settings is taken in, and other games are untouched.
         await Step("play time record", () =>
@@ -1601,14 +2241,14 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                if (ContentFrame.Content is SettingsPage sp)
+                if (Shown is SettingsPage sp)
                     await sp.SelfTestSearch(string.IsNullOrWhiteSpace(shots) ? null : () => SaveShotAsync(Path.Combine(shots, $"{++shot:000}-settings search results.png")));
                 Log.Info("Self-test: settings search");
             }
             catch (Exception ex) { failures++; Log.Error("Self-test FAILED: settings search", ex); }
         }
         // Settings → Controller, and a button given to another action: the one that had it gets the old button back, then the defaults.
-        await Step("settings controller", () => (ContentFrame.Content as SettingsPage)?.SelfTestController(), 900);
+        await Step("settings controller", () => (Shown as SettingsPage)?.SelfTestController(), 900);
         await Step("controller buttons swap", () =>
         {
             PadActions.Set(PadAction.Press, PadKey.B);
@@ -1649,13 +2289,13 @@ public sealed partial class MainWindow : Window
             await Step("home button opens the achievement", () =>
             {
                 HomePressed();
-                if ((ContentFrame.Content as GamePage)?.GameId != achGame.Id) throw new InvalidOperationException("the game of the pop-up did not open");
+                if ((Shown as GamePage)?.GameId != achGame.Id) throw new InvalidOperationException("the game of the pop-up did not open");
                 if (AchievementPopup.TakeRecent() is not null) throw new InvalidOperationException("the pop-up's achievement was not taken");
             }, 2500);
             if (achKey != "selftest-home")
                 await Step("home button shows that achievement", () =>
                 {
-                    if ((ContentFrame.Content as GamePage)?.LastShownAchievement != achKey) throw new InvalidOperationException($"{achKey} was not shown in the Achievements tab");
+                    if ((Shown as GamePage)?.LastShownAchievement != achKey) throw new InvalidOperationException($"{achKey} was not shown in the Achievements tab");
                 }, 300);
             await Step("settings again", () => ContentFrame.Navigate(typeof(SettingsPage)), 900);
         }
@@ -1666,6 +2306,19 @@ public sealed partial class MainWindow : Window
         // Welcome to the new version: the highlights, the changelog link and the support card, then closed.
         await Step("what's new", () => { _ = ShowWhatsNewAsync(); }, 1200);
         await Step("what's new closed", () => { if (!SelfTestWhatsNew(close: true)) throw new InvalidOperationException("the new version's welcome did not open"); }, 600);
+        // Vsync (Helpers.FrameSync, always on): the display's refresh ticks the app's own motion at its full rate.
+        int vsyncTicks = 0;
+        long vsyncFrom = 0;
+        IDisposable? vsync = null;
+        await Step("vsync clock", () => { vsyncFrom = System.Diagnostics.Stopwatch.GetTimestamp(); vsync = Helpers.FrameSync.Subscribe(DispatcherQueue, _ => vsyncTicks++); }, 1000);
+        await Step("vsync clock follows the display", () =>
+        {
+            vsync?.Dispose();
+            double secs = System.Diagnostics.Stopwatch.GetElapsedTime(vsyncFrom).TotalSeconds, hz = 1000 / Helpers.FrameSync.PeriodMs;
+            Log.Info($"Vsync: {vsyncTicks / secs:0} ticks a second, display refresh {hz:0} Hz");
+            if (vsyncTicks / secs < Math.Min(hz, 60) * 0.6) throw new InvalidOperationException($"only {vsyncTicks / secs:0} ticks a second at {hz:0} Hz");
+            if (vsyncTicks / secs > hz * 1.3 + 5) throw new InvalidOperationException($"{vsyncTicks / secs:0} ticks a second, faster than the display's {hz:0} Hz");
+        }, 50);
         await Step("pop-up", () => AchievementPopup.ShowTest(), 1500);
         await Step("pop-up see-through", AchievementPopup.CheckSeeThrough, 50);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } popup and not 0)
@@ -1681,6 +2334,21 @@ public sealed partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } lookWindow and not 0)
                 await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up {look}.png"), lookWindow);
         }
+        // Every look on its own background and text colours (Settings → Achievements → Background, Text): light, dark, a colour,
+        // a picked text colour, and back to the look's own.
+        var savedColours = AppState.Settings.Popup.LookColours.ToDictionary(p => p.Key, p => new PopupLookColours { Background = p.Value.Background, Text = p.Value.Text }, StringComparer.OrdinalIgnoreCase);
+        foreach (var (back, ink) in new[] { ("#F4F3F5", ""), ("#1C1B1D", ""), ("#B3121A", ""), ("#2D6CDF", "#FFD34D"), ("", "") })
+            foreach (var look in new[] { "Hybrid", "PlayStation", "PlayStation4", "Xbox", "Steam", "Gog", "Epic", "Minimal" })
+            {
+                var c = AppState.Settings.Popup.ColoursOf(look);
+                c.Background = back; c.Text = ink;
+                string name = back.Length == 0 ? "own" : back.TrimStart('#') + (ink.Length > 0 ? " text " + ink.TrimStart('#') : "");
+                await Step($"pop-up look {look} colours {name}", () => AchievementPopup.ShowTest(look), 1200);
+                await Step($"pop-up look {look} colours {name} see-through", AchievementPopup.CheckSeeThrough, 50);
+                if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } backWindow and not 0)
+                    await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up {look} {name}.png"), backWindow);
+            }
+        AppState.Settings.Popup.LookColours = savedColours;
         // The platinum of a completed game, in every look: its own emblem and the platinum trophy.
         foreach (var look in new[] { "Hybrid", "PlayStation", "PlayStation4", "Xbox", "Steam", "Minimal" })
         {
@@ -1694,12 +2362,12 @@ public sealed partial class MainWindow : Window
         // The way people try it: Settings → Achievements → "Try it", pressed again while one shows, then every look picked in a row.
         await Step("pop-up settings", () => OpenSettings("achievements"), 1200);
         // Achievements → Sounds, under the pop-ups: what plays, volume, a .wav per rarity.
-        await Step("pop-up settings sounds", () => (ContentFrame.Content as SettingsPage)?.SelfTestSounds(), 900);
+        await Step("pop-up settings sounds", () => (Shown as SettingsPage)?.SelfTestSounds(), 900);
         await SelfTestSoundsAsync(Step);
-        await Step("pop-up settings try it", () => (ContentFrame.Content as SettingsPage ?? throw new InvalidOperationException("Settings is not open")).SelfTestTryPopup(), 400);
-        await Step("pop-up settings try it again", () => (ContentFrame.Content as SettingsPage)?.SelfTestTryPopup(), 1500);
+        await Step("pop-up settings try it", () => (Shown as SettingsPage ?? throw new InvalidOperationException("Settings is not open")).SelfTestTryPopup(), 400);
+        await Step("pop-up settings try it again", () => (Shown as SettingsPage)?.SelfTestTryPopup(), 1500);
         await Step("pop-up settings try it see-through", AchievementPopup.CheckSeeThrough, 50);
-        await Step("pop-up settings looks in a row", () => (ContentFrame.Content as SettingsPage)?.SelfTestLooks(), 1500);
+        await Step("pop-up settings looks in a row", () => (Shown as SettingsPage)?.SelfTestLooks(), 1500);
         await Step("pop-up settings looks see-through", AchievementPopup.CheckSeeThrough, 50);
         // A real achievement of a game in the library (when one has readable achievements), shown as its unlock would be.
         bool previewed = false;
@@ -1707,7 +2375,7 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                previewed = await ((ContentFrame.Content as SettingsPage)?.SelfTestPreviewGameAsync() ?? Task.FromResult(false));
+                previewed = await ((Shown as SettingsPage)?.SelfTestPreviewGameAsync() ?? Task.FromResult(false));
                 await Task.Delay(2000);
                 Log.Info($"Self-test: pop-up settings real game ({(previewed ? "shown" : "no game with readable achievements")})");
             }
@@ -1717,9 +2385,13 @@ public sealed partial class MainWindow : Window
         if (previewed && !string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } real and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up real game.png"), real);
         // The game's platinum from the same row (the picked game, or the sample when none can be read).
-        await Step("pop-up settings real game platinum", () => _ = (ContentFrame.Content as SettingsPage)?.SelfTestPreviewPlatinum(), 2500);
+        await Step("pop-up settings real game platinum", () => _ = (Shown as SettingsPage)?.SelfTestPreviewPlatinum(), 2500);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } platPreview and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up real game platinum.png"), platPreview);
+        // A progress pop-up from the same row (a step towards one of the game's locked achievements).
+        await Step("pop-up settings real game progress", () => _ = (Shown as SettingsPage)?.SelfTestPreviewProgress(), 2500);
+        if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.CurrentHandle is { } progPreview and not 0)
+            await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up real game progress.png"), progPreview);
         await Step("pop-up placing", () => AchievementPopup.Place((_, _) => { }), 1500);
         if (!string.IsNullOrWhiteSpace(shots) && AchievementPopup.PlacingHandle is { } placing and not 0)
             await SaveShotAsync(Path.Combine(shots, $"{++shot:000}-pop-up placing window.png"), placing);
@@ -1759,6 +2431,16 @@ public sealed partial class MainWindow : Window
             layer.Child = null;
             await Step($"trailer churn ({rounds} rounds, {watch.Elapsed.TotalSeconds:0.0} s)", () => { }, 300);
         }
+        // HL_SELFTEST_PLAY=<exe>: a game that closes a moment after Play and starts itself again (like a launcher exe or Steam's
+        // DRM wrapper) is still the game launched here: the window must go to the notification area while it runs and come back
+        // once it is gone for good (it used to stay on screen over the game).
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_PLAY") is { Length: > 0 } playExe && File.Exists(playExe)
+            && (only.Length == 0 || only.Any(o => "play restart".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+            failures += await SelfTestPlayRestartAsync(playExe);
+        // HL_SELFTEST_LOCALACH=1: an unlock written to a local achievement file (a folder of the user's own, Steam app 480) is
+        // seen by the watcher, shown as a pop-up and kept in the unlock history.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_LOCALACH") == "1" && (only.Length == 0 || only.Any(o => "local unlock".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
+            failures += await SelfTestLocalUnlockAsync(shots);
         for (int f = 0; f <= 7; f++)
         {
             int step = f;
@@ -1791,6 +2473,7 @@ public sealed partial class MainWindow : Window
         await Step("settings material on", () => ContentFrame.Navigate(typeof(SettingsPage)), 1500);
         await Step("settings material off", () => Look("Hybrid Launcher", "Dark", false), 800);
         Look(savedLook.Palette, savedLook.Theme, savedLook.Material);
+        Helpers.UiPerf.Summary();
         Log.Info($"Self-test finished: {failures} failure(s)");
         Close();
     }
@@ -1820,6 +2503,8 @@ public sealed partial class MainWindow : Window
                     pixels = new byte[w * h * 4];
                     if (Shot.GetDIBits(dc, bmp, 0, (uint)h, pixels, ref info, 0) == 0) pixels = null;
                     else for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
+                    // With the display asleep (or the PC left alone) Windows hands back a black picture: XAML's own is used then.
+                    if (pixels is not null && other == 0 && AllBlack(pixels)) pixels = null;
                 }
                 Shot.SelectObject(dc, old);
                 Shot.DeleteObject(bmp);
@@ -1846,6 +2531,13 @@ public sealed partial class MainWindow : Window
             await File.WriteAllBytesAsync(file, bytes);
         }
         catch (Exception ex) { Log.Warn($"Self-test picture: {ex.Message}"); }
+    }
+
+    static bool AllBlack(byte[] bgra)
+    {
+        for (int i = 0; i < bgra.Length; i += 4 * 97)
+            if (bgra[i] != 0 || bgra[i + 1] != 0 || bgra[i + 2] != 0) return false;
+        return true;
     }
 
     /// <summary>The GDI calls of the self-test's window pictures.</summary>
@@ -1877,6 +2569,8 @@ public sealed partial class MainWindow : Window
 
     public void ApplyTheme(string theme)
     {
+        // Game views kept for a quick return were drawn in the old look.
+        GamePage.ForgetViews();
         // Hybrid Launcher is dark only (0.20): one look to get right, as Steam's.
         var palette = Palettes.Get(AppState.Settings.Palette);
         var requested = ElementTheme.Dark;
@@ -1891,8 +2585,50 @@ public sealed partial class MainWindow : Window
         ThemeRes.RaiseApplied();
     }
 
-    void UpdateTint() =>
-        TintLayer.Background = Palettes.TintBrush(Palettes.Get(AppState.Settings.Palette), RootGrid.ActualTheme == ElementTheme.Dark);
+    /// <summary>
+    /// The window's background: the plain gradient at once, then (dark theme, rc.5) the painted one with glows, vignette and
+    /// dither (Helpers/BackdropPainter) when it is ready. Painted again when the window's size settles or the palette changes.
+    /// </summary>
+    void UpdateTint()
+    {
+        var palette = Palettes.Get(AppState.Settings.Palette);
+        bool dark = RootGrid.ActualTheme == ElementTheme.Dark;
+        if (TintLayer.Background is not Microsoft.UI.Xaml.Media.ImageBrush || !dark) TintLayer.Background = Palettes.TintBrush(palette, dark);
+        if (dark) _ = PaintBackdropAsync(palette);
+    }
+
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _backdropTimer;
+    Windows.Foundation.Size _backdropSize;
+
+    async Task PaintBackdropAsync(Palette palette)
+    {
+        double w = RootGrid.ActualWidth, h = RootGrid.ActualHeight;
+        if (w < 16 || h < 16) return;
+        _backdropSize = new Windows.Foundation.Size(w, h);
+        try
+        {
+            if (await BackdropPainter.BrushAsync(palette, w, h, RootGrid.XamlRoot?.RasterizationScale ?? 1) is { } brush
+                && RootGrid.ActualTheme == ElementTheme.Dark)
+                TintLayer.Background = brush;
+        }
+        catch (Exception ex) { Log.Warn($"Window background: {ex.Message}"); }
+    }
+
+    /// <summary>A resize repaints the background once it has settled (a drag would otherwise paint dozens of times).</summary>
+    void QueueBackdropRepaint()
+    {
+        if (RootGrid.ActualTheme != ElementTheme.Dark) return;
+        if (Math.Abs(RootGrid.ActualWidth - _backdropSize.Width) < 24 && Math.Abs(RootGrid.ActualHeight - _backdropSize.Height) < 24) return;
+        if (_backdropTimer is null)
+        {
+            _backdropTimer = DispatcherQueue.CreateTimer();
+            _backdropTimer.Interval = TimeSpan.FromMilliseconds(220);
+            _backdropTimer.IsRepeating = false;
+            _backdropTimer.Tick += (_, _) => _ = PaintBackdropAsync(Palettes.Get(AppState.Settings.Palette));
+        }
+        _backdropTimer.Stop();
+        _backdropTimer.Start();
+    }
 
     void UpdateTitleBrand() => UpdatePageTitle();
 
@@ -1901,7 +2637,7 @@ public sealed partial class MainWindow : Window
     /// <summary>On a game page the title bar shows "← GAME NAME", starting where the page content starts.</summary>
     void UpdatePageTitle()
     {
-        var game = ContentFrame.Content is GamePage { GameId: { } id } ? AppState.Find(id) : null;
+        var game = Shown is GamePage { GameId: { } id } ? AppState.Find(id) : null;
         PageTitle.Visibility = game is null ? Visibility.Collapsed : Visibility.Visible;
         if (game is null)
         {
@@ -2006,11 +2742,11 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            if (ContentFrame.Content is not GamePage { GameId: { } open } || !open.Equals(id, StringComparison.OrdinalIgnoreCase) || AppState.Find(id) is not null) return;
+            if (Shown is not GamePage { GameId: { } open } || !open.Equals(id, StringComparison.OrdinalIgnoreCase) || AppState.Find(id) is not null) return;
             if (OwnedLibrary.Find(id) is { } owned)
             {
                 AppState.AddOwned(OwnedLibrary.AsGame(owned));
-                ContentFrame.Navigate(typeof(GamePage), id);
+                NavigateGame(id);
                 if (ContentFrame.BackStack.Count > 0) ContentFrame.BackStack.RemoveAt(ContentFrame.BackStack.Count - 1);
             }
             else ContentFrame.Navigate(typeof(LibraryPage));
@@ -2024,7 +2760,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            if (ContentFrame.Content is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
+            if (Shown is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
             SyncSelection();
         }
         catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
@@ -2036,7 +2772,7 @@ public sealed partial class MainWindow : Window
         try
         {
             AppState.Settings.SettingsTab = tab;
-            if (ContentFrame.Content is SettingsPage open) open.SelectTab(tab);
+            if (Shown is SettingsPage open) open.SelectTab(tab);
             else ContentFrame.Navigate(typeof(SettingsPage));
             SyncSelection();
         }
@@ -2045,10 +2781,11 @@ public sealed partial class MainWindow : Window
 
     void SyncSelection()
     {
+        using var __perf = Helpers.UiPerf.Scope("MainWindow.SyncSelection");
         _rebuilding = true;
         try
         {
-            object? tag = ContentFrame.Content switch
+            object? tag = Shown switch
             {
                 LibraryPage => LibraryTag,
                 DownloadsPage => DownloadsTag,
@@ -2056,7 +2793,7 @@ public sealed partial class MainWindow : Window
                 GamePage { GameId: { } id } => id,
                 _ => null,
             };
-            if (ContentFrame.Content is SettingsPage) Nav.SelectedItem = Nav.SettingsItem;
+            if (Shown is SettingsPage) Nav.SelectedItem = Nav.SettingsItem;
             else Nav.SelectedItem = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag is string t && tag is string s && t.Equals(s, StringComparison.OrdinalIgnoreCase));
         }
         finally
@@ -2084,10 +2821,14 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void ShowError(string title, string message, Exception? error = null)
     {
+        ErrorShown?.Invoke(title, message);
         var cause = error is null ? Troubleshoot.Cause(message) : Troubleshoot.Cause(error);
         var text = cause is null || message.Contains(cause, StringComparison.Ordinal) ? message : message + "\n" + cause;
         Toast(InfoBarSeverity.Error, title, text, TimeSpan.FromSeconds(cause is null ? 12 : 16), Troubleshoot.Link(title, message));
     }
+
+    /// <summary>Every error shown (title, message): the Auto tab keeps the ones of a step as that step's reason (2.0.0-rc.10).</summary>
+    public event Action<string, string>? ErrorShown;
 
     public void ShowInfo(string message) => Toast(InfoBarSeverity.Informational, "", message, TimeSpan.FromSeconds(5));
     public void ShowSuccess(string message) => Toast(InfoBarSeverity.Success, "", message, TimeSpan.FromSeconds(5));
@@ -2159,6 +2900,14 @@ public sealed partial class MainWindow : Window
         string splitState = split is null ? "no SplitView" : $"split {split.DisplayMode} open={split.IsPaneOpen} pane={split.OpenPaneLength:0}/{split.CompactPaneLength:0}";
         string state = $"nav {Nav.DisplayMode} open={Nav.IsPaneOpen} pane={Nav.OpenPaneLength:0}, {splitState}, page x={left:0} w={ContentFrame.ActualWidth:0}, window {RootGrid.ActualWidth:0}";
         return (Math.Max(0, right - RootGrid.ActualWidth), state);
+    }
+
+    /// <summary>Self-test: closes every dialog open over the window.</summary>
+    void CloseDialogs()
+    {
+        if (Content?.XamlRoot is not { } root) return;
+        foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+            if (popup.Child is ContentDialog d) d.Hide();
     }
 
     /// <summary>

@@ -102,7 +102,7 @@ public sealed class UltraPlusTab
         _locked.Clear();
         var head = new StackPanel { Spacing = 12 };
         var wiki = _entry?.Ultra.WikiUrl is { Length: > 0 } w ? w : UltraPlus.Site;
-        head.Children.Add(Ui.Heading("", L.T("Ultra+: better graphics for this game"), Ui.LinkButton(L.T("Ultra+ guide"), "", () => Ui.Open(wiki)),
+        head.Children.Add(Ui.Heading("", L.T("Ultra+: better graphics for this game"), Ui.LinkButton(L.T("Ultra+ guide"), "", () => Ui.Open(wiki)),
             subtitle: L.T("Free engine mods by The Ultra Place: lighting, shadows, reflections and ray tracing, tuned live"), tint: Tint));
 
         if (_games.Count == 0)
@@ -813,10 +813,7 @@ public sealed class UltraPlusTab
     {
         if (_saveTimer is null)
         {
-            _saveTimer = Install.DispatcherQueue.CreateTimer();
-            _saveTimer.Interval = TimeSpan.FromMilliseconds(400);
-            _saveTimer.IsRepeating = false;
-            _saveTimer.Tick += (_, _) => Flush();
+            _saveTimer = HybridLauncher.Helpers.WeakTimer.Create(Install.DispatcherQueue, this, TimeSpan.FromMilliseconds(400), static u => u.Flush(), repeating: false);
         }
         _saveTimer.Stop();
         _saveTimer.Start();
