@@ -3,6 +3,10 @@
 ## 2.0.0 — 2026-11-13 · Dashboard, Mods tab and DLSS 5 (experimental)
 
 **Hybrid Launcher 2.0** is the biggest update so far! DLSS5, Auto tab, reworked Achievements managing and much more!
+
+> ☕ Hybrid Launcher is free, and this version, like the whole project, took a lot of time and money to make. If it is
+> useful to you, a tip on [Ko-fi](https://ko-fi.com/lorenzoky) helps keep it going. Thank you!
+
 Everything below is new since 1.3.2:
 
 ### ✨ New: the game page
