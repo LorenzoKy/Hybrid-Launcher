@@ -58,6 +58,7 @@ public static class UiPerf
         _where = where;
         _uiThread = Environment.CurrentManagedThreadId;
         Log.Info($"UI thread: managed {_uiThread}, native {GetCurrentThreadId()} (for traces)");
+        UiRecovery.TrackThread(GetCurrentThreadId());
         root.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((s, e) => OnInput("click", e.OriginalSource, e.GetCurrentPoint(null).Timestamp)), true);
         root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((s, e) => OnInput("key " + e.Key, e.OriginalSource, 0)), true);
         new Thread(Watchdog) { IsBackground = true, Name = "UI watchdog", Priority = ThreadPriority.AboveNormal }.Start();
@@ -113,6 +114,9 @@ public static class UiPerf
         using var timer = CreateWaitableTimerExW(0, null, 0x2 /* HIGH_RESOLUTION */, 0x1F0003);
         var done = new ManualResetEventSlim(false);
         long reported = 0;
+        // Stalls of 20 s in a row in which the UI thread used (almost) no CPU: WinUI stopped serving its queue (UiRecovery).
+        int idleStops = 0;
+        double cpuMark = -1;
         while (true)
         {
             // Hidden (in the tray while a game runs): checked every two seconds and only for a long stall, so a UI thread that
@@ -136,6 +140,16 @@ public static class UiPerf
             }
             double ms = Stopwatch.GetElapsedTime(sent).TotalMilliseconds;
             double limit = Detailed ? DetailedStallMs : CoarseStallMs;
+            if (ms >= 19000 && !App.ShuttingDown)
+            {
+                // A busy thread (a long job, a big layout) burns CPU; a stopped queue leaves the thread waiting for messages.
+                // The first 20 s only set the mark; two more idle ones (a minute in all) mean it will not come back.
+                double cpu = UiRecovery.ThreadCpuMs();
+                idleStops = cpu >= 0 && cpuMark >= 0 && cpu - cpuMark < 200 ? idleStops + 1 : 0;
+                cpuMark = cpu;
+                if (idleStops >= 2) UiRecovery.Restart(MediaPolicy.WindowHidden, () => App.Window?.DropTrayIcon());
+            }
+            else { idleStops = 0; cpuMark = -1; }
             if (hidden && ms < 5000) { SleepMs(timer, 8); continue; }
             // A UI thread stopped for good: a small dump of every thread's stack next to the log, once per run, to find
             // where it waits (open it with a debugger, or Tools\windows\minidump-stack-scan.py --all-threads).

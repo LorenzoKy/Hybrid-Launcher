@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.1.1 — 2026-11-14 · Hotfix for 2.1.0
+
+**Hybrid Launcher 2.1.1** is a hotfix for [2.1.0](#210--2026-11-14--profiles-epic-achievements-and-new-themes). Everything
+new in 2.1.0 is listed in its section. If you have 2.1.0, the app offers this update by itself a few seconds after it
+starts.
+
+### 🐛 Fixes
+
+- **The window could freeze for good** after a while in use: nothing on it moved or answered clicks any more, although it
+  did not say *Not responding*, and only Task Manager could close it. The cause is inside the Windows App SDK that draws
+  the window (its queue of work for the window stops running, also reported to Microsoft), so Hybrid Launcher now watches
+  for it: when the window has done nothing for a minute while its thread waits idle, Hybrid Launcher saves your settings
+  and opens again by itself in a few seconds (in the notification area if it was hidden there). A running game is picked
+  up again as usual.
+
 ## 2.1.0 — 2026-11-14 · Profiles, Epic achievements and new themes
 
 Everything below is new since 2.0.0:

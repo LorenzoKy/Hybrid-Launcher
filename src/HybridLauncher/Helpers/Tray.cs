@@ -150,6 +150,15 @@ public sealed class Tray : IDisposable
         else if (cmd == CmdQuit) _quit();
     }
 
+    /// <summary>Only the icon by the clock goes; safe from any thread (Shell_NotifyIcon is), unlike destroying the window.</summary>
+    public void RemoveIcon()
+    {
+        if (!_added) return;
+        var data = Data();
+        Shell_NotifyIcon(NIM_DELETE, ref data);
+        _added = false;
+    }
+
     public void Dispose()
     {
         _retry?.Dispose();

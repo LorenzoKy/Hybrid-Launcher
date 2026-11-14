@@ -235,6 +235,10 @@ public sealed partial class MainWindow : Window
     // ---------- start, notification area ----------
 
     Tray? _tray;
+
+    /// <summary>Takes the icon out of the notification area from any thread (UiRecovery, before a stopped copy ends).</summary>
+    internal void DropTrayIcon() => _tray?.RemoveIcon();
+
     bool _quitting;
     bool _hidden;
     // The window went to the notification area by itself for a game (Settings → General): it comes back when the last game closes,

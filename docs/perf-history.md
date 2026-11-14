@@ -2,6 +2,31 @@
 
 One entry per version: `run-perf.ps1 -Only snappy -Exe <published exe> -Report` (no input; a copy of real data). Every version must be at least as quick as the one before. Newest first.
 
+## 2.1.1 - 2026-11-14 21:15
+
+- summary [first]: first frame median 126 ms, worst 145 ms; jank median 356 ms, worst 453 ms
+- summary [return]: first frame median 6 ms, worst 11 ms; jank median 26 ms, worst 41 ms
+- summary [prepared]: first frame median 7 ms, worst 7 ms; jank median 61 ms, worst 98 ms
+- summary [tab]: first frame median 51 ms, worst 153 ms; jank median 171 ms, worst 535 ms
+- summary [scroll]: first frame median 6 ms, worst 10 ms; jank median 0 ms, worst 14 ms
+- summary [page]: first frame median 45 ms, worst 150 ms; jank median 99 ms, worst 225 ms
+- memory: 964 MB private, 972 MB working set, 8 game pages alive
+- verdict: FAIL (8 of 30 over budget)
+- gate vs 2.1.0 - 2026-11-14 18:49: REGRESSION (1)
+  - [tab] jank median 171 ms, was 70 ms
+- note: not a code regression. 2.1.1 only adds work to the watchdog after a 19 s stall. Measured alternately on the same
+  data right before: tab jank median 2.1.0 93 / 157 ms, 2.1.1 169 / 171 ms; tab first frame 2.1.0 52 / 57 ms, 2.1.1 54 /
+  51 ms; page 49 / 46 vs 47 / 47 ms. The tab jank median (5th of 9 tabs) swings by 60 ms between runs of the same exe.
+- Over budget:
+  - [first] open Apex Legends: first frame 106 ms (busy 48), 64 missed, worst gap 126 ms, jank 453 ms, settled 868 ms  (budget 300 / 450)
+  - [prepared] open (prepared) Marvel's Spider-Man 2: first frame 6 ms (busy 4), 18 missed, worst gap 72 ms, jank 98 ms, settled 115 ms  (budget 50 / 80)
+  - [tab] tab auto: first frame 153 ms (busy 14), 4 missed, worst gap 28 ms, jank 171 ms, settled 182 ms  (budget 150 / 200)
+  - [tab] tab opti: first frame 101 ms (busy 58), 79 missed, worst gap 98 ms, jank 535 ms, settled 628 ms  (budget 150 / 200)
+  - [tab] tab mods: first frame 109 ms (busy 92), 18 missed, worst gap 38 ms, jank 202 ms, settled 247 ms  (budget 150 / 200)
+  - [tab] tab pcgw: first frame 126 ms (busy 30), 15 missed, worst gap 88 ms, jank 204 ms, settled 215 ms  (budget 150 / 200)
+  - [tab] tab ach: first frame 51 ms (busy 22), 60 missed, worst gap 286 ms, jank 380 ms, settled 456 ms  (budget 150 / 200)
+  - [page] settings: first frame 150 ms (busy 51), 15 missed, worst gap 72 ms, jank 225 ms, settled 314 ms  (budget 150 / 200)
+
 ## 2.1.0 - 2026-11-14 18:49
 
 - summary [first]: first frame median 115 ms, worst 155 ms; jank median 372 ms, worst 456 ms

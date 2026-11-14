@@ -1,4 +1,4 @@
-using HybridLauncher.Core;
+﻿using HybridLauncher.Core;
 using Microsoft.UI.Xaml;
 
 namespace HybridLauncher;
@@ -104,6 +104,8 @@ public partial class App : Application
             Environment.Exit(0);
             return;
         }
+        // Started again by a copy whose UI thread stopped (UiRecovery): that copy ends first, so its lock is gone.
+        Helpers.UiRecovery.WaitForStoppedCopy(Environment.GetCommandLineArgs());
         // One Hybrid Launcher at a time: two instances would overwrite each other's settings and could install into the same folder.
         // A separate data folder (HL_DATA, used for tests) is a separate Hybrid Launcher: it may run beside the normal one.
         var name = @"Local\HybridLauncher-SingleInstance";
@@ -133,6 +135,7 @@ public partial class App : Application
         _launchSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-launch");
 
         Log.Info($"{AppInfo.Name} {AppUpdates.DisplayVersion} starting, data in {AppInfo.DataRoot}");
+        if (Helpers.UiRecovery.IsRecovery(Environment.GetCommandLineArgs())) Log.Warn("Started again: the previous copy's UI thread had stopped");
         Log.Info($"Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, {System.Globalization.CultureInfo.CurrentUICulture.Name}");
         SettingsStore.Load();
         // "Hybrid Config and Stats": what another PC sent (settings, play time, history) is merged in before anything reads
@@ -146,7 +149,7 @@ public partial class App : Application
         Window = new MainWindow();
         // Started with Windows: only the icon in the notification area, the window opens from there.
         // From a desktop shortcut: the game starts, Hybrid Launcher stays in the notification area to watch it.
-        bool tray = launch is not null || (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase) && !AppState.Settings.StartOpensWindow);
+        bool tray = launch is not null || Helpers.UiRecovery.StartedHidden(Environment.GetCommandLineArgs()) || (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase) && !AppState.Settings.StartOpensWindow);
         if (tray) Window.StartInTray();
         else Window.ShowAtStart();
         Helpers.MediaPolicy.Attach(Window, hidden: tray);
@@ -167,6 +170,9 @@ public partial class App : Application
             }
         }) { IsBackground = true, Name = "Hybrid Launcher launch signal" }.Start();
         if (launch is not null) Window.LaunchFromShortcut(launch);
+        // Tests only (a separate data folder): the UI thread stops, idle, 8 s after start, as when WinUI stops serving it.
+        if (Environment.GetEnvironmentVariable("HL_TEST_UI_STOP") == "1" && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")) && !Helpers.UiRecovery.IsRecovery(Environment.GetCommandLineArgs()))
+            Helpers.Later.Run(ui, TimeSpan.FromSeconds(8), () => { Log.Warn("Test: stopping the UI thread"); Log.Flush(); Thread.Sleep(Timeout.Infinite); });
         if (Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase)) _ = Window.RunSelfTestAsync();
         // Steam's sign-in from inside the shipped (trimmed) app, where it can fail although the smoke test passes: logged.
         if (Environment.GetCommandLineArgs().Contains("--steamprobe", StringComparer.OrdinalIgnoreCase))
