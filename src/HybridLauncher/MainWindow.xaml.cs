@@ -53,6 +53,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => Helpers.FocusGuard.Stop();
         GuardSearchFocus();
         Helpers.GameUpdater.Start(DispatcherQueue);
+        Helpers.EpicWeb.Start(DispatcherQueue);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
 
         var scale = (RootGrid.XamlRoot?.RasterizationScale) ?? GetDpiScale();
@@ -71,9 +72,12 @@ public sealed partial class MainWindow : Window
         _maximizeOnShow = st.WindowMaximized;
 
         ApplyTheme(AppState.Settings.Theme);
-        RootGrid.ActualThemeChanged += (_, _) => { UpdateCaptionButtons(); UpdateTint(); };
+        // Not while ApplyTheme flips the theme twice: it paints once itself, after (2.1 audit: three paints per change).
+        RootGrid.ActualThemeChanged += (_, _) => { if (_applyingTheme) return; UpdateCaptionButtons(); UpdateTint(); };
         RootGrid.SizeChanged += (_, _) => QueueBackdropRepaint();
+        WatchWindowsColours();
         Http.GitHubLimitReached += OfferGitHubSignIn;
+        HybridLauncher.Core.Media.ArtOverrides.Changed += OnArtChanged;
 
         // The built-in item follows the Windows language; keep the UI in one language.
         Nav.Loaded += (_, _) =>
@@ -170,14 +174,20 @@ public sealed partial class MainWindow : Window
         AddHistoryKeys();
 
         AppState.GamesChanged += RebuildNav;
-        AppState.PinsChanged += RebuildNav;
+        AppState.PinsChanged += () => { RebuildNav(); RefreshLibrary(); };
         // The list sorts and filters like the library: an order or filter that needs play time, achievements or tags
         // is applied again once those are read (in the background, after the games are found).
         AppState.GamesChanged += () => _ = Library.LoadStatsAsync(DispatcherQueue);
         Library.StatsReady += () =>
         {
-            var f = AppState.Settings.Library;
-            if (f.Sort is not "name" and not "added" || f.Tech.Count > 0) RebuildNav();
+            var f = Library.ListFilter;
+            if ((f.Sort is not "name" and not "added" || f.Tech.Count > 0) && Library.OrderKey(f) != _navOrder) RebuildNav();
+        };
+        // The owned games' stats change only their own order (not installed, shown, sorted by what the stats hold).
+        Library.OwnedStatsReady += () =>
+        {
+            var f = Library.ListFilter;
+            if (f.ShowNotInstalled && f.Sort is not "name" and not "added" and not "tech") RebuildNav();
         };
         // Closing keeps Hybrid Launcher in the notification area (Settings, Features); Quit there, or the setting off, really closes it.
         AppWindow.Closing += (_, e) =>
@@ -201,10 +211,13 @@ public sealed partial class MainWindow : Window
             SaveWindowState();
             AchievementWatcher.Stop();
             AchievementPopup.CloseAll();
+            Helpers.EpicWeb.Shutdown();
             SettingsStore.Save();
             SettingsStore.Flush();
             _tray?.Dispose();
             _tray = null;
+            _configTimer?.Stop();
+            if (!App.SelfTesting) HybridLauncher.Core.Cloud.ConfigSync.PushAtExit(TimeSpan.FromSeconds(2.5));
             App.ExitForSure();
         };
         GameSessions.HdrProblem += message => ShowError(L.T("Smart HDR"), message);
@@ -342,6 +355,19 @@ public sealed partial class MainWindow : Window
         GameSessions.WatchAll(() => watched);
         // Cloud saves: a game that closes sends its changed saves (Play brings newer ones down first, in AppState.LaunchAsync).
         CloudSync.Start();
+        // "Hybrid Config and Stats": Hybrid Launcher's own settings and numbers go to the same cloud when they changed, every
+        // fifteen minutes (the first a couple of minutes after start), off the UI thread, and once more when the app closes.
+        if (!App.SelfTesting)
+        {
+            _configTimer = DispatcherQueue.CreateTimer();
+            _configTimer.Interval = TimeSpan.FromMinutes(2);
+            _configTimer.Tick += (t, _) =>
+            {
+                t.Interval = TimeSpan.FromMinutes(15);
+                if (HybridLauncher.Core.Cloud.ConfigSync.On) _ = Task.Run(() => HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None));
+            };
+            _configTimer.Start();
+        }
         // Steam friends: the footer item follows the sign-in, its badge the friends online (read once in the background).
         FriendsView.CountChanged += UpdateFriendsItem;
         OwnedLibrary.Loaded += UpdateFriendsItem;
@@ -699,6 +725,7 @@ public sealed partial class MainWindow : Window
         PaneBar.ColumnSpacing = open ? 6 : 0;
         PaneBar.Margin = open ? new Thickness(12, 2, 12, 8) : new Thickness(7, 2, 0, 8);
         PaneBar.HorizontalAlignment = open ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        UpdateProfileChip(open);
     }
 
     // ---------- navigation list ----------
@@ -706,6 +733,7 @@ public sealed partial class MainWindow : Window
     void ShowLoading()
     {
         Nav.MenuItems.Clear();
+        _ownedInList.Clear();
         Nav.MenuItems.Add(new NavigationViewItemHeader { Content = L.T("Scanning Steam, Epic, GOG and Xbox…") });
         ContentFrame.Navigate(typeof(HomePage));
     }
@@ -726,7 +754,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     List<OwnedGame> NotInstalledShown()
     {
-        var f = AppState.Settings.Library;
+        var f = Library.ListFilter;
         if (!f.ShowNotInstalled || f.OptiOnly) return [];
         if (!OwnedLibrary.IsLoaded)
         {
@@ -736,24 +764,30 @@ public sealed partial class MainWindow : Window
                 _ = OwnedLibrary.LoadAsync().ContinueWith(_ => DispatcherQueue.TryEnqueue(() =>
                 {
                     _ownedLoading = false;
-                    if (OwnedLibrary.IsLoaded) RebuildNav();
+                    if (OwnedLibrary.IsLoaded)
+                    {
+                        RebuildNav();
+                        // Their hours and achievements, for the orders that need them.
+                        _ = Library.LoadOwnedStatsAsync(DispatcherQueue);
+                    }
                 }), TaskScheduler.Default);
             }
             return [];
         }
-        return OwnedLibrary.NotInstalled()
-            .Where(g => _filter.Length == 0 || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase))
-            .Where(g => f.Launchers.Count == 0 || f.Launchers.Contains("store:" + g.Store))
-            .ToList();
+        return LibraryPage.OwnedShown(_filter, f);
     }
 
     /// <summary>The games under one group heading, in the list's order: what folding a group takes out or puts back.</summary>
     List<NavigationViewItem> GroupItems(string key)
     {
         if (key == NotInstalledKey) return NotInstalledShown().Select(CreateOwnedItem).ToList();
-        return Library.Apply(AppState.VisibleGames.Where(Matches))
+        var list = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled).Where(Matches), Library.ListFilter)
             .Where(g => !AppState.IsPinned(g.Id) && StoreLogos.GroupOf(g).Key == key)
             .Select(CreateItem).ToList();
+        // Grouped, a launcher's group holds its games not installed too, after the others.
+        if (Library.ListFilter.GroupByLauncher)
+            list.AddRange(NotInstalledShown().Where(o => "store:" + o.Store == key).Select(CreateOwnedItem));
+        return list;
     }
 
     /// <summary>
@@ -770,7 +804,11 @@ public sealed partial class MainWindow : Window
         try
         {
             int at = Nav.MenuItems.IndexOf(header) + 1;
-            while (at < Nav.MenuItems.Count && Nav.MenuItems[at] is NavigationViewItem) Nav.MenuItems.RemoveAt(at);
+            while (at < Nav.MenuItems.Count && Nav.MenuItems[at] is NavigationViewItem gone)
+            {
+                if (gone.Tag is string id) _ownedInList.Remove(id);
+                Nav.MenuItems.RemoveAt(at);
+            }
             if (!fold)
                 foreach (var item in GroupItems(key)) Nav.MenuItems.Insert(at++, item);
             if (header.Content is Grid { Children.Count: > 0 } grid)
@@ -900,14 +938,62 @@ public sealed partial class MainWindow : Window
         return near;
     }
 
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _configTimer;
+
+    // The library's order the list was last drawn in (Library.OrderKey).
+    string? _navOrder;
+
+    // A redraw of the list: the not-installed items still to add belong to the redraw that asked for them.
+    int _navRun;
+    const int OwnedAtOnce = 30;
+
+    /// <summary>
+    /// The not-installed games of a group: the first few at once, the rest in turns of the UI thread (2.1-rc.3: 370 items added
+    /// in one go held the window 0.5-0.8 s). A newer redraw drops what an older one had left to add.
+    /// </summary>
+    void AddOwnedItems(List<OwnedGame> games, Dictionary<string, NavigationViewItem> items)
+    {
+        foreach (var g in games.Take(OwnedAtOnce)) Nav.MenuItems.Add(items[g.Id] = CreateOwnedItem(g));
+        if (games.Count <= OwnedAtOnce || Nav.MenuItems.LastOrDefault() is not { } anchor) return;
+        int run = _navRun;
+        var rest = new Queue<OwnedGame>(games.Skip(OwnedAtOnce));
+        void Next()
+        {
+            if (run != _navRun || _closed || rest.Count == 0) return;
+            int at = Nav.MenuItems.IndexOf(anchor);
+            if (at < 0) return;
+            _rebuilding = true;
+            try
+            {
+                for (int i = 0; i < 40 && rest.Count > 0; i++)
+                {
+                    var g = rest.Dequeue();
+                    // Already in the list (its group was folded and opened again meanwhile): not twice.
+                    if (_ownedInList.Contains(g.Id)) continue;
+                    var item = CreateOwnedItem(g);
+                    Nav.MenuItems.Insert(++at, item);
+                    anchor = item;
+                    // The page shown is this game's: its item is selected once it is in the list (2.1-rc.3 audit).
+                    if (Shown is GamePage { GameId: { } shown } && shown.Equals(g.Id, StringComparison.OrdinalIgnoreCase)) Nav.SelectedItem = item;
+                }
+            }
+            finally { _rebuilding = false; }
+            if (rest.Count > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+        }
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
+    }
+
     void RebuildNav()
     {
         using var __perf = Helpers.UiPerf.Scope("MainWindow.RebuildNav");
+        _navOrder = Library.OrderKey(Library.ListFilter);
+        _navRun++;
         KeepFocusOffSearch(SearchHasFocus());
         _rebuilding = true;
         try
         {
             Nav.MenuItems.Clear();
+            _ownedInList.Clear();
 
             // The PC overview sits on top, above the game list.
             var hardware = new NavigationViewItem { Content = L.T("My PC"), Tag = HardwareTag, Icon = PaneIcon("", 0xFF5AB8FF, 0xFF7C6CFF) };
@@ -929,10 +1015,14 @@ public sealed partial class MainWindow : Window
 
             var items = new Dictionary<string, NavigationViewItem>(StringComparer.OrdinalIgnoreCase);
 
-            // The library's sort and filters (one set, shared with the grid page and set from either Filters button).
-            var shown = Library.Apply(AppState.VisibleGames.Where(Matches));
+            // The library's sort and filters (one set, shared with the grid page and set from either Filters button). A game owned
+            // but not installed that was opened once is a page-only game in the app's list: it shows with the not-installed ones.
+            var shown = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled).Where(Matches), Library.ListFilter);
             var shownIds = shown.Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
             UpdatePaneFilterBadge();
+            var owned = NotInstalledShown();
+            bool grouped = Library.ListFilter.GroupByLauncher;
+            var paneLabel = (Style)HybridLauncher.Helpers.ThemeRes.Current["PaneGroupLabel"];
 
             // Quick access: pinned games first, in pin order, in both views.
             var pinned = AppState.PinnedGames().Where(g => shownIds.Contains(g.Id)).ToList();
@@ -945,31 +1035,45 @@ public sealed partial class MainWindow : Window
 
             {
                 var games = shown.Where(g => !AppState.IsPinned(g.Id)).ToList();
-                if (games.Count == 0 && pinned.Count == 0)
+                if (games.Count == 0 && pinned.Count == 0 && owned.Count == 0)
                     Nav.MenuItems.Add(new NavigationViewItemHeader
                     {
                         Content = _filter.Length > 0 ? L.T("No game matches the search")
-                            : AppState.Settings.Library.IsFiltering && AppState.VisibleGames.Any() ? L.T("No game passes the filters")
+                            : Library.ListFilter.IsFiltering && AppState.VisibleGames.Any() ? L.T("No game passes the filters")
                             : L.T("No games found"),
                     });
 
-                // Same order as the library (sort setting), in the user's group order; a folded group shows only its heading.
-                foreach (var (key, group) in Library.Groups(games))
+                if (grouped)
                 {
+                    // Same order as the library (sort setting), in the user's group order; a folded group shows only its heading.
+                    // A group holds its launcher's games not installed too (2.1-rc.3), after the installed ones.
+                    var ownedBy = owned.GroupBy(o => "store:" + o.Store).ToDictionary(g => g.Key, g => g.ToList());
+                    var onlyOwned = ownedBy.Where(o => !games.Any(g => StoreLogos.GroupOf(g).Key == o.Key)).Select(o => OwnedLibrary.AsGame(o.Value[0]));
+                    foreach (var (key, group) in Library.Groups(games.Concat(onlyOwned)))
+                    {
+                        var mine = ownedBy.GetValueOrDefault(key) ?? [];
+                        var installed = group.Where(g => !g.NotInstalled).ToList();
+                        Nav.MenuItems.Add(new NavigationViewItemSeparator());
+                        Nav.MenuItems.Add(GroupHeaderItem(key, StoreLogos.GroupHeader(group[0], installed.Count + mine.Count, paneLabel)));
+                        if (IsFolded(key)) continue;
+                        foreach (var game in installed) Nav.MenuItems.Add(items[game.Id] = CreateItem(game));
+                        AddOwnedItems(mine, items);
+                    }
+                }
+                else if (games.Count > 0)
+                {
+                    // Not grouped (Filters, Look): one block of every game in the chosen order, as in the library (2.1-rc.3).
                     Nav.MenuItems.Add(new NavigationViewItemSeparator());
-                    Nav.MenuItems.Add(GroupHeaderItem(key, StoreLogos.GroupHeader(group[0], group.Count, (Style)HybridLauncher.Helpers.ThemeRes.Current["PaneGroupLabel"])));
-                    if (IsFolded(key)) continue;
-                    foreach (var game in group) Nav.MenuItems.Add(items[game.Id] = CreateItem(game));
+                    foreach (var game in games) Nav.MenuItems.Add(items[game.Id] = CreateItem(game));
                 }
             }
 
-            // Filters → "Also games you own but have not installed": the grid's last section, after the groups here too.
-            if (NotInstalledShown() is { Count: > 0 } owned)
+            // Not grouped, "Also games you own but have not installed": the grid's last section, after the games here too.
+            if (!grouped && owned.Count > 0)
             {
                 Nav.MenuItems.Add(new NavigationViewItemSeparator());
-                Nav.MenuItems.Add(GroupHeaderItem(NotInstalledKey, StoreLogos.NotInstalledHeader(owned.Count, (Style)HybridLauncher.Helpers.ThemeRes.Current["PaneGroupLabel"])));
-                if (!IsFolded(NotInstalledKey))
-                    foreach (var g in owned) Nav.MenuItems.Add(items[g.Id] = CreateOwnedItem(g));
+                Nav.MenuItems.Add(GroupHeaderItem(NotInstalledKey, StoreLogos.NotInstalledHeader(owned.Count, paneLabel)));
+                if (!IsFolded(NotInstalledKey)) AddOwnedItems(owned, items);
             }
 
             switch (Shown)
@@ -982,7 +1086,9 @@ public sealed partial class MainWindow : Window
                     break;
                 case LibraryPage page:
                     Nav.SelectedItem = library;
-                    page.Reload(_filter);
+                    // Only when what the grid shows changed (the search, the games, its settings): a change of the list's own
+                    // filters leaves the covers as they are (2.1-rc.4).
+                    page.ReloadIfChanged(_filter);
                     break;
                 case DownloadsPage:
                     Nav.SelectedItem = downloads;
@@ -1010,15 +1116,10 @@ public sealed partial class MainWindow : Window
                         Nav.SelectedItem = library;
                         ContentFrame.Navigate(typeof(LibraryPage), _filter);
                     }
-                    else if (lastGame is not null)
+                    else
                     {
                         Nav.SelectedItem = items.GetValueOrDefault(lastGame.Id);
                         NavigateGame(lastGame.Id);
-                    }
-                    else
-                    {
-                        Nav.SelectedItem = null;
-                        if (Shown is not HomePage) ContentFrame.Navigate(typeof(HomePage));
                     }
                     break;
             }
@@ -1050,12 +1151,48 @@ public sealed partial class MainWindow : Window
     /// <summary>Redraws the side pane (after the library's groups, order or filters changed).</summary>
     public void RefreshList() => RebuildNav();
 
-    /// <summary>The pane's Filters button: the library's own panel; a dot on the button while any filter is on.</summary>
-    void PaneFilters_Opening(object sender, object e) => PaneFiltersFlyout.Content = LibraryPage.FiltersPanel(PaneFiltersFlyout.Hide);
+    /// <summary>The library's filters changed: the grid follows when it is the page shown (else when it is opened).</summary>
+    public void RefreshLibrary() => (Shown as LibraryPage)?.ReloadIfChanged(_filter);
+
+    /// <summary>
+    /// A game's own picture changed (Edit artwork, 2.1): the library drops its cover, the list redraws its icon, and the game's
+    /// page shows the new banner or logo (built again; the one on screen at once).
+    /// </summary>
+    void OnArtChanged(string id, HybridLauncher.Core.Media.ArtKind kind)
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => OnArtChanged(id, kind)); return; }
+        try
+        {
+            switch (kind)
+            {
+                case HybridLauncher.Core.Media.ArtKind.Cover:
+                    LibraryPage.ForgetCover(id);
+                    // The library on screen shows the new cover now; the profile and Downloads at their next look (2.1-rc.3 audit).
+                    ProfilePage.ArtVersion++;
+                    if (Shown is LibraryPage library) library.Reload(library.Filter);
+                    break;
+                case HybridLauncher.Core.Media.ArtKind.Icon:
+                    // A not-installed game's list item is kept between redraws: made again with the new icon.
+                    _ownedItems.Remove(id);
+                    RebuildNav();
+                    break;
+                default:
+                    // The page kept the game's data with the old banner (rc.8: a new banner showed only after a restart).
+                    GamePage.ArtChanged(id);
+                    if (Shown is GamePage { GameId: { } shown } && shown.Equals(id, StringComparison.OrdinalIgnoreCase)) ReloadGame(id);
+                    else ForgetGamePage(id);
+                    break;
+            }
+        }
+        catch (Exception ex) { Log.Warn($"Artwork change of {id}: {ex.Message}"); }
+    }
+
+    /// <summary>The pane's Filters button: the list's own filters (2.1-rc.4), in the library's panel; a dot while any is on.</summary>
+    void PaneFilters_Opening(object sender, object e) => PaneFiltersFlyout.Content = LibraryPage.FiltersPanel(PaneFiltersFlyout.Hide, list: true);
 
     void UpdatePaneFilterBadge()
     {
-        int active = Library.ActiveFilters();
+        int active = Library.ActiveFilters(Library.ListFilter);
         PaneFilterDot.Visibility = active > 0 ? Visibility.Visible : Visibility.Collapsed;
         ToolTipService.SetToolTip(PaneFilterButton, active > 0 ? L.F("Sort and filters ({0} on)", active) : L.T("Sort and filters"));
     }
@@ -1191,8 +1328,8 @@ public sealed partial class MainWindow : Window
     static NavigationViewItemHeader PinnedHeader(int count)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        panel.Children.Add(new FontIcon { Glyph = "", FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
-        panel.Children.Add(new TextBlock { Text = L.T("PINNED"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 12, CharacterSpacing = 40, VerticalAlignment = VerticalAlignment.Center });
+        panel.Children.Add(new FontIcon { Glyph = "\uEB52", FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+        panel.Children.Add(new TextBlock { Text = L.T("FAVORITES"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 12, CharacterSpacing = 40, VerticalAlignment = VerticalAlignment.Center });
         panel.Children.Add(new TextBlock { Text = count.ToString(), FontSize = 11, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
         return new NavigationViewItemHeader { Content = panel, Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["StoreHeaderStyle"] };
     }
@@ -1226,7 +1363,13 @@ public sealed partial class MainWindow : Window
     public void OpenGame(string id)
     {
         using var __perf = Helpers.UiPerf.Scope("MainWindow.OpenGame");
-        if (AppState.FindAny(id) is null) return;
+        if (AppState.FindAny(id) is null)
+        {
+            // A game owned on a launcher but not installed (its achievements show in the Library and the profile): its page
+            // opens through the launcher's library (2.1-rc.3 audit: the click did nothing).
+            if (OwnedLibrary.Find(id) is { } owned) OwnedLibrary.Open(owned);
+            return;
+        }
         AppState.Settings.LastGameId = id;
         KeepFocusOffSearch(SearchHasFocus());
         _rebuilding = true;
@@ -1281,20 +1424,26 @@ public sealed partial class MainWindow : Window
         BigIcon(item);
         PaneTip(item, $"{game.Title}\n{game.StoreLabel} · {game.InstallDir}");
 
-        item.ContextFlyout = GameMenu(game);
+        // The menu is made when it opens (and again each time, so it says what is true then): the list no longer carries a
+        // dozen menu items per game it may never show.
+        var menu = new MenuFlyout();
+        menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+            var made = GameMenu(game);
+            var entries = made.Items.ToList();
+            made.Items.Clear();
+            foreach (var e in entries) menu.Items.Add(e);
+        };
+        item.ContextFlyout = menu;
         // Resting on a game warms its art (after a short pause, so a pointer sweeping over the list asks for nothing).
         Microsoft.UI.Dispatching.DispatcherQueueTimer? warm = null;
         item.PointerEntered += (_, _) =>
         {
-            warm ??= DispatcherQueue.CreateTimer();
-            warm.Interval = TimeSpan.FromMilliseconds(120);
-            warm.IsRepeating = false;
-            warm.Tick -= OnWarm;
-            warm.Tick += OnWarm;
+            warm ??= Helpers.WeakTimer.Create(DispatcherQueue, game, TimeSpan.FromMilliseconds(120), static g => Core.Media.GameInfo.Warm(g), repeating: false);
             warm.Start();
         };
         item.PointerExited += (_, _) => warm?.Stop();
-        void OnWarm(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object _) => Core.Media.GameInfo.Warm(game);
         if (GameSessions.IsActive(game.Id)) DispatcherQueue.TryEnqueue(() => MarkRunning(game.Id));
 
         _ = LoadIconAsync(item, game);
@@ -1302,42 +1451,89 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>A game you own but have not installed: dimmed, its launcher's icon until Steam's own is found; opens its Download page.</summary>
+    // The not-installed games' items, kept across redraws (2.1-rc.3): hundreds of them were made again, each loading its
+    // icon, on every change of a filter or the search (1-2 s with the window frozen in the user's log).
+    readonly Dictionary<string, NavigationViewItem> _ownedItems = new(StringComparer.OrdinalIgnoreCase);
+    // The ones in the list now (an item can be in it once only).
+    readonly HashSet<string> _ownedInList = new(StringComparer.OrdinalIgnoreCase);
+
     NavigationViewItem CreateOwnedItem(OwnedGame game)
     {
+        if (_ownedItems.TryGetValue(game.Id, out var kept) && _ownedInList.Add(game.Id)) return kept;
         var item = new NavigationViewItem { Content = ItemName(game.Name), Tag = game.Id, Opacity = 0.62, Icon = new FontIcon { Glyph = "" } };
         BigIcon(item);
         PaneTip(item, $"{game.Name}\n{StoreLogos.Label(game.Store)} · {L.T("not installed")}");
+        // The icon only once the item is on screen (the list makes the items it shows): never hundreds at once.
         if (game.Store == GameStore.Steam && game.Id.StartsWith("steam:", StringComparison.OrdinalIgnoreCase))
-            _ = LoadIconAsync(item, OwnedLibrary.AsGame(game));
+        {
+            bool asked = false;
+            item.Loaded += (_, _) =>
+            {
+                if (asked) return;
+                asked = true;
+                _ = LoadIconAsync(item, OwnedLibrary.AsGame(game));
+            };
+        }
+        var menu = new MenuFlyout();
+        menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+            var made = OwnedMenu(game);
+            var entries = made.Items.ToList();
+            made.Items.Clear();
+            foreach (var e in entries) menu.Items.Add(e);
+        };
+        item.ContextFlyout = menu;
+        _ownedItems[game.Id] = item;
+        _ownedInList.Add(game.Id);
         return item;
     }
 
-    /// <summary>The right-click menu of a game, in the list and in the library grid.</summary>
+    /// <summary>
+    /// The right-click menu of a game, in the list and in the library grid, laid out as Hydra's (2.1): Play (Stop while it
+    /// runs), Collection (the favorites, the user's collections, a new one), Create shortcut (desktop, Steam), Options (the
+    /// rest) and Properties.
+    /// </summary>
     public MenuFlyout GameMenu(Game game)
     {
         var menu = new MenuFlyout();
-        bool pinned = AppState.IsPinned(game.Id);
-        menu.Items.Add(MenuItem(pinned ? L.T("Unpin from quick access") : L.T("Pin to quick access"), pinned ? "" : "",
-            () => AppState.SetPinned(game.Id, !pinned)));
-        menu.Items.Add(MenuItem(L.T("Play"), "\uF5B0", () => _ = PlayFromMenuAsync(game)));
-        menu.Items.Add(MenuItem(L.T("Open game folder"), "", () => GameLauncher.OpenFolder(game.InstallDir)));
-        menu.Items.Add(MenuItem(L.T("Rename…"), "", () => _ = RenameGameAsync(game)));
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(MenuItem(L.T("Hide from the list"), "", () =>
+        if (GameSessions.IsActive(game.Id))
+            menu.Items.Add(MenuItem(L.T("Stop"), "", () => _ = GameSessions.StopAsync(game.Id)));
+        else
+        {
+            var play = MenuItem(L.T("Play"), "", () => _ = PlayFromMenuAsync(game));
+            play.IsEnabled = !game.Installing;
+            menu.Items.Add(play);
+        }
+        menu.Items.Add(CollectionMenu(game.Id));
+
+        if (!game.NotInstalled && !game.Installing)
+        {
+            var shortcuts = new MenuFlyoutSubItem { Text = L.T("Create shortcut"), Icon = new FontIcon { Glyph = "" } };
+            shortcuts.Items.Add(MenuItem(L.T("Desktop shortcut"), "", () => _ = DesktopShortcutAsync(game)));
+            var steam = MenuItem(L.T("Steam shortcut"), "", () => SteamShortcut(game));
+            steam.Icon = StoreLogos.MenuIcon(GameStore.Steam);
+            shortcuts.Items.Add(steam);
+            menu.Items.Add(shortcuts);
+        }
+
+        var options = new MenuFlyoutSubItem { Text = L.T("Options"), Icon = new FontIcon { Glyph = "" } };
+        options.Items.Add(MenuItem(L.T("Edit artwork…"), "", () => { if (Content.XamlRoot is { } root) _ = Controls.ArtworkDialog.ShowAsync(root, ((FrameworkElement)Content).ActualTheme, game); }));
+        options.Items.Add(MenuItem(L.T("Rename…"), "", () => _ = RenameGameAsync(game)));
+        options.Items.Add(MenuItem(L.T("Open game folder"), "", () => GameLauncher.OpenFolder(game.InstallDir)));
+        if (!game.NotInstalled && !game.Installing)
+            options.Items.Add(MenuItem(L.T("Verify game files…"), "", () => { if (Content.XamlRoot is { } root) _ = VerifyFlow.RunAsync(game, root, ((FrameworkElement)Content).ActualTheme); }));
+        options.Items.Add(new MenuFlyoutSeparator());
+        options.Items.Add(MenuItem(L.T("Hide from the list"), "", () =>
         {
             AppState.Settings.HiddenGames.Add(game.Id);
             SettingsStore.Save();
             RebuildNav();
             ShowInfo(L.F("{0} is hidden. Show it again from Settings.", game.Title));
         }));
-        if (!game.Installing)
-        {
-            var uninstall = MenuItem(L.T("Uninstall…"), "", () => { if (Content.XamlRoot is { } root) _ = UninstallFlow.RunAsync(game, root, ((FrameworkElement)Content).ActualTheme); });
-            menu.Items.Add(uninstall);
-        }
         if (game.Store == GameStore.Custom && game.Id.StartsWith("custom:", StringComparison.Ordinal))
         {
-            menu.Items.Add(MenuItem(L.T("Remove from Hybrid Launcher"), "", () =>
+            options.Items.Add(MenuItem(L.T("Remove from Hybrid Launcher"), "", () =>
             {
                 AppState.Settings.CustomGames.RemoveAll(c => GameScanner.CustomId(c.ExePath) == game.Id);
                 AppState.SetPinned(game.Id, false);
@@ -1345,7 +1541,135 @@ public sealed partial class MainWindow : Window
                 _ = AppState.RescanAsync();
             }));
         }
+        if (!game.Installing)
+            options.Items.Add(MenuItem(L.T("Uninstall…"), "", () => { if (Content.XamlRoot is { } root) _ = UninstallFlow.RunAsync(game, root, ((FrameworkElement)Content).ActualTheme); }));
+        menu.Items.Add(options);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem(L.T("Properties"), "", () => ShowProperties(game.Id)));
         return menu;
+    }
+
+    /// <summary>The right-click menu of a game owned but not installed: Install (its page), its collections, hide it.</summary>
+    public MenuFlyout OwnedMenu(OwnedGame game)
+    {
+        var menu = new MenuFlyout();
+        menu.Items.Add(MenuItem(L.T("Install"), "", () => OwnedLibrary.Open(game)));
+        menu.Items.Add(CollectionMenu(game.Id));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem(L.T("Hide from the list"), "", () =>
+        {
+            AppState.Settings.HiddenGames.Add(game.Id);
+            SettingsStore.Save();
+            RebuildNav();
+            RefreshLibrary();
+            ShowInfo(L.F("{0} is hidden. Show it again from Settings.", game.Name));
+        }));
+        return menu;
+    }
+
+    /// <summary>Collection ▸ Favorites (the heart), each of the user's collections (a tick when the game is in it), New collection….</summary>
+    MenuFlyoutSubItem CollectionMenu(string id)
+    {
+        var sub = new MenuFlyoutSubItem { Text = L.T("Collection"), Icon = new FontIcon { Glyph = "" } };
+        bool fav = GameCollections.IsFavorite(id);
+        sub.Items.Add(MenuItem(fav ? L.T("Remove from favorites") : L.T("Add to favorites"), fav ? "" : "",
+            () => AppState.SetInCollection(GameCollections.Favorites, id, !fav)));
+        if (GameCollections.All.Count > 0) sub.Items.Add(new MenuFlyoutSeparator());
+        foreach (var c in GameCollections.All.ToList())
+        {
+            bool inIt = GameCollections.Contains(c.Id, id);
+            var cid = c.Id;
+            var item = new ToggleMenuFlyoutItem { Text = c.Name, IsChecked = inIt, Icon = new FontIcon { Glyph = "" } };
+            item.Click += (_, _) =>
+            {
+                try { AppState.SetInCollection(cid, id, !inIt); }
+                catch (Exception ex) { ShowError(L.T("Action failed"), ex.Message, ex); }
+            };
+            sub.Items.Add(item);
+        }
+        sub.Items.Add(new MenuFlyoutSeparator());
+        sub.Items.Add(MenuItem(L.T("New collection…"), "", () => _ = NewCollectionAsync(id)));
+        return sub;
+    }
+
+    // A naming or deleting dialog is open (only one ContentDialog can be).
+    bool _collectionDialog;
+
+    /// <summary>Asks for a name and makes a collection (with the game in it when one is given). Returns its id, or null.</summary>
+    public async Task<string?> NewCollectionAsync(string? gameId = null)
+    {
+        if (Content.XamlRoot is not { } root || _collectionDialog) return null;
+        _collectionDialog = true;
+        try
+        {
+            var name = await HybridLauncher.Controls.NameDialog.AskAsync(root, ((FrameworkElement)Content).ActualTheme, L.T("New collection"), "", "");
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var c = GameCollections.Create(name);
+            if (gameId is not null) AppState.SetInCollection(c.Id, gameId, true);
+            else AppState.CollectionsEdited();
+            return c.Id;
+        }
+        catch (Exception ex) { Log.Warn($"New collection: {ex.Message}"); return null; }
+        finally { _collectionDialog = false; }
+    }
+
+    /// <summary>Asks for a new name for the collection.</summary>
+    public async Task RenameCollectionAsync(string id)
+    {
+        if (Content.XamlRoot is not { } root || GameCollections.Find(id) is not { } c || _collectionDialog) return;
+        _collectionDialog = true;
+        try
+        {
+            var name = await HybridLauncher.Controls.NameDialog.AskAsync(root, ((FrameworkElement)Content).ActualTheme, L.T("Rename collection"), c.Name, c.Name);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            GameCollections.Rename(id, name);
+            AppState.CollectionsEdited();
+        }
+        catch (Exception ex) { Log.Warn($"Rename collection: {ex.Message}"); }
+        finally { _collectionDialog = false; }
+    }
+
+    /// <summary>Deletes the collection after asking (its games stay in the library).</summary>
+    public async Task DeleteCollectionAsync(string id)
+    {
+        if (Content.XamlRoot is not { } root || GameCollections.Find(id) is not { } c || _collectionDialog) return;
+        _collectionDialog = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root, RequestedTheme = ((FrameworkElement)Content).ActualTheme, Title = L.F("Delete \"{0}\"?", c.Name),
+                Content = L.T("The collection goes away; its games stay in your library."),
+                PrimaryButtonText = L.T("Delete"), CloseButtonText = L.T("Cancel"), DefaultButton = ContentDialogButton.Close,
+            };
+            if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
+            GameCollections.Delete(id);
+            AppState.CollectionsEdited();
+        }
+        catch (Exception ex) { Log.Warn($"Delete collection: {ex.Message}"); }
+        finally { _collectionDialog = false; }
+    }
+
+    async Task DesktopShortcutAsync(Game game)
+    {
+        try
+        {
+            await Shortcuts.CreateDesktopAsync(game, AppState.Settings.For(game.Id));
+            ShowSuccess(L.F("The shortcut to {0} is on the desktop.", game.Title));
+        }
+        catch (Exception ex) { ShowError(L.T("The shortcut was not made"), ex.Message, ex); }
+    }
+
+    void SteamShortcut(Game game)
+    {
+        try
+        {
+            var file = Shortcuts.CreateSteam(game, AppState.Settings.For(game.Id));
+            ShowSuccess(file is null ? L.F("{0} is in Steam already.", game.Title)
+                : L.F("{0} is added to Steam as a non-Steam game. Restart Steam to see it.", game.Title));
+        }
+        catch (Exception ex) { ShowError(L.T("The Steam shortcut was not made"), ex.Message, ex); }
     }
 
     /// <summary>
@@ -1428,7 +1752,7 @@ public sealed partial class MainWindow : Window
         // Game Pass exes carry no icon: their package logo comes first. Steam games then take Steam's own small icon from its
         // library cache, the one Steam's list shows (also there while the game downloads and has no exe); then the exes.
         var steamIcon = game.SteamAppId is { } app ? await Task.Run(() => SteamScanner.ClientIcon(app)) : null;
-        foreach (var source in new[] { game.IconPath, steamIcon, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var source in new[] { HybridLauncher.Core.Media.ArtOverrides.Get(game.Id, HybridLauncher.Core.Media.ArtKind.Icon), game.IconPath, steamIcon, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var icon = await IconCache.GetAsync(source!);
             if (icon is null) continue;
@@ -1781,15 +2105,224 @@ public sealed partial class MainWindow : Window
         if (only.Length == 0 || only.Any(o => "pages".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
             failures += await SelfTestPageChurnAsync();
         await Step("library", () => ContentFrame.Navigate(typeof(LibraryPage), ""), 2500);
+        // 2.1-rc.9: the middle of a cover takes the pointer (rc.8: every layer of the picture let it through, so clicks, hover
+        // and right-clicks on the covers did nothing). XAML's own hit test, the one a real click goes through.
+        await Step("library covers take the pointer", () =>
+        {
+            if ((Shown as LibraryPage)?.SelfTestFirstTile() is not GridViewItem tile || Content?.XamlRoot is not { } root) throw new InvalidOperationException("no cover shown");
+            var at = tile.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(tile.ActualWidth / 2, tile.ActualHeight * 0.4));
+            var hits = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(at, root.Content).ToList();
+            if (!hits.Contains(tile)) throw new InvalidOperationException($"a click at the cover's middle reaches {hits.FirstOrDefault()?.GetType().Name ?? "nothing"}, not the cover");
+            Log.Info($"Self-test: a click on the first cover reaches it ({hits.Count} elements under the pointer)");
+        });
         await Step("library search", () => SearchBox.Text = "a");
         await Step("library search cleared", () => SearchBox.Text = "");
         var savedFilter = AppState.Settings.Library;
         foreach (var sort in new[] { "recent", "added", "playtime", "achievements", "tech", "name" })
             await Step($"library sort {sort}", () => { AppState.Settings.Library = new LibraryFilter { Sort = sort, GroupByLauncher = sort != "tech" }; (Shown as LibraryPage)?.Reload(""); }, 400);
         await Step("library filters", () => { AppState.Settings.Library = new LibraryFilter { OptiOnly = true, Tech = { "DLSS" } }; (Shown as LibraryPage)?.Reload(""); }, 400);
+        // 2.1: collections (Hydra style). A collection with one game shows that game alone, in the grid and in the list; the
+        // favorites filter shows the favorites; the right-click menu has Collection, Create shortcut, Options and Properties.
+        string? testCollection = null;
+        await Step("library collections: one game", () =>
+        {
+            var first = AppState.VisibleGames.First(g => !g.NotInstalled);
+            testCollection = GameCollections.Create("Self-test collection").Id;
+            AppState.SetInCollection(testCollection, first.Id, true);
+            AppState.Settings.Library = new LibraryFilter { Collection = testCollection };
+            (Shown as LibraryPage)?.Reload("");
+            var shown = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled));
+            if (shown.Count != 1 || shown[0].Id != first.Id) throw new InvalidOperationException($"the collection shows {shown.Count} games");
+            var menu = GameMenu(first);
+            var subs = menu.Items.OfType<MenuFlyoutSubItem>().Select(i => i.Text).ToList();
+            if (!subs.Contains(L.T("Collection")) || !subs.Contains(L.T("Options")) || !menu.Items.OfType<MenuFlyoutItem>().Any(i => i.Text == L.T("Properties")))
+                throw new InvalidOperationException($"the game's menu has {string.Join(", ", subs)}");
+            Log.Info($"Self-test collections: {first.Name} alone in \"Self-test collection\"; menu: {string.Join(", ", subs)}");
+            // 2.1-rc.9: the collection's coloured folder and the Steam logo of "Steam shortcut" are made from path data.
+            _ = LibraryPage.CollectionIcon(testCollection);
+            _ = StoreLogos.MenuIcon(GameStore.Steam);
+        }, 900);
+        await Step("library collections: favorites", () =>
+        {
+            AppState.Settings.Library = new LibraryFilter { Collection = GameCollections.Favorites };
+            Library.ListFilter.Collection = GameCollections.Favorites;
+            (Shown as LibraryPage)?.Reload("");
+            RebuildNav();
+            var shown = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled));
+            if (shown.Any(g => !GameCollections.IsFavorite(g.Id))) throw new InvalidOperationException("a game that is not a favorite is shown");
+        }, 900);
+        await Step("library collections: delete", () =>
+        {
+            if (testCollection is not null) { GameCollections.Delete(testCollection); AppState.CollectionsEdited(); }
+            Library.ListFilter.Collection = null;
+            AppState.Settings.Library = new LibraryFilter();
+            (Shown as LibraryPage)?.Reload("");
+            RebuildNav();
+            if (GameCollections.Find(testCollection) is not null) throw new InvalidOperationException("the collection is still there");
+        }, 600);
+        // 2.1-rc.3: the owned games not installed (this PC's launchers, read only), in their launchers' groups and in one block,
+        // in the grid and in the side list; then a zoom with them on screen.
+        await Step("library not installed: load", () => _ = OwnedLibrary.LoadAsync(), 3000);
+        await Step("library not installed: grouped", () =>
+        {
+            AppState.Settings.Library = new LibraryFilter { ShowNotInstalled = true, GroupByLauncher = true, Sort = "name" };
+            // The side list has its own filters since 2.1-rc.4: the same here, so both show the owned games.
+            AppState.Settings.ListFilter = AppState.Settings.Library.CopyFilters();
+            RebuildNav();
+            Log.Info($"Self-test: {LibraryPage.OwnedShown("").Count} owned games not installed shown, list {Nav.MenuItems.Count} items");
+        }, 1200);
+        await Step("library not installed: one block", () =>
+        {
+            AppState.Settings.Library = new LibraryFilter { ShowNotInstalled = true, GroupByLauncher = false, Sort = "recent", Descending = true };
+            AppState.Settings.ListFilter = AppState.Settings.Library.CopyFilters();
+            RebuildNav();
+        }, 1200);
+        await Step("library not installed: zoom", () => { AppState.Settings.Library.TileSize = 150; (Shown as LibraryPage)?.Reload(""); }, 800);
+        var savedList = AppState.Settings.ListFilter;
+        await Step("library not installed: off", () => { AppState.Settings.Library = savedFilter; AppState.Settings.ListFilter = savedList; RebuildNav(); }, 800);
         await Step("library filters off", () => { AppState.Settings.Library = savedFilter; (Shown as LibraryPage)?.Reload(""); }, 400);
         await Step("library cover hover", () => (Shown as LibraryPage)?.SelfTestHover(true), 700);
         await Step("library cover hover off", () => (Shown as LibraryPage)?.SelfTestHover(false), 500);
+        // 2.1-rc.9: Properties from the library opens over the library (the library stays the page shown), and the Artwork
+        // window, restyled after Hydra's, opens and closes.
+        await Step("library properties", () =>
+        {
+            var first = AppState.VisibleGames.First(g => !g.NotInstalled);
+            ShowProperties(first.Id);
+            if (Shown is not LibraryPage) throw new InvalidOperationException("Properties left the library");
+            if (_propsLayer is not { Visibility: Visibility.Visible, Children.Count: > 0 }) throw new InvalidOperationException("Properties did not open over the library");
+        }, 1200);
+        await Step("library properties closed", () =>
+        {
+            _propsOwner?.CloseProperties();
+            if (_propsLayer is { Visibility: Visibility.Visible }) throw new InvalidOperationException("Properties did not close");
+        }, 500);
+        await Step("library artwork", () =>
+        {
+            var first = AppState.VisibleGames.First(g => !g.NotInstalled);
+            if (Content?.XamlRoot is { } root) _ = Controls.ArtworkDialog.ShowAsync(root, ((FrameworkElement)Content).ActualTheme, first, HybridLauncher.Core.Media.ArtKind.Banner);
+        }, 1500);
+        await Step("library artwork closed", () =>
+        {
+            if (Content?.XamlRoot is { } root)
+                foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+                    if (popup.Child is ContentDialog d) d.Hide();
+        }, 600);
+        // 2.1-rc.10 (Gemini's audit of rc.8/rc.9): two dialogs asked for at once, Properties of one game then another over the
+        // library, the side list's Reset, a loaded cover's placeholder fill.
+        int uiErrorsBefore = App.UiErrors;
+        await Step("audit rc.10: two dialogs at once", () =>
+        {
+            var first = AppState.VisibleGames.First(g => !g.NotInstalled);
+            if (Content?.XamlRoot is not { } root) return;
+            var theme = ((FrameworkElement)Content).ActualTheme;
+            _ = Controls.ArtworkDialog.ShowAsync(root, theme, first);
+            _ = Controls.ArtworkDialog.ShowAsync(root, theme, first);
+        }, 1200);
+        await Step("audit rc.10: two dialogs at once, one shown", () =>
+        {
+            int open = 0;
+            if (Content?.XamlRoot is { } root)
+                foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+                    if (popup.Child is ContentDialog d) { open++; d.Hide(); }
+            if (App.UiErrors != uiErrorsBefore) throw new InvalidOperationException($"{App.UiErrors - uiErrorsBefore} UI errors");
+            if (open != 1) throw new InvalidOperationException($"{open} dialogs open");
+        }, 600);
+        await Step("audit rc.10: Properties of two games in a row", () =>
+        {
+            var games = AppState.VisibleGames.Where(g => !g.NotInstalled).Take(2).ToList();
+            if (games.Count < 2) { Log.Info("Self-test: one game only, Properties switch not tried"); return; }
+            SearchBox.Text = "";
+            ShowProperties(games[0].Id);
+            var firstOwner = _propsOwner;
+            ShowProperties(games[1].Id);
+            if (_propsOwner is null || ReferenceEquals(_propsOwner, firstOwner) || _propsOwner.GameId != games[1].Id)
+                throw new InvalidOperationException("the second game's Properties did not take the window");
+            if (_propsLayer?.Children.Count != 1) throw new InvalidOperationException($"{_propsLayer?.Children.Count} windows in the layer");
+            if (Shown is not LibraryPage) throw new InvalidOperationException("Properties left the library");
+        }, 900);
+        await Step("audit rc.10: Properties closed", () =>
+        {
+            _propsOwner?.CloseProperties();
+            if (_propsOwner is not null || _propsLayer is { Visibility: Visibility.Visible }) throw new InvalidOperationException("Properties still open");
+        }, 400);
+        await Step("audit rc.10: side list Reset", () =>
+        {
+            var f = Library.ListFilter;
+            f.OptiOnly = true;
+            RefreshList();
+            var panel = LibraryPage.FiltersPanel(() => { }, list: true);
+            // The panel is not on screen: its buttons are found through its children, not the visual tree.
+            static IEnumerable<Button> Buttons(object? o) => o switch
+            {
+                Button b => [b],
+                Panel p => p.Children.SelectMany(c => Buttons(c)),
+                Border b => Buttons(b.Child),
+                ContentControl c => Buttons(c.Content),
+                _ => [],
+            };
+            var reset = Buttons(panel).FirstOrDefault(b => b.Content as string == L.T("Reset order and filters"))
+                ?? throw new InvalidOperationException("no Reset button");
+            new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(reset).Invoke();
+            if (Library.ListFilter.OptiOnly || ReferenceEquals(Library.ListFilter, f)) throw new InvalidOperationException("the side list's filters were not reset");
+        }, 600);
+        await Step("audit rc.10: loaded covers drop the placeholder fill", () =>
+        {
+            if ((Shown as LibraryPage)?.SelfTestFirstTile() is not GridViewItem { Content: FrameworkElement tile }) throw new InvalidOperationException("no cover shown");
+            Log.Info($"Self-test: first cover's placeholder fill is {LibraryPage.CoverFill(tile)?.ToString() ?? "missing"}");
+            if (LibraryPage.CoverFill(tile) is null) throw new InvalidOperationException("the cover has no placeholder fill layer");
+        }, 400);
+        // 2.1: the user's dashboard, empty then with a profile; a game's own cover and icon, then the store's again; the verify plan.
+        // 2.1-rc.6: a game owned on Steam but not installed, whose achievements Steam keeps on this PC: its page shows its
+        // hours and its achievements (they never showed: the page's load returned early for games not installed).
+        if (OwnedLibrary.NotInstalled().FirstOrDefault(o => o.Store == GameStore.Steam && o.Id.StartsWith("steam:", StringComparison.Ordinal)
+                && HybridLauncher.Core.Steam.SteamAchievements.HasSchema(o.Id[6..])) is { } ownedPick)
+        {
+            await Step("owned game page: open", () => OwnedLibrary.Open(ownedPick), 5000);
+            await Step("owned game page: hours and achievements", () =>
+            {
+                if (Shown is not GamePage page) throw new InvalidOperationException("the game page is not shown");
+                var (ach, hours) = page.SelfTestOwnedStats();
+                Log.Info($"Self-test: {ownedPick.Name} (not installed): achievements {ach}, play time {hours}");
+                if (ach is null) throw new InvalidOperationException("no achievements on the page of a game not installed");
+            }, 300);
+        }
+        else Log.Info("Self-test: no Steam game owned but not installed with achievements on this PC: page check skipped");
+        await Step("profile: none yet", () => OpenProfile(), 1500);
+        await Step("profile: made", () =>
+        {
+            var pic = Path.Combine(AppInfo.ProfilesDir, "selftest.png");
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.png"), pic, overwrite: true);
+            Profiles.Add(new UserProfile { Name = "Alex Rivera", Picture = pic });
+            if (Profiles.Active?.Name != "Alex Rivera") throw new InvalidOperationException("the profile is not in use");
+        }, 2500);
+        await Step("profile: chip under the title", () => { if (ProfileChip.Children.Count == 0) throw new InvalidOperationException("no profile chip"); }, 200);
+        // 2.1-rc.4: the full lists over the dashboard, and a game hidden from Most played then shown again.
+        foreach (var list in new[] { "played", "weeks", "progress", "close", "hide", "show" })
+            await Step($"profile: list {list}", () => (Shown as ProfilePage)?.SelfTestList(list), 900);
+        if (AppState.VisibleGames.FirstOrDefault() is { } artGame)
+        {
+            await Step("artwork: own cover and icon", () =>
+            {
+                var png = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.png");
+                HybridLauncher.Core.Media.ArtOverrides.Import(artGame.Id, HybridLauncher.Core.Media.ArtKind.Cover, png);
+                HybridLauncher.Core.Media.ArtOverrides.Import(artGame.Id, HybridLauncher.Core.Media.ArtKind.Icon, png);
+                if (HybridLauncher.Core.Media.ArtOverrides.Get(artGame.Id, HybridLauncher.Core.Media.ArtKind.Cover) is null) throw new InvalidOperationException("the cover was not kept");
+                ContentFrame.Navigate(typeof(LibraryPage), "");
+            }, 1500);
+            await Step("artwork: the store's again", () =>
+            {
+                HybridLauncher.Core.Media.ArtOverrides.Set(artGame.Id, HybridLauncher.Core.Media.ArtKind.Cover, null);
+                HybridLauncher.Core.Media.ArtOverrides.Set(artGame.Id, HybridLauncher.Core.Media.ArtKind.Icon, null);
+                if (HybridLauncher.Core.Media.ArtOverrides.Get(artGame.Id, HybridLauncher.Core.Media.ArtKind.Cover) is not null) throw new InvalidOperationException("the cover stayed");
+            }, 800);
+            await Step("verify: plan", () =>
+            {
+                var plan = GameVerify.For(artGame);
+                Log.Info($"Verify plan for {artGame.Name}: {plan.Launcher ?? "none"} {(plan.Direct ? "direct" : "steps")}");
+                if (artGame.Store == GameStore.Steam && !plan.Direct) throw new InvalidOperationException("a Steam game should verify directly");
+            }, 200);
+        }
         // Mouse-wheel scrolling, measured frame by frame (MainWindow.Smoothness): the library, then a game page.
         // HL_SELFTEST_NOINPUT=1: no real wheel or mouse (the PC is in use); the "snappy" step measures scrolling without input.
         bool noInput = Environment.GetEnvironmentVariable("HL_SELFTEST_NOINPUT") == "1";
@@ -2439,6 +2972,17 @@ public sealed partial class MainWindow : Window
             failures += await SelfTestPlayRestartAsync(playExe);
         // HL_SELFTEST_LOCALACH=1: an unlock written to a local achievement file (a folder of the user's own, Steam app 480) is
         // seen by the watcher, shown as a pop-up and kept in the unlock history.
+        // Epic achievements through the store page (2.1-rc.11): a public query, no account, to see Epic answers the route.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_EPICWEB") is { Length: > 0 } sandbox)
+            await Step("epic store page answers", async () =>
+            {
+                try
+                {
+                    Log.Info($"Self-test Epic direct: {await HybridLauncher.Core.Accounts.EpicStats.ProbeDirectAsync(sandbox)}");
+                    Log.Info($"Self-test Epic store page: {await Helpers.EpicWeb.ProbeAsync(sandbox)}");
+                }
+                catch (Exception ex) { Log.Error("Self-test FAILED: Epic store page", ex); }
+            }, 30000);
         if (Environment.GetEnvironmentVariable("HL_SELFTEST_LOCALACH") == "1" && (only.Length == 0 || only.Any(o => "local unlock".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
             failures += await SelfTestLocalUnlockAsync(shots);
         for (int f = 0; f <= 7; f++)
@@ -2463,15 +3007,15 @@ public sealed partial class MainWindow : Window
         }
         if (AppState.VisibleGames.FirstOrDefault() is { } first)
         {
-            await Step("game page dark, material on", () => { Look("Hybrid Launcher", "Dark", true); OpenGame(first.Id); }, 2500);
-            await Step("game page dark, material off", () => Look("Hybrid Launcher", "Dark", false), 800);
+            await Step("game page dark, material on", () => { Look("Hybrid", "Dark", true); OpenGame(first.Id); }, 2500);
+            await Step("game page dark, material off", () => Look("Hybrid", "Dark", false), 800);
         }
-        await Step("downloads material on", () => { Look("Hybrid Launcher", "Dark", true); ContentFrame.Navigate(typeof(DownloadsPage)); }, 3000);
-        await Step("downloads material off", () => Look("Hybrid Launcher", "Dark", false), 800);
+        await Step("downloads material on", () => { Look("Hybrid", "Dark", true); ContentFrame.Navigate(typeof(DownloadsPage)); }, 3000);
+        await Step("downloads material off", () => Look("Hybrid", "Dark", false), 800);
         await Step("library material off", () => ContentFrame.Navigate(typeof(LibraryPage), ""), 1500);
-        await Step("library material on", () => Look("Hybrid Launcher", "Dark", true), 800);
+        await Step("library material on", () => Look("Hybrid", "Dark", true), 800);
         await Step("settings material on", () => ContentFrame.Navigate(typeof(SettingsPage)), 1500);
-        await Step("settings material off", () => Look("Hybrid Launcher", "Dark", false), 800);
+        await Step("settings material off", () => Look("Hybrid", "Dark", false), 800);
         Look(savedLook.Palette, savedLook.Theme, savedLook.Material);
         Helpers.UiPerf.Summary();
         Log.Info($"Self-test finished: {failures} failure(s)");
@@ -2575,40 +3119,90 @@ public sealed partial class MainWindow : Window
         var palette = Palettes.Get(AppState.Settings.Palette);
         var requested = ElementTheme.Dark;
         Palettes.ApplyResources(palette);
+        Views.LibraryPage.ForgetLook();
         // Brushes read in code follow the theme the window ends up in (set first: the flip below restyles everything twice).
         ThemeRes.Theme = requested;
         // Theme resources are only looked up again when the theme changes: flip it once so the new accent shows everywhere.
+        // The flip's own ActualThemeChanged events stay quiet (they may come a moment later): the paint below is the one.
+        _applyingTheme = true;
         RootGrid.RequestedTheme = RootGrid.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
         RootGrid.RequestedTheme = requested;
-        UpdateTint();
+        UpdateTint(newLook: true);
         UpdateCaptionButtons();
         ThemeRes.RaiseApplied();
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _applyingTheme = false)) _applyingTheme = false;
+    }
+
+    bool _applyingTheme;
+
+    // Kept alive: UISettings only raises ColorValuesChanged while the object lives.
+    Windows.UI.ViewManagement.UISettings? _uiSettings;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _coloursTimer;
+
+    /// <summary>
+    /// The Windows theme follows Windows: when the accent changes there (Settings, Personalisation, Colours, or a new wallpaper
+    /// with automatic accent), the theme is read again and applied. Windows raises the event several times per change, on a
+    /// worker thread: it is gathered into one apply on the UI thread 400 ms after the last one.
+    /// </summary>
+    void WatchWindowsColours()
+    {
+        try
+        {
+            _uiSettings = new Windows.UI.ViewManagement.UISettings();
+            _uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_closed) return;
+                if (_coloursTimer is null)
+                {
+                    _coloursTimer = DispatcherQueue.CreateTimer();
+                    _coloursTimer.Interval = TimeSpan.FromMilliseconds(400);
+                    _coloursTimer.IsRepeating = false;
+                    _coloursTimer.Tick += (_, _) =>
+                    {
+                        if (_closed) return;
+                        var before = Palettes.Get("Windows").Accent;
+                        Palettes.ForgetWindowsColours();
+                        if (Palettes.Get(AppState.Settings.Palette).Key != "Windows" || Palettes.Get("Windows").Accent == before) return;
+                        Log.Info("Windows accent changed: Windows theme applied again");
+                        ApplyTheme(AppState.Settings.Theme);
+                    };
+                }
+                _coloursTimer.Stop();
+                _coloursTimer.Start();
+            });
+        }
+        catch (Exception ex) { Log.Warn($"Windows colours: {ex.Message}"); }
     }
 
     /// <summary>
     /// The window's background: the plain gradient at once, then (dark theme, rc.5) the painted one with glows, vignette and
     /// dither (Helpers/BackdropPainter) when it is ready. Painted again when the window's size settles or the palette changes.
     /// </summary>
-    void UpdateTint()
+    void UpdateTint(bool newLook = false)
     {
         var palette = Palettes.Get(AppState.Settings.Palette);
         bool dark = RootGrid.ActualTheme == ElementTheme.Dark;
-        if (TintLayer.Background is not Microsoft.UI.Xaml.Media.ImageBrush || !dark) TintLayer.Background = Palettes.TintBrush(palette, dark);
+        // A new theme shows its plain gradient at once (2.1): the painted one of the old theme stayed until the new one was ready.
+        if (newLook || TintLayer.Background is not Microsoft.UI.Xaml.Media.ImageBrush || !dark) TintLayer.Background = Palettes.TintBrush(palette, dark);
         if (dark) _ = PaintBackdropAsync(palette);
     }
 
     Microsoft.UI.Dispatching.DispatcherQueueTimer? _backdropTimer;
     Windows.Foundation.Size _backdropSize;
+    int _backdropGen;
 
     async Task PaintBackdropAsync(Palette palette)
     {
         double w = RootGrid.ActualWidth, h = RootGrid.ActualHeight;
         if (w < 16 || h < 16) return;
         _backdropSize = new Windows.Foundation.Size(w, h);
+        // Only the newest paint lands (2.1-rc.10 audit: two quick theme changes could finish out of order), never after close.
+        int gen = ++_backdropGen;
         try
         {
-            if (await BackdropPainter.BrushAsync(palette, w, h, RootGrid.XamlRoot?.RasterizationScale ?? 1) is { } brush
-                && RootGrid.ActualTheme == ElementTheme.Dark)
+            var brush = await BackdropPainter.BrushAsync(palette, w, h, RootGrid.XamlRoot?.RasterizationScale ?? 1);
+            if (_closed || gen != _backdropGen) return;
+            if (brush is not null && RootGrid.ActualTheme == ElementTheme.Dark)
                 TintLayer.Background = brush;
         }
         catch (Exception ex) { Log.Warn($"Window background: {ex.Message}"); }
@@ -2665,7 +3259,7 @@ public sealed partial class MainWindow : Window
             // Kept once per version in the notification list, beside the blue button; and, like the other sources, one Windows
             // pop-up per version unless turned off in Settings -> Notifications (or held back while a game runs).
             var version = release.Version.ToString(3);
-            var title = L.F("{0} {1} is available", AppInfo.Name, version);
+            var title = L.F("{0} {1} is out", AppInfo.Name, version);
             Inbox.Add(Inbox.App, title, L.T("Click to see what is new and update."), null, null, key: "app:" + version);
             if (AppState.Settings.AppUpdatePopupShown != version && Popup(Inbox.App))
             {

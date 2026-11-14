@@ -110,8 +110,8 @@
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Colour theme" Style="{StaticResource RowHeader}" />
-                        <TextBlock x:Name="PaletteHint" Text="Accent colour and a soft tint behind the window. Works with light and dark." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Theme" Style="{StaticResource RowHeader}" />
+                        <TextBlock x:Name="PaletteHint" Text="The window's background and accent colour together: Windows (your Windows accent), Total Dark, Dark, Gray or Hybrid." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ComboBox x:Name="PaletteCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Palette_Changed" />
                 </Grid>
@@ -121,7 +121,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Material colours" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="On: cards, outlines and the window take a trace of the colour theme (with Windows accent, of your Windows colour). Off: neutral grey surfaces like before, only buttons and highlights in the accent colour." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="On: cards and outlines take a trace of the theme's accent. Off: neutral surfaces, only buttons and highlights in the accent colour." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="MaterialToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Material_Toggled" />
                 </Grid>
@@ -131,7 +131,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Shading" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="On: cards and rows lit from above, a glow under the open tab, a sheen on the launch bar and covers that lift under the pointer. Off: flat surfaces." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="On: cards and rows lit from above, a glow under the open tab, and a sheen on the launch bar. Off: flat surfaces. Library covers always have their shadow and light." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="ShadingToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="Shading_Toggled" />
                 </Grid>
@@ -155,52 +155,6 @@
                         <TextBlock Text="Shown: they get thinner in a smaller window. Hidden: no scroll bars on the pages and lists; the mouse wheel, touch, the keyboard and a controller still scroll." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="ScrollBarsToggle" Grid.Column="1" OnContent="Shown" OffContent="Hidden" MinWidth="0" VerticalAlignment="Center" Toggled="ScrollBars_Toggled" />
-                </Grid>
-            </Border>
-            <!-- Free colour pickers: picking any of them switches the colour theme to "My colours". -->
-            <Border Style="{StaticResource RowStyle}">
-                <Grid ColumnSpacing="16" RowSpacing="10">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="My colours" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Pick any accent, the glow behind the window and, if you like, your own dark background. Picking a colour switches the colour theme to My colours." Style="{StaticResource RowDescription}" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                        <DropDownButton x:Name="AccentPickButton" Padding="10,5" ToolTipService.ToolTip="Accent: buttons, selections, highlights">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Border x:Name="AccentSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
-                                <TextBlock Text="Accent" />
-                            </StackPanel>
-                            <DropDownButton.Flyout>
-                                <Flyout Placement="Bottom">
-                                    <ColorPicker x:Name="AccentPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
-                                </Flyout>
-                            </DropDownButton.Flyout>
-                        </DropDownButton>
-                        <DropDownButton x:Name="TintPickButton" Padding="10,5" ToolTipService.ToolTip="Glow: the soft colour wash behind the window">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Border x:Name="TintSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
-                                <TextBlock Text="Glow" />
-                            </StackPanel>
-                            <DropDownButton.Flyout>
-                                <Flyout Placement="Bottom">
-                                    <ColorPicker x:Name="TintPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
-                                </Flyout>
-                            </DropDownButton.Flyout>
-                        </DropDownButton>
-                        <DropDownButton x:Name="BackgroundPickButton" Padding="10,5" ToolTipService.ToolTip="Background: your own dark backdrop (always dark), used while the switch is on">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Border x:Name="BackgroundSwatch" Width="16" Height="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />
-                                <TextBlock Text="Background" />
-                            </StackPanel>
-                            <DropDownButton.Flyout>
-                                <Flyout Placement="Bottom">
-                                    <ColorPicker x:Name="BackgroundPicker" IsAlphaEnabled="False" IsMoreButtonVisible="False" IsColorChannelTextInputVisible="False" ColorSpectrumShape="Ring" ColorChanged="CustomColor_Changed" />
-                                </Flyout>
-                            </DropDownButton.Flyout>
-                        </DropDownButton>
-                        <ToggleSwitch x:Name="BackdropToggle" OnContent="Own background" OffContent="Own background" MinWidth="0" VerticalAlignment="Center" Toggled="CustomColor_Changed" />
-                    </StackPanel>
                 </Grid>
             </Border>
             <Border Style="{StaticResource RowStyle}">
@@ -358,13 +312,19 @@
 
             <TextBlock Text="MODS" Style="{StaticResource GroupHeader}" Margin="0,20,0,4" />
             <Border Style="{StaticResource RowStyle}">
-                <Grid ColumnSpacing="16">
+                <Grid ColumnSpacing="16" RowSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Game files a mod replaces" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="When OptiScaler or Luma goes into a game, the game's own files it replaces can be backed up first (uninstalling puts them back) or simply replaced. ReShade's own installer keeps its own backups." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Back up the game files Hybrid Launcher replaces" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="When OptiScaler, Luma, DXVK, Ultra+ or a DLSS NR file goes into a game, the game's own files it replaces are kept first and uninstalling puts them back. Off: they are simply replaced, and uninstalling only removes the mod's files. ReShade's own installer keeps its own backups." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <ComboBox x:Name="ModBackupsCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="ModBackups_Changed" />
+                    <ToggleSwitch x:Name="BackupGameFilesToggle" Grid.Column="1" MinWidth="0" VerticalAlignment="Center" Toggled="BackupGameFiles_Toggled" />
+                    <StackPanel x:Name="ModBackupsRow" Grid.Row="1" VerticalAlignment="Center">
+                        <TextBlock Text="When to back up" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="At every install, or asked each time a mod goes into a game." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <ComboBox x:Name="ModBackupsCombo" Grid.Row="1" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="ModBackups_Changed" />
                 </Grid>
             </Border>
 

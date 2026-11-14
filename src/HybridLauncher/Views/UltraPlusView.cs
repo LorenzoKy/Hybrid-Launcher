@@ -880,7 +880,7 @@ public sealed class UltraPlusTab
             Content = L.T("The settings in the game stay as they are; only the saved preset goes."),
             PrimaryButtonText = L.T("Delete"), CloseButtonText = L.T("Cancel"), DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
         mine.Remove(name);
         SettingsStore.Save();
         BuildSettings(rebuild: true);
@@ -896,7 +896,7 @@ public sealed class UltraPlusTab
                 XamlRoot = Settings.XamlRoot, RequestedTheme = Settings.ActualTheme, Title = L.T("Save the current settings as a preset"), Content = box,
                 PrimaryButtonText = L.T("Save"), CloseButtonText = L.T("Cancel"), DefaultButton = ContentDialogButton.Primary,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || box.Text.Trim() is not { Length: > 0 } n) return;
+            if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary || box.Text.Trim() is not { Length: > 0 } n) return;
             Flush();
             mine[n] = new Dictionary<string, string>(_values, StringComparer.OrdinalIgnoreCase);
             AppState.Settings.UltraPlusPresets[key] = mine;

@@ -114,6 +114,7 @@ public sealed partial class SettingsPage
         if (_index is not null) return _index;
         try { FillPreviewGames(); } catch { }
         try { AchievementSoundsView.Fill(AchievementSoundsPanel); } catch (Exception ex) { Log.Warn($"Settings search, sounds: {ex.Message}"); }
+        try { AchievementExtrasView.Fill(AchievementExtrasPanel); } catch (Exception ex) { Log.Warn($"Settings search, achievement extras: {ex.Message}"); }
         try { ControllerSettingsView.Fill(ControllerPanel); } catch (Exception ex) { Log.Warn($"Settings search, controller: {ex.Message}"); }
         try { CloudSettingsView.Fill(CloudPanel); } catch (Exception ex) { Log.Warn($"Settings search, cloud: {ex.Message}"); }
         try { NotificationSettingsView.Fill(NotificationsPanel); } catch (Exception ex) { Log.Warn($"Settings search, notifications: {ex.Message}"); }
@@ -524,15 +525,11 @@ public sealed partial class SettingsPage
         var thickness = row.ReadLocalValue(Border.BorderThicknessProperty);
         if (Application.Current.Resources.TryGetValue("AccentFillColorDefaultBrush", out var accent)) row.BorderBrush = accent as Brush;
         row.BorderThickness = new Thickness(2);
-        var timer = DispatcherQueue.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(1600);
-        timer.IsRepeating = false;
-        timer.Tick += (_, _) =>
+        Later.Run(DispatcherQueue, TimeSpan.FromMilliseconds(1600), () =>
         {
             Restore(row, Border.BorderBrushProperty, brush);
             Restore(row, Border.BorderThicknessProperty, thickness);
-        };
-        timer.Start();
+        });
         static void Restore(DependencyObject o, DependencyProperty p, object local)
         {
             if (local == DependencyProperty.UnsetValue) o.ClearValue(p);

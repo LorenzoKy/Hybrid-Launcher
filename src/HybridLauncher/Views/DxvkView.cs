@@ -458,7 +458,7 @@ public sealed partial class DxvkView : UserControl
             CloseButtonText = L.T("Close"),
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await dialog.ShowOnceAsync() == ContentDialogResult.Primary)
             _ctx.ShowTab(owner == "OptiScaler" ? "opti/install" : "mods/reshade");
     }
 
@@ -467,7 +467,7 @@ public sealed partial class DxvkView : UserControl
     {
         var state = Own;
         if (state is null || Busy || !CanInstall(out var dir)) return;
-        if (!await _ctx.ConfirmAsync(this, L.F("Uninstall {0}?", Core.Mods.Dxvk.Name(state.Flavor)),
+        if (!await _ctx.ConfirmRemovalAsync(this, L.F("Uninstall {0}?", Core.Mods.Dxvk.Name(state.Flavor)),
                 L.F("Removes {0} and puts back the {1} file(s) it replaced. The game runs on Windows' Direct3D again.", string.Join(", ", state.Files.Keys), state.Backups.Count), L.T("Uninstall")))
             return;
         var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "dxvk", Core.Mods.Dxvk.Name(state.Flavor));

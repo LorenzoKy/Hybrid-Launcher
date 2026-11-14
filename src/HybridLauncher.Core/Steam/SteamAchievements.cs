@@ -159,6 +159,7 @@ public static class SteamAchievements
         { EmulatorAppId: { } emu } when SettingsStore.Current.ReadSteamEmulator =>
             Achievements.LocalAchievements.Read(emu, game.EmulatorSettingsDir) is { Total: > 0 } set ? set : null,
         _ when Achievements.XboxAchievements.Applies(game) => Achievements.XboxAchievements.ReadCache(game)?.Set,
+        { Store: GameStore.Epic } => Accounts.EpicStats.ReadCached(game),
         _ => null,
     };
 
@@ -168,6 +169,7 @@ public static class SteamAchievements
         if (game is { Store: GameStore.Steam, SteamAppId: { } id }) return SettingsStore.Current.ReadSteamAchievements ? await LoadAsync(id, ct) : null;
         if (Achievements.XboxAchievements.Applies(game)) return await Achievements.XboxAchievements.LoadAsync(game, ct);
         if (Accounts.GogAchievements.ProductId(game) is { } gogId && await Accounts.GogAchievements.ReadAsync(gogId, ct) is { } gogSet) return gogSet;
+        if (game.Store == GameStore.Epic) return await Accounts.EpicStats.ReadAsync(game, ct);
         var set = game is { EmulatorAppId: { } emu } && SettingsStore.Current.ReadSteamEmulator
             ? await Achievements.LocalAchievements.LoadAsync(emu, game.EmulatorSettingsDir, ct)
             : await Task.Run(() => ReadFor(game), ct);

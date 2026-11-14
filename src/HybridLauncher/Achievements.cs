@@ -85,17 +85,15 @@ public static class AchievementWatcher
         try { _feed?.Dispose(); } catch { }
         _feed = null;
         _gogTimer?.Stop();
+        foreach (var t in Pending.Values) try { t.Stop(); } catch { }
+        Pending.Clear();
     }
 
     /// <summary>Raises <see cref="Changed"/> a couple of seconds from now (after a pop-up's entrance).</summary>
     static void ChangedLater(string key)
     {
         if (_ui is null) { Changed?.Invoke(key); return; }
-        var t = _ui.CreateTimer();
-        t.Interval = TimeSpan.FromSeconds(2.5);
-        t.IsRepeating = false;
-        t.Tick += (_, _) => { t.Stop(); Changed?.Invoke(key); };
-        t.Start();
+        Later.Run(_ui, TimeSpan.FromSeconds(2.5), () => Changed?.Invoke(key));
     }
 
     // Watcher thread: hop to the UI thread at once, everything else happens there.
@@ -271,6 +269,7 @@ public static class AchievementWatcher
             { Store: GameStore.Steam, SteamAppId: { } id } => SettingsStore.Current.ReadSteamAchievements && SteamAchievements.HasSchema(id),
             { EmulatorAppId: not null } => SettingsStore.Current.ReadSteamEmulator,
             _ when XboxAchievements.Applies(g) => XboxAchievements.CacheFile is not null || XboxAccount.SignedIn,
+            { Store: GameStore.Epic } => EpicStats.CanRead && EpicStats.NamespaceOf(g) is not null,
             _ => SettingsStore.Current.ReadGogAchievements && GogAccount.SignedIn && GogAchievements.ProductId(g) is not null,
         })
         .OrderBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase)
@@ -434,7 +433,7 @@ public static class AchievementWatcher
         if (_ui is null) return;
         _gogTimer = _ui.CreateTimer();
         _gogTimer.Interval = TimeSpan.FromSeconds(40);
-        _gogTimer.Tick += (_, _) => { _ = PollGogAsync(); _ = PollXboxAsync(); PollLocal(); };
+        _gogTimer.Tick += (_, _) => { _ = PollGogAsync(); _ = PollXboxAsync(); _ = PollEpicAsync(); PollLocal(); };
         _gogTimer.Start();
     }
 
@@ -494,6 +493,32 @@ public static class AchievementWatcher
         }
         catch (Exception ex) { Log.Warn($"Xbox achievement poll: {ex.Message}"); }
         finally { _xboxBusy = false; }
+    }
+
+    // ---------- Epic ----------
+
+    static bool _epicBusy;
+
+    // Signed in to Epic: while an Epic game runs, its achievements are asked for with the GOG poll (every 40 s, 2.1-rc.4).
+    static async Task PollEpicAsync()
+    {
+        if (_epicBusy || !AppState.Settings.AchievementPopups || !EpicStats.CanRead) return;
+        _epicBusy = true;
+        try
+        {
+            foreach (var game in AppState.Games.Where(g => g.Store == GameStore.Epic && GameSessions.IsActive(g.Id)).ToList())
+            {
+                if (EpicStats.NamespaceOf(game) is not { } ns) continue;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                if (await EpicStats.ReadAsync(game, cts.Token) is { } set)
+                {
+                    await DiffAsync("epic:" + ns, set, game, GameStore.Epic, null, TimeSpan.FromMinutes(2));
+                    Changed?.Invoke("epic:" + ns);
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"Epic achievement poll: {ex.Message}"); }
+        finally { _epicBusy = false; }
     }
 
     // ---------- the feed: any tool can announce an unlock ----------

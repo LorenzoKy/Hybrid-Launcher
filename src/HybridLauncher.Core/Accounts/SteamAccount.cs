@@ -276,7 +276,7 @@ public static class SteamAccount
     /// <summary>A friend's list or state changed (raised on SteamKit2's thread).</summary>
     public static event Action? FriendsChanged;
 
-    static readonly Dictionary<uint, string> AppNames = [];
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, string> AppNames = new();
 
     /// <summary>
     /// The account's friends with what they are doing, online first, then by name. Hybrid Launcher's own session stays as it signs in
@@ -309,7 +309,7 @@ public static class SteamAccount
             try
             {
                 foreach (var (id, kv) in await AppInfoAsync(s, missing, ct))
-                    if (kv["common"]["name"].Value is { Length: > 0 } n) lock (AppNames) AppNames[id] = n;
+                    if (kv["common"]["name"].Value is { Length: > 0 } n) AppNames[id] = n;
             }
             catch (Exception ex) { Log.Warn($"Steam friends' games: {ex.Message}"); }
         }
@@ -442,7 +442,9 @@ public static class SteamAccount
                 try { manifest = await cdn.DownloadManifestAsync(depotId, manifestId, code, PickServer(), key.DepotKey); }
                 catch (Exception ex) when (i < 3) { Log.Warn($"Steam manifest {depotId}: {ex.Message}"); }
             }
-            if (manifest!.FilenamesEncrypted) manifest.DecryptFilenames(key.DepotKey);
+            // Four tries without a file list: an error the download's own retry can take up (it was a crash, 2.1-rc.3 audit).
+            if (manifest is null) throw new IOException(L.F("Steam did not send the file list of depot {0}.", depotId));
+            if (manifest.FilenamesEncrypted) manifest.DecryptFilenames(key.DepotKey);
             var depotKey = key.DepotKey;
             foreach (var f in manifest.Files ?? [])
             {

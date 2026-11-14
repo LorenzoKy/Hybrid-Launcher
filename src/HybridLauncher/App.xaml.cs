@@ -17,7 +17,9 @@ public partial class App : Application
         // Crash-free policy: log everything, keep the app alive, tell the user once.
         UnhandledException += (_, e) =>
         {
-            Log.Error("Unhandled UI exception", e.Exception);
+            // WinUI's own text (e.Message) often names the element or call that failed when the exception has no stack.
+            Log.Error(string.IsNullOrWhiteSpace(e.Message) || e.Message == e.Exception.Message ? "Unhandled UI exception"
+                : $"Unhandled UI exception (WinUI: {e.Message.Trim()}; HRESULT 0x{e.Exception.HResult:X8})", e.Exception);
             UiErrors++;
             e.Handled = true;
             Window?.ShowError(L.T("Something went wrong"), e.Exception.Message);
@@ -133,6 +135,9 @@ public partial class App : Application
         Log.Info($"{AppInfo.Name} {AppUpdates.DisplayVersion} starting, data in {AppInfo.DataRoot}");
         Log.Info($"Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, {System.Globalization.CultureInfo.CurrentUICulture.Name}");
         SettingsStore.Load();
+        // "Hybrid Config and Stats": what another PC sent (settings, play time, history) is merged in before anything reads
+        // the settings; a few seconds at most, then the next start tries again.
+        if (!SelfTesting) HybridLauncher.Core.Cloud.ConfigSync.PullAtStart(TimeSpan.FromSeconds(4));
         // Vsync for the app's own motion: always on, no setting (Helpers.FrameSync).
         Helpers.FrameSync.Init();
         L.Init(AppState.Settings.Language);

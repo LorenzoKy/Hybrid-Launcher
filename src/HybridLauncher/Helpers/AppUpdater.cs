@@ -111,7 +111,7 @@ static class AppUpdater
             }
             finally { deferral.Complete(); }
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.None && !_busy)
+        if (await dialog.ShowOnceAsync() == ContentDialogResult.None && !_busy)
         {
             AppState.Settings.SkippedAppUpdate = release.Version.ToString();
             SettingsStore.Save();

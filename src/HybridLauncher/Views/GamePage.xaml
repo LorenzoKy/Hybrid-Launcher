@@ -362,7 +362,7 @@
                                 </StackPanel>
                             </Button>
                             <Button x:Name="PinButton" Grid.Column="7" Style="{StaticResource GlassButton}" MinWidth="46" Padding="0" VerticalAlignment="Stretch" Click="Pin_Click">
-                                <FontIcon x:Name="PinIcon" Glyph="&#xE718;" FontSize="16" VerticalAlignment="Center" />
+                                <FontIcon x:Name="PinIcon" Glyph="&#xEB51;" FontSize="16" VerticalAlignment="Center" />
                             </Button>
                             <!-- The game's properties, Steam style: a window over the page with General, Installed files, Library and Customization (GamePage.Menu.cs). -->
                             <Button x:Name="MoreButton" Grid.Column="8" Style="{StaticResource GlassButton}" MinWidth="46" Padding="0" VerticalAlignment="Stretch" ToolTipService.ToolTip="Game settings" Click="MoreButton_Click">

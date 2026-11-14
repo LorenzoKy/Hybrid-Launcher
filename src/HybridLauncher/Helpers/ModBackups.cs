@@ -6,22 +6,23 @@ namespace HybridLauncher.Helpers;
 
 /// <summary>
 /// Before a mod goes into a game folder: whether the game's own files it replaces are backed up first (and put back on
-/// uninstall) or just replaced, as chosen in Settings → Features, or asked now when the choice is "Ask each time".
+/// uninstall) or just replaced. Settings → Features → Mods: backups on or off (2.1, the master switch), and when on, made at
+/// once or asked at each install.
 /// </summary>
 public static class ModBackups
 {
-    public static readonly string[] Modes = ["backup", "replace", "ask"];
+    public static readonly string[] Modes = ["backup", "ask"];
 
     public static string ModeName(string mode) => mode switch
     {
-        "replace" => L.T("Replace them, no backup"),
-        "ask" => L.T("Ask each time"),
-        _ => L.T("Back them up first"),
+        "ask" => L.T("Ask at each install"),
+        _ => L.T("Always"),
     };
 
     /// <summary>True: back up; false: replace without a backup; null: the user cancelled the install.</summary>
     public static async Task<bool?> DecideAsync(string mod, string game)
     {
+        if (!AppState.Settings.BackupGameFiles) return false;
         switch (AppState.Settings.ModBackups)
         {
             case "replace": return false;
@@ -43,7 +44,7 @@ public static class ModBackups
             CloseButtonText = L.T("Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        return await dialog.ShowAsync() switch
+        return await dialog.ShowOnceAsync() switch
         {
             ContentDialogResult.Primary => true,
             ContentDialogResult.Secondary => false,

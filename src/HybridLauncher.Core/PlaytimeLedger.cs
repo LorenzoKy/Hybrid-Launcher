@@ -162,6 +162,38 @@ public static class PlaytimeLedger
         catch (Exception ex) { Log.Warn($"Saving the play time record: {ex.Message}"); }
     }
 
+    /// <summary>
+    /// Joins another PC's record (its playtime.json, "Hybrid Config and Stats", 2.1-rc.4): a game found by any of its names
+    /// keeps the bigger count, the newer last session, the older first one and every name; a game only there is added.
+    /// Saved when something changed.
+    /// </summary>
+    public static void MergeFrom(string json)
+    {
+        Book? other;
+        try { other = JsonSerializer.Deserialize(json, PlaytimeJson.Default.Book); }
+        catch (Exception ex) { Log.Warn($"Play time record from the cloud: {ex.Message}"); return; }
+        if (other is null) return;
+        lock (Gate)
+        {
+            bool changed = false;
+            foreach (var e in other.Games)
+            {
+                var mine = Find(e.Keys);
+                if (mine is null)
+                {
+                    Load().Games.Add(new Entry { Keys = [.. e.Keys], Name = e.Name, Minutes = e.Minutes, LastPlayed = e.LastPlayed, FirstPlayed = e.FirstPlayed });
+                    changed = true;
+                    continue;
+                }
+                foreach (var k in e.Keys) if (!mine.Keys.Contains(k)) { mine.Keys.Add(k); changed = true; }
+                if (e.Minutes > mine.Minutes) { mine.Minutes = e.Minutes; changed = true; }
+                if (e.LastPlayed is { } l && (mine.LastPlayed is null || l > mine.LastPlayed)) { mine.LastPlayed = l; changed = true; }
+                if (e.FirstPlayed is { } f && (mine.FirstPlayed is null || f < mine.FirstPlayed)) { mine.FirstPlayed = f; changed = true; }
+            }
+            if (changed) SaveLocked();
+        }
+    }
+
     /// <summary>Forgets what was read (self-test, after the data folder changed).</summary>
     public static void Reload() { lock (Gate) _book = null; }
 }

@@ -31,6 +31,8 @@ public interface IAutoHost
     Task<bool> AutoPickDlssNrAsync();
     /// <summary>A mod taken out as the Mods table's bin does (with its own question). Not done: why, when there is a reason to say.</summary>
     Task<(bool Done, string? Why)> AutoUninstallAsync(string id);
+    /// <summary>Every mod Hybrid Launcher installed and manages in the game taken out, after one question (2.1-rc.6).</summary>
+    Task UninstallAllModsAsync();
 }
 
 /// <summary>
@@ -66,7 +68,7 @@ public sealed partial class AutoView : UserControl
     readonly ProgressBar _progress = new() { Maximum = 1, Visibility = Visibility.Collapsed };
     readonly TextBlock _status;
     readonly Button _go, _again;
-    readonly Button _uninstall;
+    readonly Button _uninstall, _uninstallAll;
     /// <summary>Installed mods ticked by the user: what Uninstall takes out (rc.11).</summary>
     readonly HashSet<string> _remove = new(StringComparer.OrdinalIgnoreCase);
 
@@ -138,6 +140,9 @@ public sealed partial class AutoView : UserControl
         _go = ModUi.Action(L.T("Install"), "", () => _ = RunAsync(), accent: true);
         // Uninstall takes out the ticked mods that are in the game (2.0.0-rc.11; it was a menu of every installed mod).
         _uninstall = ModUi.Action(L.T("Uninstall"), "\uE74D", () => _ = UninstallTickedAsync());
+        // Every mod Hybrid Launcher installed here, ticked or not (2.1-rc.6); mods put in another way stay.
+        _uninstallAll = ModUi.Action(L.T("Uninstall all"), "\uE74D", () => _ = UninstallAllAsync());
+        ToolTipService.SetToolTip(_uninstallAll, L.T("Takes out every mod Hybrid Launcher installed here; mods put in another way stay"));
         _again = ModUi.Action(L.T("Use the recommendation"), "", () =>
         {
             _choice.Opti = _choice.ReShade = _choice.RenoDx = _choice.Luma = _choice.Ultra = _choice.Dxvk = _choice.ReShadeAddon = null;
@@ -154,6 +159,7 @@ public sealed partial class AutoView : UserControl
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         buttons.Children.Add(_go);
         buttons.Children.Add(_uninstall);
+        buttons.Children.Add(_uninstallAll);
         buttons.Children.Add(_again);
         buttons.Children.Add(_detailsButton);
         var bar = new Grid { ColumnSpacing = 12 };
@@ -720,6 +726,16 @@ public sealed partial class AutoView : UserControl
             if (!done && why is not null) App.Window?.ShowInfo(L.F("{0}: {1}", name, why));
         }
         catch (Exception ex) { App.Window?.ShowError(L.F("Could not uninstall {0}", name), ex.Message, ex); }
+        _ = LoadAsync();
+    }
+
+    async Task UninstallAllAsync()
+    {
+        if (_running) return;
+        _running = true;
+        try { await _host.UninstallAllModsAsync(); }
+        catch (Exception ex) { App.Window?.ShowError(L.T("Uninstall all"), ex.Message, ex); }
+        finally { _running = false; }
         _ = LoadAsync();
     }
 

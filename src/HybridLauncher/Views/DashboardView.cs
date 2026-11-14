@@ -124,8 +124,6 @@ public sealed partial class DashboardView : UserControl
         _ = FillModsAsync();
         _ = FillTimeAsync();
         _ = FillGameAsync();
-        GameSessions.PlaytimeChanged += OnPlaytime;
-        AchievementHistory.Changed += OnHistory;
         Unloaded += (_, _) => { GameSessions.PlaytimeChanged -= OnPlaytime; AchievementHistory.Changed -= OnHistory; };
         Loaded += (_, _) =>
         {
@@ -436,22 +434,9 @@ public sealed partial class DashboardView : UserControl
         else
         {
             // Each side card in its own colour (rc.9): a wash of it from the top-left corner fading into the card, so the cards
-            // stand off the page's background and from each other. The Achievements card is gold, with its trophy watermarked.
+            // stand off the page's background and from each other. The Achievements card is gold (no trophy watermark since 2.1).
             bool ach = c.Id == "achievements";
             UIElement content = stack;
-            if (ach)
-            {
-                var layered = new Grid();
-                var mark = Icons.Trophy(118);
-                mark.Opacity = 0.07;
-                mark.HorizontalAlignment = HorizontalAlignment.Right;
-                mark.VerticalAlignment = VerticalAlignment.Bottom;
-                mark.Margin = new Thickness(0, 0, 2, 2);
-                mark.IsHitTestVisible = false;
-                layered.Children.Add(mark);
-                layered.Children.Add(stack);
-                content = layered;
-            }
             card = Ui.Card(content, 18);
             card.Background = CardWash(TintOf(c.Id), ach ? (byte)0x40 : (byte)0x26);
             card.BorderThickness = new Thickness(0);
@@ -1244,7 +1229,7 @@ public sealed partial class DashboardView : UserControl
             Compose(e);
             if (section is not null)
                 dialog.Opened += (_, _) => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (scroller is not null && text is not null) JumpTo(scroller, text, anchors, section); });
-            var result = await dialog.ShowAsync();
+            var result = await dialog.ShowOnceAsync();
             if (result == ContentDialogResult.Primary) Ui.Open(current.Url);
             else if (result == ContentDialogResult.Secondary && current.BuildUrl is { } bu) Ui.Open(bu);
         }
@@ -1310,6 +1295,9 @@ public sealed partial class DashboardView : UserControl
         if (Body("activity") is not { } body) return;
         body.Children.Clear();
         var entries = ActivityEntries();
+        // A game whose achievements its publisher keeps (GTA V Legacy on Epic: Rockstar's Social Club): say where they are.
+        if (HybridLauncher.Core.Accounts.EpicTitles.AchievementsElsewhere(_game.Id) is { } elsewhere)
+            body.Children.Add(Ui.Muted(L.F("{0} has no achievements on Epic Games: they are kept in {1}, which Hybrid Launcher cannot read.", _game.Name, elsewhere)));
         if (entries.Count == 0)
         {
             body.Children.Add(Ui.Muted(L.T("Your sessions and the achievements you unlock show here, newest first. Sessions count from the first time you play with Hybrid Launcher running.")));
@@ -1424,6 +1412,31 @@ public sealed partial class DashboardView : UserControl
         top.Children.Add(counts);
         body.Children.Add(top);
 
+        // 2.1: a gold bar of the way done, and the unlocks counted by rarity tier (gold, silver, bronze trophies, as the
+        // pop-ups give them), so the card says how hard the haul was, not only how big.
+        body.Children.Add(GoldBar(pct / 100, gold));
+        var tiers = set.Items.Where(a => a.Unlocked && a.GlobalPercent is not null).GroupBy(a => TierName(a.GlobalPercent)).ToDictionary(g => g.Key, g => g.Count());
+        if (tiers.Count > 0)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            foreach (var tier in new[] { "Gold", "Silver", "Bronze" })
+            {
+                if (!tiers.TryGetValue(tier, out var n)) continue;
+                var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                chip.Children.Add(Icons.TierTrophy(16, tier));
+                chip.Children.Add(new TextBlock { Text = n.ToString(), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+                var pill = new Border { Padding = new Thickness(9, 4, 11, 4), CornerRadius = new CornerRadius(12), Background = new SolidColorBrush(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF)), Child = chip };
+                ToolTipService.SetToolTip(pill, tier switch
+                {
+                    "Gold" => L.T("Rare: fewer than 10% of players have them"),
+                    "Silver" => L.T("Uncommon: 10 to 30% of players have them"),
+                    _ => L.T("Common: 30% of players or more have them"),
+                });
+                row.Children.Add(pill);
+            }
+            body.Children.Add(row);
+        }
+
         // As Steam's achievements box: the latest unlock large (its icon, name, what it asks and when), then the ones before it
         // as a row of icons, the rest counted in a last tile.
         var unlocked = set.Items.Where(a => a.Unlocked).OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue).ToList();
@@ -1514,7 +1527,30 @@ public sealed partial class DashboardView : UserControl
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);
         ToolTipService.SetToolTip(grid, a.Description.Length > 0 ? $"{a.Name}\n{a.Description}" : a.Name);
-        return new Border { Padding = new Thickness(10), CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Color.FromArgb(0x1E, gold.R, gold.G, gold.B)), Child = grid };
+        // 2.1: a gold light behind the icon and a wash that fades across the row, so the unlock reads as a prize.
+        var halo = new RadialGradientBrush();
+        halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x70, gold.R, gold.G, gold.B), Offset = 0 });
+        halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x00, gold.R, gold.G, gold.B), Offset = 1 });
+        var glow = new Border { Width = 104, Height = 104, Margin = new Thickness(-20), Background = halo, IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Center };
+        grid.Children.Insert(0, glow);
+        var wash = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 1) };
+        wash.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x34, gold.R, gold.G, gold.B), Offset = 0 });
+        wash.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x0C, gold.R, gold.G, gold.B), Offset = 1 });
+        return new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(12), Background = wash, Child = grid };
+    }
+
+    /// <summary>A slim bar filled in gold to <paramref name="share"/> (0 to 1), its light end a little brighter.</summary>
+    static FrameworkElement GoldBar(double share, Color gold)
+    {
+        var track = new Grid { Height = 6, CornerRadius = new CornerRadius(3), Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)), Margin = new Thickness(0, 2, 0, 0) };
+        var fillBrush = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(1, 0) };
+        fillBrush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xFF, (byte)(gold.R * 0.75), (byte)(gold.G * 0.6), (byte)(gold.B * 0.4)), Offset = 0 });
+        fillBrush.GradientStops.Add(new GradientStop { Color = gold, Offset = 0.8 });
+        fillBrush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xFF, 0xFF, 0xF1, 0xC4), Offset = 1 });
+        var fill = new Border { HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(3), Background = fillBrush };
+        track.Children.Add(fill);
+        track.SizeChanged += (_, e) => fill.Width = Math.Max(share > 0 ? 6 : 0, e.NewSize.Width * Math.Clamp(share, 0, 1));
+        return track;
     }
 
     /// <summary>A small fact line: icon, label, value.</summary>
@@ -1963,7 +1999,7 @@ public sealed partial class DashboardView : UserControl
         };
         dialog.Resources["ContentDialogMaxWidth"] = width + 48;
         dialog.SecondaryButtonClick += (_, e) => { e.Cancel = true; Fill(true); };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return false;
         AppState.Settings.DashboardOrder = [OrderMark, .. list.Items.OfType<Grid>().Select(g => (string)g.Tag)];
         AppState.Settings.DashboardHidden.Clear();
         foreach (var (id, box) in boxes) if (box.IsChecked != true) AppState.Settings.DashboardHidden.Add(id);

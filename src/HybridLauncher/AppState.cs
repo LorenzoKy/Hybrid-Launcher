@@ -110,7 +110,22 @@ public static class AppState
         PinsChanged?.Invoke();
     }
 
-    /// <summary>Visible pinned games, in pin order.</summary>
+    /// <summary>Puts a game in a collection or takes it out (<see cref="GameCollections.Favorites"/> = the favorites).</summary>
+    public static void SetInCollection(string collection, string id, bool member)
+    {
+        if (collection == GameCollections.Favorites) { SetPinned(id, member); return; }
+        GameCollections.Set(collection, id, member);
+        CollectionsEdited();
+    }
+
+    /// <summary>A collection was made, renamed, deleted or changed: saved, and the list and the library follow.</summary>
+    public static void CollectionsEdited()
+    {
+        SettingsStore.Save();
+        PinsChanged?.Invoke();
+    }
+
+    /// <summary>Visible favorite games, in the order they were added.</summary>
     public static List<Game> PinnedGames() =>
         Settings.PinnedGames.Select(Find).Where(g => g is not null && !Settings.HiddenGames.Contains(g.Id)).Select(g => g!).ToList();
 

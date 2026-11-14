@@ -160,7 +160,7 @@ public static class AchievementSoundsView
                 CloseButtonText = L.T("Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || box.Text.Trim() is not { Length: > 0 } name) return;
+            if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary || box.Text.Trim() is not { Length: > 0 } name) return;
             o.SoundPresets[name] = Current(o);
             saved();
         };

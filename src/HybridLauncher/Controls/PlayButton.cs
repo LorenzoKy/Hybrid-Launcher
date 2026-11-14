@@ -243,9 +243,9 @@ public sealed partial class PlayButton : UserControl
         var name = mode == Mode.Starting ? L.T("Starting… Click to force the game closed") : text;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_button, name);
         ToolTipService.SetToolTip(_button, mode == Mode.Starting ? name : null);
-        // Modern depth, in soft layers rather than a glossy band: the face runs from a lifted top through its own colour to a
-        // deeper foot (a darker, richer shade of the same hue, not black, so it never turns muddy); a wide dome of light rises
-        // from the top edge; a hairline of light sits just under that edge; a faint shade gathers along the bottom. No outline.
+        // A modern, nearly flat face (2.1-rc.4, the user: less exposure, a more even colour, a more modern look, like the
+        // Library's Play): the colour itself, a hint deeper at the foot, a thin line of light along the top edge and only a
+        // breath of light from above. No gloss band, no outline; the soft glow of its colour stays under it.
         bool light = HybridLauncher.Helpers.Contrast.IsLight(color);
         _surface.Background = new LinearGradientBrush
         {
@@ -253,9 +253,9 @@ public sealed partial class PlayButton : UserControl
             EndPoint = new Windows.Foundation.Point(0, 1),
             GradientStops =
             {
-                new GradientStop { Color = Mix(color, Microsoft.UI.Colors.White, 0.10), Offset = 0 },
-                new GradientStop { Color = color, Offset = 0.55 },
-                new GradientStop { Color = Deepen(color), Offset = 1 },
+                new GradientStop { Color = color, Offset = 0 },
+                new GradientStop { Color = color, Offset = 0.45 },
+                new GradientStop { Color = Mix(color, Deepen(color), 0.3), Offset = 1 },
             },
         };
         _surface.BorderThickness = new Thickness(0);
@@ -268,8 +268,8 @@ public sealed partial class PlayButton : UserControl
             RadiusY = 1.05,
             GradientStops =
             {
-                new GradientStop { Color = Color.FromArgb(light ? (byte)0x1E : (byte)0x38, 0xFF, 0xFF, 0xFF), Offset = 0 },
-                new GradientStop { Color = Color.FromArgb(light ? (byte)0x0A : (byte)0x12, 0xFF, 0xFF, 0xFF), Offset = 0.55 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x06 : (byte)0x0A, 0xFF, 0xFF, 0xFF), Offset = 0 },
+                new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 0.5 },
                 new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 1 },
             },
         };
@@ -280,7 +280,7 @@ public sealed partial class PlayButton : UserControl
             GradientStops =
             {
                 new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 0 },
-                new GradientStop { Color = Color.FromArgb(light ? (byte)0x40 : (byte)0x70, 0xFF, 0xFF, 0xFF), Offset = 0.5 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x20 : (byte)0x30, 0xFF, 0xFF, 0xFF), Offset = 0.5 },
                 new GradientStop { Color = Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), Offset = 1 },
             },
         };
@@ -291,7 +291,7 @@ public sealed partial class PlayButton : UserControl
             GradientStops =
             {
                 new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 0.6 },
-                new GradientStop { Color = Color.FromArgb(light ? (byte)0x14 : (byte)0x26, 0, 0, 0), Offset = 1 },
+                new GradientStop { Color = Color.FromArgb(light ? (byte)0x06 : (byte)0x0A, 0, 0, 0), Offset = 1 },
             },
         };
         _veil.Background = new SolidColorBrush(Color.FromArgb(light ? (byte)0x14 : (byte)0x22, 0xFF, 0xFF, 0xFF));
@@ -327,7 +327,7 @@ public sealed partial class PlayButton : UserControl
         if (_shadow is null) return;
         _shadow.Color = Color.FromArgb(0xFF, _color.R, _color.G, _color.B);
         // A wide, soft pool of the button's colour under it, stronger on hover.
-        _shadow.Opacity = _over ? 0.7f : 0.42f;
+        _shadow.Opacity = _over ? 0.55f : 0.3f;
         _shadow.BlurRadius = _over ? 38 : 26;
     }
 

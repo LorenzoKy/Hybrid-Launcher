@@ -62,6 +62,16 @@ public static class StoreLogos
         return new Viewbox { Width = size, Height = size, Child = icon };
     }
 
+    /// <summary>The store's logo as a menu icon (16 px, the text colour), e.g. "Steam shortcut" in a game's right-click menu.</summary>
+    public static IconElement MenuIcon(GameStore store)
+    {
+        var data = store switch { GameStore.Epic => Epic, GameStore.Gog => Gog, GameStore.Xbox => Xbox, _ => Steam };
+        var geometry = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), data);
+        // The paths are 24 x 24; a menu icon is 16.
+        geometry.Transform = new ScaleTransform { ScaleX = 16.0 / 24, ScaleY = 16.0 / 24 };
+        return new PathIcon { Data = geometry, Width = 16, Height = 16 };
+    }
+
     /// <summary>The logo at <paramref name="size"/> px, or a folder glyph for games added by hand.</summary>
     public static FrameworkElement Create(GameStore store, double size = 16)
     {
@@ -347,59 +357,67 @@ public sealed record Palette(string Key, string Name, string Description, Color?
 
 public static class Palettes
 {
+    /// <summary>
+    /// The looks since 2.1. Windows (the default since 2.1-rc.11) takes the accent colour set in Windows and keeps a trace of
+    /// Mica, so the wallpaper's tone shows faintly through a dark window; its colours are read from Windows when applied (see
+    /// <see cref="Get"/>), the entry here is only its name. The others paint their own opaque background: Total Dark is pure
+    /// black (OLED), Dark a soft near-black, Gray a graphite grey, Hybrid the brand's night crimson.
+    /// </summary>
     public static readonly Palette[] All =
     [
-        new("Windows", "Windows accent", "Your Windows accent colour", null, null),
-        new("Hybrid", "Hybrid", "Crimson, like the logo's crossbar", C(0xD7, 0x14, 0x3A), C(0xA8, 0x0E, 0x2C)),
-        // Always dark, with their own background: a plain near-black one, and Venom's purple night.
-        new("Dark", "Dark", "Plain near-black background, soft silver accent (always dark)", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x11, 0x11, 0x14), C(0x06, 0x06, 0x07))),
-        new("VenomViolet", "Venom", "Deep purple night with violet light (always dark)", C(0xA8, 0x5C, 0xFF), C(0x7B, 0x2C, 0xE6), (C(0x13, 0x0B, 0x1C), C(0x06, 0x03, 0x0A))),
-        // Scene themes: dark / grey backgrounds of their own, inspired by a console or game look.
-        new("Cyberpunk", "Cyberpunk 2077", "Night city black, signal yellow and red (always dark)", C(0xFC, 0xEE, 0x0A), C(0xFF, 0x00, 0x3C), (C(0x11, 0x0C, 0x0F), C(0x06, 0x06, 0x08))),
-        new("Mgs1", "Metal Gear Solid", "Shadow Moses: arctic night blue with codec green (always dark)", C(0x5C, 0xE0, 0x8C), C(0x2C, 0x6E, 0x9E), (C(0x0C, 0x14, 0x1C), C(0x03, 0x07, 0x0A))),
-        new("Mgs2", "Metal Gear Solid 2", "Sons of Liberty: Big Shell steel with cyan readouts (always dark)", C(0x4F, 0xC8, 0xF0), C(0x8E, 0xA4, 0xB8), (C(0x12, 0x17, 0x1D), C(0x06, 0x08, 0x0B))),
-        // Cozy: warm charcoal like a dim lamp-lit room, terracotta accent, cream text; the app's other colours soften to match.
-        new("Cozy", "Cozy", "Warm charcoal, terracotta and cream, every colour softened to match (always dark)", C(0xBF, 0x4E, 0x38), C(0xC9, 0x85, 0x3F),
-            (C(0x1D, 0x18, 0x16), C(0x0E, 0x0B, 0x09)), Text: C(0xF1, 0xE8, 0xDF), Harmonize: true),
-        new("Custom", "My colours", "Your own accent, glow and background (Settings)", C(0x9A, 0x5C, 0xFF), C(0x8A, 0x4D, 0xFF)),
+        new("Windows", "Windows", "Your Windows accent colour on a dark window, your wallpaper's tone faintly behind it", null, null),
+        new("TotalDark", "Total Dark", "Pure black background, white accent. Best on OLED screens", C(0xEC, 0xEC, 0xF0), C(0x2A, 0x2A, 0x30), (C(0x00, 0x00, 0x00), C(0x00, 0x00, 0x00))),
+        new("Dark", "Dark", "Soft near-black background, silver accent", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x14, 0x14, 0x18), C(0x07, 0x07, 0x09))),
+        new("Gray", "Gray", "Graphite grey background, steel blue accent", C(0x8F, 0xB4, 0xE6), C(0x6A, 0x7C, 0x96), (C(0x2B, 0x2D, 0x32), C(0x1B, 0x1C, 0x20))),
+        new("Hybrid", "Hybrid", "Night crimson background, the logo's red accent", C(0xE8, 0x23, 0x4A), C(0xB0, 0x10, 0x30), (C(0x1C, 0x09, 0x0F), C(0x08, 0x03, 0x05))),
     ];
 
-    /// <summary>"My colours": the accent, glow and (optionally) dark background picked in Settings.</summary>
-    public static Palette Custom()
-    {
-        var s = AppState.Settings;
-        var accent = ParseHex(s.CustomAccent) ?? C(0x9A, 0x5C, 0xFF);
-        var tint = ParseHex(s.CustomTint) ?? accent;
-        (Color, Color)? backdrop = null;
-        if (s.CustomBackdrop && ParseHex(s.CustomBackground) is { } bg) backdrop = (bg, Mix(bg, Colors.Black, 0.55));
-        return new Palette("Custom", "My colours", "Your own accent, glow and background (Settings)", accent, tint, backdrop);
-    }
+    /// <summary>The look of a new install.</summary>
+    public const string DefaultKey = "Windows";
 
     public static Palette Get(string? key)
     {
-        // The theme named after the app's old name became "Hybrid" with the rename (0.25); the purple Venom theme of 1.1 is "VenomViolet".
-        if (key == AppInfo.LegacyName) key = "Hybrid";
-        // Scene themes dropped in 1.0 (PS5, Metal Gear Solid 3, Spider-Man): their dark look carries on as Cyberpunk 2077.
-        if (key is "Ps5" or "MetalGear" or "SpiderMan") key = "Cyberpunk";
-        // Colour themes dropped in 1.1: Graphite carries on as Dark, the coloured ones as Hybrid.
-        if (key is "Graphite") key = "Dark";
-        if (key is "NeonCity" or "Toxic" or "Crimson" or "Ocean" or "Amber") key = "Hybrid";
-        return key == "Custom" ? Custom() : key is null or "Windows" ? WindowsAccent() : All.FirstOrDefault(p => p.Key == key) ?? WindowsAccent();
+        // 2.1: every earlier theme was dropped. The dark plain ones carry on as Dark.
+        if (key is "Graphite" or "Cozy") key = "Dark";
+        var p = All.FirstOrDefault(p => p.Key == key) ?? All.First(p => p.Key == DefaultKey);
+        return p.Key == "Windows" ? WindowsLook() : p;
     }
 
+    static Palette? _windows;
+
+    /// <summary>Forgets the Windows colours read last (Windows' accent changed): the next <see cref="Get"/> reads them again.</summary>
+    public static void ForgetWindowsColours() => _windows = null;
+
     /// <summary>
-    /// "Windows accent": WinUI already uses the Windows accent for controls; with material colours on, the window gets a soft
-    /// wash of it too, so the backdrop matches the accent like the other themes do. Read each time: the user can change it in
-    /// Windows settings. Material colours off: only the controls take the accent, the window stays Windows' own Mica.
+    /// The Windows theme: the accent set in Windows (Personalisation, Colours), calibrated for a dark window. Windows lets any
+    /// colour be the accent, from near-black navy to pale yellow, so the accent is brought into a band that reads on dark
+    /// surfaces (lightness 0.50-0.68, the loudest saturation tamed); the glow behind the window is a deeper shade of it. Read
+    /// once and kept until Windows says the colours changed.
     /// </summary>
-    static Palette WindowsAccent()
+    static Palette WindowsLook()
     {
-        if (!AppState.Settings.Material) return All[0];
-        Color? tint = null;
-        try { tint = new Windows.UI.ViewManagement.UISettings().GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent); }
+        if (_windows is { } known) return known;
+        var accent = C(0x4C, 0xC2, 0xFF);
+        try
+        {
+            var ui = new Windows.UI.ViewManagement.UISettings();
+            // Light1 is what Windows itself uses for the accent on dark surfaces; the base accent is the fallback.
+            var light = ui.GetColorValue(Windows.UI.ViewManagement.UIColorType.AccentLight1);
+            accent = light.A > 0 ? light : ui.GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent);
+        }
         catch { }
-        return All[0] with { Tint = tint };
+        RgbToHsl(accent, out var h, out var sat, out var l);
+        // A grey accent stays grey (silver), a coloured one keeps its hue.
+        if (sat > 0.85) sat = 0.85;
+        l = Math.Clamp(l, 0.50, 0.68);
+        var readable = HslToRgb(h, sat, l, 255);
+        var glow = HslToRgb(h, Math.Min(sat, 0.75), 0.36, 255);
+        _windows = All[0] with { Accent = readable, Tint = glow };
+        return _windows;
     }
+
+    /// <summary>The key a saved theme maps to now (an old one becomes one of the four).</summary>
+    public static string Normalize(string? key) => Get(key).Key;
 
     public static Color? ParseHex(string? hex)
     {

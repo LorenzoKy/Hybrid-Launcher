@@ -172,7 +172,7 @@ public static class OwnedGames
                     $"com.epicgames.launcher://apps/{ns}%3A{catalogId}%3A{appName}?action=install",
                     $"https://store.epicgames.com/browse?q={Uri.EscapeDataString(title)}"));
             }
-            return new OwnedList(GameStore.Epic, list.DistinctBy(g => g.Id).OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
+            return new OwnedList(GameStore.Epic, EpicTitles.Disambiguate(list.DistinctBy(g => g.Id).ToList()).OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
                 L.F("Epic Games Launcher (updated {0:d MMM yyyy})", File.GetLastWriteTime(file)));
         }
         catch (Exception ex)

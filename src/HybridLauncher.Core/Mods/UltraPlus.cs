@@ -278,17 +278,24 @@ public static partial class UltraPlus
         var names = Http.GetCachedAsync(Server + "name_overrides.json", "ultraplus-names.json", TimeSpan.FromDays(1), ct: ct);
         var descriptions = Http.GetCachedAsync(Server + "description_overrides.json", "ultraplus-descriptions.json", TimeSpan.FromDays(1), ct: ct);
         var categories = Http.GetCachedAsync(Server + "ui_categories.json", "ultraplus-categories.json", TimeSpan.FromDays(1), ct: ct);
-        _names = Map(await names);
-        _descriptions = Map(await descriptions);
-        _categories = new(StringComparer.OrdinalIgnoreCase);
+        // Read whole first, then published together: a reader never sees names without their descriptions. Nothing read
+        // (offline) keeps nothing, so the next call asks again instead of staying without names for the session.
+        var nameText = await names;
+        var map = Map(nameText);
+        var descriptionMap = Map(await descriptions);
+        var categoryMap = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         try
         {
             if (await categories is { } json)
                 foreach (var p in JsonDocument.Parse(json).RootElement.EnumerateObject())
                     if (p.Value.ValueKind == JsonValueKind.Array)
-                        _categories[p.Name] = p.Value.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString() ?? "").ToList();
+                        categoryMap[p.Name] = p.Value.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString() ?? "").ToList();
         }
         catch (JsonException) { }
+        if (nameText is null) return;
+        _descriptions = descriptionMap;
+        _categories = categoryMap;
+        _names = map;
 
         static Dictionary<string, string> Map(string? json)
         {

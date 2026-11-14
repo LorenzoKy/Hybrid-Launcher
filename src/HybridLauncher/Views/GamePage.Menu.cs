@@ -1,5 +1,6 @@
 using HybridLauncher.Core;
 using HybridLauncher.Core.Detection;
+using HybridLauncher.Core.Media;
 using HybridLauncher.Helpers;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -20,11 +21,42 @@ public partial class GamePage
     string _propsPage = "general";
     StackPanel? _propsNav;
     ScrollViewer? _propsBody;
+    // Where the window sits: the page's own overlay, or one of the main window's (Properties from the library, 2.1-rc.9).
+    Grid? _propsHost;
+    Action? _propsClosed;
 
     void MoreButton_Click(object sender, RoutedEventArgs e)
     {
         try { OpenProperties(); }
         catch (Exception ex) { Log.Warn($"Game properties: {ex.Message}"); }
+    }
+
+    /// <summary>Opens the game's Properties (the Properties entry of a game's right-click menu).</summary>
+    public void ShowProperties()
+    {
+        try { OpenProperties(); }
+        catch (Exception ex) { Log.Warn($"Game properties: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Opens the game's Properties over <paramref name="host"/> (an overlay of the main window), without showing this page:
+    /// Properties from the library opens there, over the library (2.1-rc.9). <paramref name="closed"/> runs when it closes.
+    /// </summary>
+    internal void ShowPropertiesIn(Grid host, Action closed)
+    {
+        try
+        {
+            _propsHost = host;
+            _propsClosed = closed;
+            host.Tapped += PropsOverlay_Tapped;
+            host.KeyDown += PropsOverlay_KeyDown;
+            OpenProperties();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Game properties: {ex.Message}");
+            CloseProperties();
+        }
     }
 
     void OpenProperties(string? page = null)
@@ -60,26 +92,53 @@ public partial class GamePage
         window.Children.Add(rail);
         Grid.SetColumn(right, 1);
         window.Children.Add(right);
-        double w = Math.Min(1000, Math.Max(640, ActualWidth - 120));
-        double h = Math.Min(720, Math.Max(460, ActualHeight - 100));
+        var host = _propsHost ?? PropsOverlay;
+        // A host not laid out yet (the window's layer, made on the first use) has no size: the window's content gives it.
+        double aw = host.ActualWidth > 0 ? host.ActualWidth : XamlRoot?.Size.Width ?? ActualWidth;
+        double ah = host.ActualHeight > 0 ? host.ActualHeight : (XamlRoot?.Size.Height ?? ActualHeight) - 58;
+        double w = Math.Min(1000, Math.Max(640, aw - 120));
+        double h = Math.Min(720, Math.Max(460, ah - 100));
         window.Width = w;
         window.Height = h;
         window.Tapped += (_, e) => e.Handled = true;
         window.Shadow = new ThemeShadow();
         window.Translation = new System.Numerics.Vector3(0, 0, 48);
 
-        PropsOverlay.Children.Clear();
-        PropsOverlay.Children.Add(window);
-        PropsOverlay.Visibility = Visibility.Visible;
+        host.Children.Clear();
+        host.Children.Add(window);
+        host.Visibility = Visibility.Visible;
         ShowPropsPage(_propsPage);
-        PropsOverlay.Focus(FocusState.Programmatic);
+        host.Focus(FocusState.Programmatic);
     }
 
-    void CloseProperties()
+    /// <summary>
+    /// Where a dialog opened from the window goes, taken before the window closes (2.1-rc.10 audit): the page holding it may be
+    /// one not on screen (Properties over the library).
+    /// </summary>
+    (XamlRoot? Root, ElementTheme Theme) PropsRoot() => ((_propsHost ?? (FrameworkElement)this).XamlRoot ?? App.Window?.Content?.XamlRoot,
+        App.Window?.Content is FrameworkElement shown ? shown.ActualTheme : ActualTheme);
+
+    /// <summary>The Installed files page, drawn again once its folders and sizes are read (a page opened unseen reads them late).</summary>
+    void FilesPropsChanged()
+    {
+        if (_propsBody is not null && _propsPage == "files") ShowPropsPage("files");
+    }
+
+    internal void CloseProperties()
     {
         _propsPage = "general";
-        PropsOverlay.Visibility = Visibility.Collapsed;
-        PropsOverlay.Children.Clear();
+        var host = _propsHost ?? PropsOverlay;
+        host.Visibility = Visibility.Collapsed;
+        host.Children.Clear();
+        if (_propsHost is { } outside)
+        {
+            outside.Tapped -= PropsOverlay_Tapped;
+            outside.KeyDown -= PropsOverlay_KeyDown;
+            _propsHost = null;
+            var closed = _propsClosed;
+            _propsClosed = null;
+            closed?.Invoke();
+        }
         _propsNav = null;
         _propsBody = null;
     }
@@ -211,11 +270,21 @@ public partial class GamePage
         if (_settings.ExeOverride is not null) buttons.Children.Add(PropButton(L.T("Use the detected exe"), () => { ResetExe_Click(this, new RoutedEventArgs()); ShowPropsPage("files"); }));
         page.Children.Add(PropRow(exe is null ? L.T("No exe found") : Path.GetFileName(exe), (exe ?? "") + "\n" + L.T("The exe that starts the game; mods go next to it."), buttons));
 
+        if (!game.Installing && !game.NotInstalled)
+        {
+            page.Children.Add(PropHeading(L.T("Repair")));
+            var plan = GameVerify.For(game);
+            page.Children.Add(PropRow(L.T("Verify game files"), plan.Possible
+                ? L.F("{0} checks the game's files and downloads again what is missing or damaged.", plan.Launcher!)
+                : L.T("No launcher keeps a list of this game's files."),
+                PropButton(L.T("Verify…"), () => { var (root, theme) = PropsRoot(); CloseProperties(); if (root is not null) _ = VerifyFlow.RunAsync(game, root, theme); })));
+        }
+
         if (!game.Installing)
         {
             page.Children.Add(PropHeading(L.T("Uninstall")));
             var red = Color.FromArgb(0xFF, 0xE8, 0x4A, 0x55);
-            var uninstall = PropButton(L.T("Uninstall…"), () => { CloseProperties(); UninstallGame_Click(this, new RoutedEventArgs()); });
+            var uninstall = PropButton(L.T("Uninstall…"), () => { var (root, theme) = PropsRoot(); CloseProperties(); if (root is not null) _ = UninstallFlow.RunAsync(game, root, theme); });
             uninstall.Foreground = new SolidColorBrush(red);
             uninstall.Background = new SolidColorBrush(Color.FromArgb(0x26, red.R, red.G, red.B));
             page.Children.Add(PropRow(L.T("Remove the game from this PC"), L.T("Saves outside its folder stay."), uninstall));
@@ -228,7 +297,7 @@ public partial class GamePage
         {
             var pin = new ToggleSwitch { IsOn = AppState.IsPinned(game.Id), OnContent = "", OffContent = "", MinWidth = 0 };
             pin.Toggled += (_, _) => { if (pin.IsOn != AppState.IsPinned(game.Id)) Pin_Click(this, new RoutedEventArgs()); };
-            page.Children.Add(PropRow(L.T("Pinned to quick access"), L.T("Pinned games sit at the top of the list."), pin));
+            page.Children.Add(PropRow(L.T("Favorite"), L.T("Favorite games sit at the top of the list."), pin));
             page.Children.Add(PropRow(L.T("Hide from the list"), L.T("Show it again from Settings."),
                 PropButton(L.T("Hide"), () => { CloseProperties(); Hide_Click(this, new RoutedEventArgs()); })));
         }
@@ -236,40 +305,19 @@ public partial class GamePage
         CoverRow(page, game);
     }
 
-    /// <summary>The library cover: the store's, or a picture of the user's own (copied into the data folder, so it stays).</summary>
+    /// <summary>The game's pictures (cover, banner, logo, icon): SteamGridDB's or the user's own, in the artwork picker (2.1).</summary>
     void CoverRow(StackPanel page, Game game)
     {
-        bool own = _settings.CustomCover is { } c && File.Exists(c);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        buttons.Children.Add(PropButton(L.T("Choose a picture…"), async () =>
+        int own = new[] { ArtKind.Cover, ArtKind.Banner, ArtKind.Logo, ArtKind.Icon }.Count(k => ArtOverrides.Get(game.Id, k) is not null);
+        var edit = PropButton(L.T("Edit artwork…"), () =>
         {
-            if (App.Window is not { } window || await Pickers.PickFileAsync(window, ".jpg", ".jpeg", ".png", ".webp", ".bmp") is not { } picked) return;
-            try
-            {
-                var safe = string.Concat(game.Id.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) || ch == ':' ? '_' : ch));
-                // A new name each time: the decoded picture of the old one may still be cached by the image loader.
-                var target = Path.Combine(AppInfo.CoversDir, $"{safe}-{DateTime.UtcNow:yyyyMMddHHmmss}{Path.GetExtension(picked).ToLowerInvariant()}");
-                File.Copy(picked, target, overwrite: true);
-                var old = _settings.CustomCover;
-                _settings.CustomCover = target;
-                SettingsStore.Save();
-                if (old is not null && !old.Equals(target, StringComparison.OrdinalIgnoreCase)) try { File.Delete(old); } catch { }
-                LibraryPage.ForgetCover(game.Id);
-                Log.Info($"Cover for {game.Name}: own picture {Path.GetFileName(picked)}");
-                ShowPropsPage("library");
-            }
-            catch (Exception ex) { Log.Warn($"Cover for {game.Name}: {ex.Message}"); }
-        }));
-        if (own) buttons.Children.Add(PropButton(L.T("Use the store's"), () =>
-        {
-            var old = _settings.CustomCover;
-            _settings.CustomCover = null;
-            SettingsStore.Save();
-            if (old is not null) try { File.Delete(old); } catch { }
-            LibraryPage.ForgetCover(game.Id);
-            ShowPropsPage("library");
-        }));
-        page.Children.Add(PropRow(L.T("Cover"), own ? L.T("Your own picture. A portrait picture (2:3, like 600 × 900) fits the tile best.") : L.T("The store's cover. Choose a picture to use your own (2:3, like 600 × 900, fits best)."), buttons));
+            var (root, theme) = PropsRoot();
+            CloseProperties();
+            if (root is not null) _ = Controls.ArtworkDialog.ShowAsync(root, theme, game);
+        });
+        page.Children.Add(PropRow(L.T("Artwork"), own == 0
+            ? L.T("The cover, banner, logo and icon come from the store. Pick others from SteamGridDB or your own pictures.")
+            : L.N(own, "{0} picture of your own. Change them from SteamGridDB or your own files.", "{0} pictures of your own. Change them from SteamGridDB or your own files."), edit));
     }
 
     /// <summary>"Customization": a switch per part of the banner and the launch bar, for this game.</summary>

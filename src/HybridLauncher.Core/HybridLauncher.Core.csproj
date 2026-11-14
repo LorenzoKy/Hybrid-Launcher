@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The smoke tests reach a few internal pieces (ConfigSync's line merge and data-folder check, its push fault). -->
+    <InternalsVisibleTo Include="HybridLauncher.Smoke" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The official OptiScaler.ini's keys: what tells a fork's own settings apart (Ini/OptiScalerKeys.cs). -->
     <EmbeddedResource Include="Ini\OptiScalerKeys.txt" LogicalName="HybridLauncher.Core.Ini.OptiScalerKeys.txt" />
   </ItemGroup>

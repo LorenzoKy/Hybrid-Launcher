@@ -63,7 +63,7 @@ public static class GameInfo
     public static async Task<GameArt> GetAsync(Game game, CancellationToken ct = default)
     {
         // The cache janitor may have removed the picture since: then it is looked up again.
-        lock (Known) if (Known.TryGetValue(game.Id, out var known) && Exists(known.HeroImage)) return known;
+        lock (Known) if (Known.TryGetValue(game.Id, out var known) && Exists(known.HeroImage)) return ArtOverrides.Apply(game, known);
         var art = await LoadAsync(game, ct);
         if (art.SteamAppId is not null && art.HeroImage is not null)
             lock (Known)
@@ -75,7 +75,7 @@ public static class GameInfo
                     while (KnownOrder.Count > KnownMax) Known.Remove(KnownOrder.Dequeue());
                 }
             }
-        return art;
+        return ArtOverrides.Apply(game, art);
     }
 
     /// <summary>
@@ -179,7 +179,15 @@ public static class GameInfo
 
     /// <summary>The Steam app id of a game by its name; then by its plain name ("… Complete Edition - Amazon Prime" left out).</summary>
     public static async Task<string?> FindSteamAppIdAsync(string name, CancellationToken ct) =>
-        await FindSteamAppIdCoreAsync(name, ct) ?? (GameNames.Plain(name) is { } plain ? await FindSteamAppIdCoreAsync(plain, ct) : null);
+        KnownSteamIds.TryGetValue(GameNames.Clean(name), out var known) ? known
+        : await FindSteamAppIdCoreAsync(name, ct) ?? (GameNames.Plain(name) is { } plain ? await FindSteamAppIdCoreAsync(plain, ct) : null);
+
+    // Games whose Steam page exists but that Steam's store search no longer lists (2.1: "Grand Theft Auto V Legacy" gives no
+    // hits since Rockstar split it from Enhanced, so its page, news and cover were all empty).
+    static readonly Dictionary<string, string> KnownSteamIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Grand Theft Auto V Legacy"] = "271590",
+    };
 
     /// <summary>Steam store search: the games it lists for <paramref name="term"/> (id, name, small capsule picture).</summary>
     public static async Task<List<(string Id, string Name, string? Image)>> SearchStoreAsync(string term, CancellationToken ct)
@@ -240,7 +248,11 @@ public static class GameInfo
             using var resp = await Http.Client.GetAsync(url, cts.Token);
             if (!resp.IsSuccessStatusCode || resp.Content.Headers.ContentType?.MediaType?.StartsWith("image/") != true)
             {
-                await File.WriteAllTextAsync(missing, "", ct);
+                // Only a picture that is not there is remembered as missing (a week): a busy server (429, 5xx) is asked again
+                // next time (2.1: owned covers stayed empty for a week after one busy moment of the CDN).
+                if (resp.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone or System.Net.HttpStatusCode.Forbidden
+                    || resp.IsSuccessStatusCode)
+                    await File.WriteAllTextAsync(missing, "", ct);
                 return null;
             }
             var bytes = await resp.Content.ReadAsByteArrayAsync(cts.Token);

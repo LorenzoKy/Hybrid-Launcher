@@ -444,7 +444,7 @@ static class Ui
         Image? poster = null;
         if (image is not null)
         {
-            var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical };
+            var bmp = new BitmapImage { DecodePixelWidth = line.Width > 0 ? Math.Min(line.Width, 960) : (large ? 820 : 640), DecodePixelType = DecodePixelType.Logical };
             poster = new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
             bmp.ImageOpened += (_, _) => { if (line.Width <= 0) box.MaxWidth = bmp.PixelWidth; };
             bmp.ImageFailed += (_, _) => { if (video is null) box.Visibility = Visibility.Collapsed; };

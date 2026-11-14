@@ -25,6 +25,14 @@ public static class BackdropPainter
         // of Mica through it, still darker than 1.3.
         var top = Color.FromArgb(0xFF, 0x19, 0x19, 0x1E);
         var bottom = Color.FromArgb(0xFF, 0x0E, 0x0E, 0x11);
+        if (palette.Key == "Windows" && palette.Tint is { } tint)
+        {
+            // The Windows theme (the default): the base takes a breath of the accent's hue and covers a little more of Mica,
+            // so a bright wallpaper never washes the window out while its tone still shows through.
+            top = Mix(top, tint, 0.07);
+            bottom = Mix(bottom, tint, 0.04);
+            return new Recipe(top, bottom, tint, palette.Accent, 0xB4);
+        }
         return new Recipe(top, bottom, palette.Tint ?? palette.Accent, palette.Accent ?? palette.Tint, 0xA0);
     }
 
@@ -38,6 +46,8 @@ public static class BackdropPainter
         var g2 = recipe.Glow2 ?? g1;
         double s1 = recipe.Glow is null ? 0 : 0.20, s2 = recipe.Glow2 is null ? 0 : 0.09;
         double aspect = (double)width / Math.Max(1, height);
+        double invR1Sq = 1.0 / ((0.95 * aspect) * (0.95 * aspect));
+        double invR2Sq = 1.0 / ((0.7 * aspect) * (0.7 * aspect));
         uint seed = 0x9E3779B9;
         for (int y = 0; y < height; y++)
         {
@@ -52,9 +62,8 @@ public static class BackdropPainter
             {
                 double u = (double)x / Math.Max(1, width - 1);
                 // Glow 1 centred past the top-right corner; glow 2 low on the left. Smooth falloff (no hard edge).
-                double d1 = Math.Sqrt(Math.Pow((u - 1.05) * aspect, 2) + Math.Pow(v + 0.15, 2)) / (0.95 * aspect);
-                double d2 = Math.Sqrt(Math.Pow((u + 0.05) * aspect, 2) + Math.Pow(v - 1.05, 2)) / (0.7 * aspect);
-                double k1 = s1 * Falloff(d1), k2 = s2 * Falloff(d2);
+                double ax = (u - 1.05) * aspect, ay = v + 0.15, bx = (u + 0.05) * aspect, by = v - 1.05;
+                double k1 = s1 * FalloffSq((ax * ax + ay * ay) * invR1Sq), k2 = s2 * FalloffSq((bx * bx + by * by) * invR2Sq);
                 // A quiet vignette: the corners a little deeper.
                 double vx = (u - 0.5) * 2, vy = (v - 0.45) * 2;
                 double vig = 1 - 0.18 * Math.Clamp((vx * vx + vy * vy) / 2, 0, 1);
@@ -77,7 +86,10 @@ public static class BackdropPainter
         return pixels;
     }
 
-    static double Falloff(double d) => d >= 1 ? 0 : Math.Pow(1 - d * d, 2);
+    static Color Mix(Color a, Color b, double t) => Color.FromArgb(255,
+        (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+
+    static double FalloffSq(double d2) { if (d2 >= 1) return 0; double f = 1 - d2; return f * f; }
 
     static byte Byte(double v) => (byte)Math.Clamp(Math.Round(v), 0, 255);
 

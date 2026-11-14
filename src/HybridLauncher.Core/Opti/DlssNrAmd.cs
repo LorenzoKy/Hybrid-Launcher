@@ -275,6 +275,12 @@ public static class DlssNrAmd
 
         // A dlssnr-amd folder of the game's own (put in by hand earlier): kept aside, back on uninstall.
         var dst = Path.Combine(target, Folder);
+        // Backups off (Settings → Mods): the game's own folder is replaced, not kept.
+        if (Directory.Exists(dst) && !SettingsStore.Current.BackupGameFiles)
+        {
+            Directory.Delete(dst, recursive: true);
+            Log.Info($"DLSS NR (AMD): the game's own {Folder} folder replaced (backups are off)");
+        }
         if (Directory.Exists(dst))
         {
             var keep = Path.Combine(m.BackupRoot ?? Path.Combine(AppInfo.BackupsDir, OptiInstaller.SafeName(target)), "dlssnr-amd-own");
@@ -404,6 +410,7 @@ public static class DlssNrAmd
 
         void KeepAside(string rel)
         {
+            if (!SettingsStore.Current.BackupGameFiles) return;
             var at = Path.Combine(target, rel);
             if (!File.Exists(at) && !Directory.Exists(at)) return;
             var to = Path.Combine(info.BackupDir!, rel);

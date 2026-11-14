@@ -418,7 +418,7 @@ public sealed partial class HardwarePage : Page
             }
         };
         timer.Start();
-        var result = await dialog.ShowAsync();
+        var result = await dialog.ShowOnceAsync();
         timer.Stop();
         if (result != ContentDialogResult.Primary)
         {

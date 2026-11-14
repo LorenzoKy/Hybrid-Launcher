@@ -1,4 +1,4 @@
-﻿// End-to-end checks for HybridLauncher.Core that need a real Windows box and network:
+// End-to-end checks for HybridLauncher.Core that need a real Windows box and network:
 //   dotnet run -- scan              list detected games and their exe folders
 //   dotnet run -- ini <file>        parse an OptiScaler.ini and print the option kinds
 //   dotnet run -- decide            prompt classification table for the setup bat
@@ -38,6 +38,11 @@
 //   dotnet run -- friends           signs in with HL_DATA's Steam token and lists the account's friends (read-only)
 //   dotnet run -- extract           the built-in extractor on a zip it makes (and HL_EXTRACT_SAMPLES' archives), no tar.exe
 //   dotnet run -- settings          settings from a newer version: unknown values left out, the rest kept
+//   dotnet run -- v21               2.1: old themes mapped to the new four, verify plans, a game's own pictures, profiles
+//   dotnet run -- rc4               2.1-rc.4: Epic stats parsing, GOG containers in an update, SGDB pictures, the list's own
+//                                   filters, "Hybrid Config and Stats" merged between two PCs through a folder cloud
+//   dotnet run -- rc10              2.1-rc.10 (audit of rc.8/rc.9): Steam shortcuts, settings read case-insensitive, config sync
+//                                   (failed send, removals, the window's size, time zones, the data folder's paths)
 //   dotnet run -- updates           the app's own update: release JSON parsing, the check against a local feed, download + unpack
 //   dotnet run -- customdlls        custom dlls on a fake install: copied in, replaced, a foreign file kept, turned off, uninstalled
 //   dotnet run -- forks           OptiScaler forks: addresses, Update available, notifications once per release, the archive picked
@@ -479,6 +484,563 @@ switch (cmd)
             var read = SettingsStore.Load();
             Check(read.Games.Count == games, $"a real settings file with unknown channels keeps all {games} games");
         }
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        break;
+    }
+    case "verify":
+    {
+        // 2.1-rc.3: a verify is an update in place with every file checked by its checksum. A file as the store lists it is
+        // kept, a damaged or missing one is downloaded again, a file the store does not list (a mod, a save) is not touched.
+        var dir = Path.Combine(Path.GetTempPath(), "hl-smoke-verify");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        Directory.CreateDirectory(Path.Combine(dir, "bin"));
+        byte[] good = System.Text.Encoding.UTF8.GetBytes("the game's exe, as the store has it");
+        byte[] data = System.Text.Encoding.UTF8.GetBytes("a data file of the game");
+        string Sha(byte[] b) => Convert.ToHexString(SHA1.HashData(b));
+        File.WriteAllBytes(Path.Combine(dir, "bin", "game.exe"), good);
+        var damaged = (byte[])data.Clone(); damaged[3] ^= 0x55;
+        File.WriteAllBytes(Path.Combine(dir, "data.pak"), damaged);
+        File.WriteAllText(Path.Combine(dir, "mod.dll"), "a mod");
+        int fetched = 0;
+        HybridLauncher.Core.Accounts.PlanFile File1(string path, byte[] bytes) => new()
+        {
+            Path = path, Size = bytes.Length, Sha1 = Sha(bytes),
+            Chunks = [new HybridLauncher.Core.Accounts.PlanChunk(0, bytes.Length, _ => { Interlocked.Increment(ref fetched); return Task.FromResult(bytes); })],
+        };
+        int lastChecked = -1, lastTotal = -1;
+        var plan = new HybridLauncher.Core.Accounts.DownloadPlan
+        {
+            InstallDir = dir, Update = true, Version = "1",
+            Files = [new() { Path = "bin", Directory = true }, File1(@"bin\game.exe", good), File1("data.pak", data), File1("missing.txt", data)],
+            Checked = (n, t) => { lastChecked = n; lastTotal = t; },
+        };
+        HybridLauncher.Core.Accounts.DirectDownloader.RunAsync(plan, _ => { }, CancellationToken.None).GetAwaiter().GetResult();
+        Check(plan.Fetched == 2, $"two files of three downloaded again (got {plan.Fetched})");
+        Check(fetched == 2, "the file as the store has it was not downloaded");
+        Check(File.ReadAllBytes(Path.Combine(dir, "data.pak")).SequenceEqual(data), "the damaged file is repaired");
+        Check(File.ReadAllBytes(Path.Combine(dir, "missing.txt")).SequenceEqual(data), "the missing file is back");
+        Check(File.ReadAllText(Path.Combine(dir, "mod.dll")) == "a mod", "a file the store does not list is left alone");
+        Check(lastChecked == 3 && lastTotal == 3, "the check reports every file checked");
+        Check(!HybridLauncher.Core.Accounts.DirectDownloader.HasState(dir), "the download's own list is gone once done");
+        Directory.Delete(dir, true);
+        break;
+    }
+    case "rc4":
+    {
+        // 2.1-rc.4: Epic's play time and achievements read from its answers, GOG Galaxy's keys, GOG's small-file containers in
+        // an update (fetched only for a damaged file), empty files kept, SteamGridDB pictures checked, the list's own filters,
+        // and "Hybrid Config and Stats" between two PCs (a folder as the cloud): numbers joined, settings merged key by key.
+        var dataDir = Path.GetDirectoryName(AppInfo.SettingsFile)!;
+        if (!dataDir.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) { Check(false, "rc4 needs a scratch HL_DATA under %TEMP%"); break; }
+
+        // Epic: play time per app (seconds), achievements from the definitions and the account's unlocks.
+        var play = HybridLauncher.Core.Accounts.EpicStats.ParsePlaytime("[{\"accountId\":\"a\",\"artifactId\":\"Sugar\",\"totalTime\":7260},{\"accountId\":\"a\",\"artifactId\":\"x\",\"totalTime\":30}]");
+        Check(play["Sugar"] == 7260 && play["x"] == 30, "Epic play time read per app");
+        const string defs = "{\"data\":{\"Achievement\":{\"productAchievementsRecordBySandbox\":{\"totalAchievements\":2,\"achievements\":[" +
+            "{\"achievement\":{\"name\":\"ACH_1\",\"hidden\":false,\"unlockedDisplayName\":\"First\",\"unlockedDescription\":\"Do it\",\"lockedDescription\":\"?\",\"unlockedIconLink\":\"https://x/u.png\",\"lockedIconLink\":\"https://x/l.png\",\"rarity\":{\"percent\":12.5}}}," +
+            "{\"achievement\":{\"name\":\"ACH_2\",\"hidden\":true,\"unlockedDisplayName\":\"Secret\",\"unlockedDescription\":\"The secret\",\"lockedDescription\":\"Hidden\",\"rarity\":{\"percent\":1}}}]}}}}";
+        const string player = "{\"data\":{\"PlayerAchievement\":{\"playerAchievementGameRecordsBySandbox\":{\"records\":[{\"totalUnlocked\":1,\"playerAchievements\":[{\"playerAchievement\":{\"achievementName\":\"ACH_1\",\"unlocked\":true,\"unlockDate\":\"2023-04-12T21:46:21.166Z\"}}]}]}}}}";
+        var set = HybridLauncher.Core.Accounts.EpicStats.Parse("ns1", defs, player);
+        Check(set is { Total: 2, UnlockedCount: 1, AppId: "epic:ns1" }, "Epic achievements: two, one unlocked");
+        Check(set!.Items[0] is { Name: "First", GlobalPercent: 12.5, UnlockedAt: not null }, "an unlock has its name, rarity and date");
+        Check(set.Items[1].Description == "Hidden", "a hidden one keeps its secret until unlocked");
+        // 2.1-rc.12: the unlocks by product (Playnite's SuccessStory's query) read the same way.
+        const string byProduct = "{\"data\":{\"PlayerProfile\":{\"playerProfile\":{\"productAchievements\":{\"data\":{\"totalUnlocked\":2,\"playerAchievements\":[" +
+            "{\"playerAchievement\":{\"achievementName\":\"ACH_1\",\"unlocked\":true,\"unlockDate\":\"2023-04-12T21:46:21.166Z\"}}," +
+            "{\"playerAchievement\":{\"achievementName\":\"ACH_2\",\"unlocked\":true,\"unlockDate\":\"2024-01-02T10:00:00Z\"}}]}}}}}}";
+        Check(HybridLauncher.Core.Accounts.EpicStats.Parse("ns1", defs, byProduct) is { Total: 2, UnlockedCount: 2 }, "Epic unlocks by product: both unlocked");
+        Check(HybridLauncher.Core.Accounts.EpicStats.Parse("ns2", "{\"data\":{\"Achievement\":{\"productAchievementsRecordBySandbox\":{\"totalAchievements\":null,\"achievements\":null}}}}", null) is null,
+            "a game without achievements on Epic has none");
+        var epicGame = new Game { Id = "epic:Sugar", Name = "x", Store = GameStore.Epic, InstallDir = @"C:\x", EpicLaunchUri = "com.epicgames.launcher://apps/ns9%3Acat%3ASugar?action=launch" };
+        Check(HybridLauncher.Core.Accounts.EpicStats.NamespaceOf(epicGame) == "ns9", "an installed Epic game's namespace comes from its launch link");
+        Check(HybridLauncher.Core.Accounts.GalaxyPlaytime.KeyOf(epicGame) == "epic_Sugar"
+            && HybridLauncher.Core.Accounts.GalaxyPlaytime.KeyOf(new Game { Id = "gog:12", Name = "x", Store = GameStore.Gog, InstallDir = "" }) == "gog_12", "GOG Galaxy's release keys");
+
+        // GOG containers in an update: two small files packed in one container, both fine on disk: nothing is downloaded.
+        var dir = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-gog");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        Directory.CreateDirectory(dir);
+        byte[] a = System.Text.Encoding.UTF8.GetBytes("small file one"), b = System.Text.Encoding.UTF8.GetBytes("second small file");
+        byte[] container = [.. a, .. b];
+        string Md5(byte[] x) => Convert.ToHexString(MD5.HashData(x)).ToLowerInvariant();
+        File.WriteAllBytes(Path.Combine(dir, "a.txt"), a);
+        File.WriteAllBytes(Path.Combine(dir, "b.txt"), b);
+        File.WriteAllBytes(Path.Combine(dir, "empty.cfg"), []);
+        int fetches = 0;
+        HybridLauncher.Core.Accounts.DownloadPlan GogPlan() => new()
+        {
+            InstallDir = dir, Update = true, Version = "2",
+            Files =
+            [
+                new() { Path = ".hl-gog-sfc-0", Size = container.Length, Temporary = true, Md5 = Md5(container),
+                    Chunks = [new(0, container.Length, _ => { Interlocked.Increment(ref fetches); return Task.FromResult(container); })] },
+                new() { Path = "a.txt", Size = a.Length, Slice = (".hl-gog-sfc-0", 0), Md5 = Md5(a) },
+                new() { Path = "b.txt", Size = b.Length, Slice = (".hl-gog-sfc-0", a.Length), Md5 = Md5(b) },
+                new() { Path = "empty.cfg", Size = 0, Chunks = [] },
+            ],
+        };
+        var p1 = GogPlan();
+        HybridLauncher.Core.Accounts.DirectDownloader.RunAsync(p1, _ => { }, CancellationToken.None).GetAwaiter().GetResult();
+        Check(fetches == 0 && p1.Fetched == 0, $"files packed in a container and an empty file, all fine: nothing downloaded (fetched {fetches}, repaired {p1.Fetched})");
+        var bBefore = File.GetLastWriteTimeUtc(Path.Combine(dir, "b.txt"));
+        File.WriteAllText(Path.Combine(dir, "a.txt"), "damaged!!");
+        var p2 = GogPlan();
+        HybridLauncher.Core.Accounts.DirectDownloader.RunAsync(p2, _ => { }, CancellationToken.None).GetAwaiter().GetResult();
+        Check(fetches == 1 && p2.Fetched == 1, $"one damaged file: its container is downloaded once, one file repaired (fetched {fetches}, repaired {p2.Fetched})");
+        Check(File.ReadAllBytes(Path.Combine(dir, "a.txt")).SequenceEqual(a), "the damaged file is repaired from the container");
+        Check(File.GetLastWriteTimeUtc(Path.Combine(dir, "b.txt")) == bBefore, "the file that was fine is not written again");
+        Check(!File.Exists(Path.Combine(dir, ".hl-gog-sfc-0")), "the container is gone afterwards");
+        Directory.Delete(dir, true);
+
+        // SteamGridDB: only real pictures are kept.
+        Check(SteamGridDb.IsPicture(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, 0 }) && SteamGridDb.IsPicture(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0, 0 })
+            && SteamGridDb.IsPicture(System.Text.Encoding.ASCII.GetBytes("RIFF0000WEBPVP8 ")), "PNG, JPEG and WebP are pictures");
+        Check(!SteamGridDb.IsPicture(System.Text.Encoding.ASCII.GetBytes("<html><body>error</body></html>")), "an error page is not a picture");
+
+        // The side list's own filters: a copy, changed on its own.
+        var lib = new LibraryFilter { Sort = "playtime", Launchers = { "store:Steam" } };
+        var list = lib.CopyFilters();
+        list.Launchers.Add("store:Epic");
+        list.Sort = "name";
+        Check(lib.Launchers.Count == 1 && lib.Sort == "playtime", "the list's filters are its own copy");
+
+        // Settings merged three ways.
+        var baseCopy = System.Text.Json.Nodes.JsonNode.Parse("{\"Theme\":\"Dark\",\"Language\":\"en\",\"WindowWidth\":1000,\"Games\":{\"g\":{\"PlayMinutes\":10,\"LaunchArgs\":\"-a\"}}}")!.AsObject();
+        var local = System.Text.Json.Nodes.JsonNode.Parse("{\"Theme\":\"Dark\",\"Language\":\"it\",\"WindowWidth\":1000,\"Games\":{\"g\":{\"PlayMinutes\":40,\"LaunchArgs\":\"-a\",\"ExeOverride\":\"C:\\\\here.exe\"}}}")!.AsObject();
+        var cloud = System.Text.Json.Nodes.JsonNode.Parse("{\"Theme\":\"Light\",\"Language\":\"en\",\"WindowWidth\":3000,\"FutureThing\":42,\"Games\":{\"g\":{\"PlayMinutes\":25,\"LaunchArgs\":\"-b\",\"ExeOverride\":\"D:\\\\there.exe\"},\"h\":{\"PlayMinutes\":5}}}")!.AsObject();
+        var merged = HybridLauncher.Core.Cloud.ConfigSync.MergeSettings(local, cloud, baseCopy, localNewer: true);
+        Check(merged["Theme"]!.GetValue<string>() == "Light", "a setting changed on the other PC only comes here");
+        Check(merged["Language"]!.GetValue<string>() == "it", "a setting changed here only stays");
+        Check(merged["WindowWidth"]!.GetValue<int>() == 1000, "this PC's window size never travels");
+        Check(merged["FutureThing"]!.GetValue<int>() == 42, "a newer version's setting is kept as it is");
+        Check(merged["Games"]!["g"]!["PlayMinutes"]!.GetValue<long>() == 40 && merged["Games"]!["g"]!["LaunchArgs"]!.GetValue<string>() == "-b", "a game: the bigger play time, the other PC's new arguments");
+        Check(merged["Games"]!["g"]!["ExeOverride"]!.GetValue<string>() == "C:\\here.exe", "a game's exe on this PC stays");
+        Check(merged["Games"]!["h"] is not null, "a game only the other PC knows is added");
+
+        // Two PCs through a folder: this one sends, the other changes things, this one takes them.
+        var cloudDir = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-cloud");
+        if (Directory.Exists(cloudDir)) Directory.Delete(cloudDir, true);
+        Directory.CreateDirectory(cloudDir);
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        // A clean start (the test may run again on the same folder): no play time, sessions or sync state of a run before.
+        foreach (var f in new[] { PlaytimeLedger.File, PlaytimeLedger.File + ".bak", SessionLog.File_ }) if (File.Exists(f)) File.Delete(f);
+        if (Directory.Exists(Path.Combine(AppInfo.CacheDir, "config-sync"))) Directory.Delete(Path.Combine(AppInfo.CacheDir, "config-sync"), true);
+        SessionLog.Reload();
+        var s = SettingsStore.Load();
+        s.Cloud.Enabled = true;
+        s.Cloud.Providers = ["folder"];
+        s.Cloud.Folder = cloudDir;
+        s.Theme = "Dark";
+        s.Language = "en";
+        var pic = Path.Combine(AppInfo.ProfilesDir, "me.png");
+        File.WriteAllBytes(pic, [0x89, 0x50, 0x4E, 0x47]);
+        s.Profiles.Add(new UserProfile { Name = "Alex", Picture = pic });
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        var g1 = new Game { Id = "steam:10", Name = "Ten", Store = GameStore.Steam, InstallDir = "", SteamAppId = "10" };
+        PlaytimeLedger.Reload();
+        PlaytimeLedger.Add(g1, 10, DateTime.Now.AddDays(-1));
+        SessionLog.Add(new PlaySession("steam:10", "Ten", DateTime.Now.AddDays(-1), 10));
+        Check(HybridLauncher.Core.Cloud.ConfigSync.On, "the sync is on with cloud saves on (the default)");
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var bundleDir = Path.Combine(cloudDir, HybridLauncher.Core.Cloud.FolderStore.RootName, HybridLauncher.Core.Cloud.ConfigSync.Key);
+        var zip = Directory.Exists(bundleDir) ? Directory.GetFiles(bundleDir, "*.zip").FirstOrDefault() : null;
+        Check(zip is not null, $"the bundle is in the cloud as \"{HybridLauncher.Core.Cloud.ConfigSync.Key}\"");
+        if (zip is null) break;
+        var other = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-other");
+        if (Directory.Exists(other)) Directory.Delete(other, true);
+        System.IO.Compression.ZipFile.ExtractToDirectory(zip, other);
+        var sentSettings = File.ReadAllText(Path.Combine(other, "settings.json"));
+        Check(sentSettings.Contains("%HL_DATA%") && !sentSettings.Contains(dataDir.Replace("\\", "\\\\"), StringComparison.OrdinalIgnoreCase), "paths in the data folder travel as %HL_DATA%");
+        Check(!sentSettings.Contains("\"Cloud\""), "the cloud's own setup is not sent");
+        Check(File.Exists(Path.Combine(other, "profiles", "me.png")) && File.Exists(Path.Combine(other, "playtime.json")) && File.Exists(Path.Combine(other, "sessions.jsonl")), "pictures, play time and sessions are in it");
+
+        // The other PC: more hours on the game, a new game, a session, another theme, a setting of a newer version.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(sentSettings)!.AsObject();
+        node["Theme"] = "Light";
+        node["FutureThing"] = 42;
+        File.WriteAllText(Path.Combine(other, "settings.json"), node.ToJsonString());
+        var book = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(other, "playtime.json")))!.AsObject();
+        book["Games"]![0]!["Minutes"] = 50;
+        book["Games"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"Keys\":[\"steam:20\"],\"Name\":\"Twenty\",\"Minutes\":7}"));
+        File.WriteAllText(Path.Combine(other, "playtime.json"), book.ToJsonString());
+        File.AppendAllText(Path.Combine(other, "sessions.jsonl"), "{\"id\":\"steam:20\",\"name\":\"Twenty\",\"start\":\"" + DateTime.UtcNow.AddHours(-2).ToString("O") + "\",\"minutes\":7}\n");
+        var otherZip = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-other.zip");
+        if (File.Exists(otherZip)) File.Delete(otherZip);
+        System.IO.Compression.ZipFile.CreateFromDirectory(other, otherZip);
+        var store = new HybridLauncher.Core.Cloud.FolderStore(cloudDir);
+        var oldManifest = store.ManifestAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, CancellationToken.None).GetAwaiter().GetResult();
+        store.PutAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, otherZip, new CloudManifest { GameId = "hybrid-config", Name = "x", Hash = "OTHER", UpdatedUtc = DateTime.UtcNow.AddMinutes(1), Machine = "OTHER-PC" },
+            oldManifest, 3, CancellationToken.None).GetAwaiter().GetResult();
+        // Here meanwhile: the language changed.
+        s = SettingsStore.Current;
+        s.Language = "it";
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        File.SetLastWriteTimeUtc(AppInfo.SettingsFile, DateTime.UtcNow.AddMinutes(-5));
+        bool rewrote = HybridLauncher.Core.Cloud.ConfigSync.PullAsync(CancellationToken.None).GetAwaiter().GetResult();
+        s = SettingsStore.Load();
+        PlaytimeLedger.Reload();
+        Check(rewrote && s.Theme == "Light", "the other PC's theme came here");
+        Check(s.Language == "it", "the language changed here stayed");
+        Check(s.Cloud.Folder == cloudDir && s.Cloud.Enabled, "this PC's cloud setup stayed");
+        Check(s.Profiles.FirstOrDefault()?.Picture == pic, "the profile picture points into this PC's data folder");
+        Check(PlaytimeLedger.Get(g1)?.Minutes == 50, "the bigger count of a game's hours is kept");
+        Check(PlaytimeLedger.Get(new Game { Id = "steam:20", Name = "Twenty", Store = GameStore.Steam, InstallDir = "", SteamAppId = "20" })?.Minutes == 7, "a game played only on the other PC is added");
+        Check(SessionLog.Everything().Count == 2, "the sessions of both PCs are kept");
+        Check(File.ReadAllText(AppInfo.SettingsFile).Contains("FutureThing"), "a newer version's setting is kept here");
+        // And back: what goes up now still has the newer version's setting.
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        zip = Directory.GetFiles(bundleDir, "*.zip").First();
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zip))
+        using (var r = new StreamReader(z.GetEntry("settings.json")!.Open()))
+        {
+            var up = r.ReadToEnd();
+            Check(up.Contains("FutureThing") && up.Contains("\"it\""), "the next bundle keeps the newer setting and has this PC's change");
+        }
+
+        // 2.1 audit (P0-1): the other PC sends a change while this one has a different change of its own, and this PC sends
+        // straight away (no pull first, as the 15-minute timer does). Both changes must be in what goes up, and this PC takes
+        // the other's at its next start.
+        var current = store.ManifestAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, CancellationToken.None).GetAwaiter().GetResult();
+        var other2 = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-other2");
+        if (Directory.Exists(other2)) Directory.Delete(other2, true);
+        System.IO.Compression.ZipFile.ExtractToDirectory(zip, other2);
+        var node2 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(other2, "settings.json")))!.AsObject();
+        node2["Theme"] = "Dark";
+        File.WriteAllText(Path.Combine(other2, "settings.json"), node2.ToJsonString());
+        var otherZip2 = Path.Combine(Path.GetTempPath(), "hl-smoke-rc4-other2.zip");
+        if (File.Exists(otherZip2)) File.Delete(otherZip2);
+        System.IO.Compression.ZipFile.CreateFromDirectory(other2, otherZip2);
+        store.PutAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, otherZip2, new CloudManifest { GameId = "hybrid-config", Name = "x", Hash = "OTHER2", UpdatedUtc = DateTime.UtcNow.AddMinutes(2), Machine = "OTHER-PC" },
+            current, 3, CancellationToken.None).GetAwaiter().GetResult();
+        s = SettingsStore.Current;
+        s.AchievementPopups = false;
+        SettingsStore.Save();
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        zip = Directory.GetFiles(bundleDir, "*.zip").First();
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zip))
+        using (var r = new StreamReader(z.GetEntry("settings.json")!.Open()))
+        {
+            var up = System.Text.Json.Nodes.JsonNode.Parse(r.ReadToEnd())!.AsObject();
+            Check(up["Theme"]?.GetValue<string>() == "Dark", "a push without a pull first keeps the other PC's change (theme)");
+            Check(up["AchievementPopups"]?.GetValue<bool>() == false, "and this PC's own change (pop-ups off)");
+        }
+        Check(SettingsStore.Current.Theme == "Light", "the running app keeps its settings until the next start");
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        zip = Directory.GetFiles(bundleDir, "*.zip").First();
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zip))
+        using (var r = new StreamReader(z.GetEntry("settings.json")!.Open()))
+            Check(r.ReadToEnd().Contains("\"Dark\""), "a second push before the restart does not undo the other PC's change");
+        HybridLauncher.Core.Cloud.ConfigSync.PullAsync(CancellationToken.None).GetAwaiter().GetResult();
+        s = SettingsStore.Load();
+        Check(s.Theme == "Dark" && !s.AchievementPopups, "at the next start this PC has both changes");
+        Directory.Delete(other2, true);
+        File.Delete(otherZip2);
+        Directory.Delete(cloudDir, true);
+        Directory.Delete(other, true);
+        File.Delete(otherZip);
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        break;
+    }
+    case "rc10":
+    {
+        // 2.1-rc.10, Gemini's audit of rc.8/rc.9: Steam shortcuts updated in place and a cut file refused, settings read back
+        // case-insensitive, and "Hybrid Config and Stats": a failed send keeps the agreed copy, removals stay removed, the
+        // window's size does not count as an edit, times of two time zones in order, the data folder's own paths only.
+        var dataDir = Path.GetDirectoryName(AppInfo.SettingsFile)!;
+        if (!dataDir.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) { Check(false, "rc10 needs a scratch HL_DATA under %TEMP%"); break; }
+        var work = Directory.CreateDirectory(Path.Combine(dataDir, "rc10")).FullName;
+
+        // Steam shortcuts.
+        var vdf = Path.Combine(work, "shortcuts.vdf");
+        var lo = "--launch \"steam:10\"";
+        Check(HybridLauncher.Core.Steam.SteamShortcuts.Add(vdf, "Ten", @"C:\A\HybridLauncher.exe", lo, null), "a shortcut is added");
+        var first = HybridLauncher.Core.Steam.SteamShortcuts.Read(File.ReadAllBytes(vdf));
+        var firstId = ((HybridLauncher.Core.Steam.SteamShortcuts.KvMap)((HybridLauncher.Core.Steam.SteamShortcuts.KvMap)first.Get("shortcuts")!).Items[0].Value).Get("appid");
+        Check(!HybridLauncher.Core.Steam.SteamShortcuts.Add(vdf, "Ten", @"C:\A\HybridLauncher.exe", lo, null), "the same shortcut again changes nothing");
+        Check(HybridLauncher.Core.Steam.SteamShortcuts.Add(vdf, "Ten", @"D:\Moved\HybridLauncher.exe", lo, null), "Hybrid Launcher moved: the shortcut is updated");
+        var list = (HybridLauncher.Core.Steam.SteamShortcuts.KvMap)HybridLauncher.Core.Steam.SteamShortcuts.Read(File.ReadAllBytes(vdf)).Get("shortcuts")!;
+        var only = (HybridLauncher.Core.Steam.SteamShortcuts.KvMap)list.Items[0].Value;
+        Check(list.Items.Count == 1 && only.Get("Exe") as string == "\"D:\\Moved\\HybridLauncher.exe\"", "updated in place, no second entry");
+        Check(Equals(only.Get("appid"), firstId), "the shortcut keeps its Steam id (controller layouts, pictures)");
+        // Keys with a gap (an entry deleted in Steam): the new one takes a free number.
+        list.Items.Insert(0, ("1", new HybridLauncher.Core.Steam.SteamShortcuts.KvMap()));
+        list.Items.RemoveAt(1);
+        list.Items.Add(("2", only));
+        var root = new HybridLauncher.Core.Steam.SteamShortcuts.KvMap();
+        root.Set("shortcuts", list);
+        File.WriteAllBytes(vdf, HybridLauncher.Core.Steam.SteamShortcuts.Write(root));
+        HybridLauncher.Core.Steam.SteamShortcuts.Add(vdf, "Twenty", @"D:\Moved\HybridLauncher.exe", "--launch \"steam:20\"", null);
+        var keys = ((HybridLauncher.Core.Steam.SteamShortcuts.KvMap)HybridLauncher.Core.Steam.SteamShortcuts.Read(File.ReadAllBytes(vdf)).Get("shortcuts")!).Items.Select(i => i.Key).ToList();
+        Check(keys.Count == 3 && keys.Distinct().Count() == 3 && keys.Contains("0"), $"a new entry takes a free key ({string.Join(",", keys)})");
+        var bytes = File.ReadAllBytes(vdf);
+        bool refused(byte[] b) { try { HybridLauncher.Core.Steam.SteamShortcuts.Read(b); return false; } catch (InvalidDataException) { return true; } catch { return false; } }
+        Check(refused(bytes[..(bytes.Length - 1)]) && refused(bytes[..(bytes.Length / 2)]) && refused(bytes[..7]), "a cut shortcuts.vdf is refused as invalid data");
+        Check(!HybridLauncher.Core.Steam.SteamShortcuts.Has(Path.Combine(work, "none.vdf"), lo), "no file: no shortcut");
+
+        // Settings read back case-insensitive.
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        File.WriteAllText(AppInfo.SettingsFile, """
+            {"ListFilter":{"Launchers":["Steam"],"Tech":["DLSS"]},"HiddenFromStats":["steam:1"],"HiddenCoverTags":["Opti"],
+             "DashboardHidden":["News"],"UltraPlusPresets":{"Game":{"Mine":{"Key":"1"}}},"OptiSeen":{"Stable":"v1"},
+             "Popup":{"LookColours":{"Steam":{}}},
+             "Games":{"steam:1":{"CustomDlls":["A.dll"],"UltraPlus":{"Backups":{"X.pak":"y"},"Addons":{"Fog":{}}},
+               "Install":{"DlssNrAmd":{"OptiIniBefore":{"Sec|Key":"1"}}}}}}
+            """);
+        var st = SettingsStore.Load();
+        Check(st.ListFilter!.Launchers.Contains("steam") && st.ListFilter.Tech.Contains("dlss"), "the side list's filters, any case");
+        Check(st.HiddenFromStats.Contains("STEAM:1") && st.HiddenCoverTags.Contains("opti") && st.DashboardHidden.Contains("news"), "hidden from stats, cover tags, dashboard parts, any case");
+        Check(st.UltraPlusPresets.TryGetValue("game", out var pr) && pr.TryGetValue("MINE", out var vals) && vals.ContainsKey("key"), "Ultra+ presets, all three levels");
+        Check(st.OptiSeen.ContainsKey("stable") && st.Popup.LookColours.ContainsKey("steam"), "seen releases and pop-up colours, any case");
+        var gs = st.Games["STEAM:1"];
+        Check(gs.CustomDlls.Contains("a.dll") && gs.UltraPlus!.Backups.ContainsKey("x.PAK") && gs.UltraPlus.Addons.ContainsKey("fog"), "a game's dlls and Ultra+ files, any case");
+        Check(gs.Install?.DlssNrAmd?.OptiIniBefore.ContainsKey("sec|key") == true && gs.Install.UserOptiBackups is not null, "DLSSNR-AMD's saved ini values, any case");
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+
+        // Config sync: the merge itself.
+        var baseCopy = System.Text.Json.Nodes.JsonNode.Parse("""{"Theme":"Dark","Old":1,"Games":{"gone":{"LaunchArgs":"-a"},"kept":{"LaunchArgs":"-k"},"drop":{"LaunchArgs":"-d"}}}""")!.AsObject();
+        var local = System.Text.Json.Nodes.JsonNode.Parse("""{"Theme":"Dark","Games":{"kept":{"LaunchArgs":"-k"},"drop":{"LaunchArgs":"-d","ExeOverride":"C:\\x.exe"}}}""")!.AsObject();
+        var cloud = System.Text.Json.Nodes.JsonNode.Parse("""{"Theme":"Dark","Old":1,"Games":{"gone":{"LaunchArgs":"-a"},"kept":{"LaunchArgs":"-k"}}}""")!.AsObject();
+        var merged = HybridLauncher.Core.Cloud.ConfigSync.MergeSettings(local, cloud, baseCopy, localNewer: false);
+        Check(merged["Games"]!["gone"] is null, "a game's settings removed here stay removed");
+        Check(!merged.ContainsKey("Old"), "a setting removed here stays removed");
+        Check(merged["Games"]!["drop"] is System.Text.Json.Nodes.JsonObject d && !d.ContainsKey("LaunchArgs") && d.ContainsKey("ExeOverride"), "removed on the other PC: removed here, this PC's exe kept");
+        Check(merged["Games"]!["kept"]!["LaunchArgs"]!.GetValue<string>() == "-k", "the rest stays");
+        var changed = System.Text.Json.Nodes.JsonNode.Parse("""{"Theme":"Dark","Old":1,"Games":{"gone":{"LaunchArgs":"-b"},"kept":{"LaunchArgs":"-k"}}}""")!.AsObject();
+        Check(HybridLauncher.Core.Cloud.ConfigSync.MergeSettings(local, changed, baseCopy, localNewer: false)["Games"]!["gone"] is not null, "removed here but changed on the other PC: the change comes back");
+
+        // Times of two PCs in different zones, in the moment's order.
+        var cloudLines = Path.Combine(work, "cloud.jsonl");
+        var localLines = Path.Combine(work, "local.jsonl");
+        File.WriteAllText(localLines, "{\"id\":\"a\",\"start\":\"2026-11-14T10:00:00+02:00\"}\n");
+        File.WriteAllText(cloudLines, "{\"id\":\"b\",\"start\":\"2026-11-14T03:30:00-05:00\"}\n{\"id\":\"c\",\"start\":\"2026-11-14T07:30:00Z\"}\n");
+        HybridLauncher.Core.Cloud.ConfigSync.MergeLines(cloudLines, localLines, r => r.GetProperty("id").GetString());
+        var order = File.ReadAllLines(localLines).Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement.GetProperty("id").GetString()).ToList();
+        Check(string.Join("", order) == "cab", $"sessions of two time zones in time order ({string.Join("", order)})");
+
+        // Only the data folder's own paths travel as %HL_DATA%.
+        Check(HybridLauncher.Core.Cloud.ConfigSync.InDataRoot(Path.Combine(AppInfo.DataRoot, "covers", "x.png")) && HybridLauncher.Core.Cloud.ConfigSync.InDataRoot(AppInfo.DataRoot), "a path in the data folder is its own");
+        Check(!HybridLauncher.Core.Cloud.ConfigSync.InDataRoot(AppInfo.DataRoot.TrimEnd('\\') + "Backup\\x.png"), "a folder next to it whose name starts the same is not");
+
+        // The window's size is no edit; a real change is.
+        var s = SettingsStore.Load();
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        File.SetLastWriteTimeUtc(AppInfo.SettingsFile, DateTime.UtcNow.AddHours(-3));
+        var editAt = HybridLauncher.Core.Cloud.ConfigSync.LocalEditAt();
+        s.WindowWidth = 1234;
+        s.LastGameId = "steam:10";
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        Check(HybridLauncher.Core.Cloud.ConfigSync.LocalEditAt() == editAt, "the window's size and the last game opened are no edit");
+        s.Theme = s.Theme == "Light" ? "Dark" : "Light";
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        Check(HybridLauncher.Core.Cloud.ConfigSync.LocalEditAt() > editAt, "a real change counts");
+
+        // A send that fails keeps the copy both PCs agreed on, and the next one carries both PCs' changes.
+        var cloudDir = Directory.CreateDirectory(Path.Combine(work, "cloud")).FullName;
+        if (Directory.Exists(Path.Combine(AppInfo.CacheDir, "config-sync"))) Directory.Delete(Path.Combine(AppInfo.CacheDir, "config-sync"), true);
+        s.Cloud.Enabled = true;
+        s.Cloud.Providers = ["folder"];
+        s.Cloud.Folder = cloudDir;
+        s.Theme = "Dark";
+        s.Language = "en";
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var baseFile = Path.Combine(AppInfo.CacheDir, "config-sync", "base-settings.json");
+        var agreed = File.Exists(baseFile) ? File.ReadAllText(baseFile) : null;
+        Check(agreed is not null, "the first send leaves the agreed copy");
+        var store = new HybridLauncher.Core.Cloud.FolderStore(cloudDir);
+        var bundleDir = Path.Combine(cloudDir, HybridLauncher.Core.Cloud.FolderStore.RootName, HybridLauncher.Core.Cloud.ConfigSync.Key);
+        var zip = Directory.GetFiles(bundleDir, "*.zip").First();
+        var other = Path.Combine(work, "other");
+        System.IO.Compression.ZipFile.ExtractToDirectory(zip, other);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(other, "settings.json")))!.AsObject();
+        node["Theme"] = "Light";
+        File.WriteAllText(Path.Combine(other, "settings.json"), node.ToJsonString());
+        var otherZip = Path.Combine(work, "other.zip");
+        System.IO.Compression.ZipFile.CreateFromDirectory(other, otherZip);
+        var was = store.ManifestAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, CancellationToken.None).GetAwaiter().GetResult();
+        store.PutAsync(HybridLauncher.Core.Cloud.ConfigSync.Key, otherZip, new CloudManifest { GameId = "hybrid-config", Name = "x", Hash = "OTHER", UpdatedUtc = DateTime.UtcNow.AddMinutes(1), Machine = "OTHER-PC" },
+            was, 3, CancellationToken.None).GetAwaiter().GetResult();
+        s = SettingsStore.Current;
+        s.Language = "it";
+        SettingsStore.Save();
+        HybridLauncher.Core.Cloud.ConfigSync.PutFault = () => throw new IOException("the cloud went away");
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        HybridLauncher.Core.Cloud.ConfigSync.PutFault = null;
+        Check(File.ReadAllText(baseFile) == agreed, "a send that failed leaves the agreed copy as it was");
+        HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        zip = Directory.GetFiles(bundleDir, "*.zip").First();
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zip))
+        using (var r = new StreamReader(z.GetEntry("settings.json")!.Open()))
+        {
+            var up = System.Text.Json.Nodes.JsonNode.Parse(r.ReadToEnd())!.AsObject();
+            Check(up["Theme"]?.GetValue<string>() == "Light" && up["Language"]?.GetValue<string>() == "it", "the next send has both PCs' changes");
+        }
+        Check(File.ReadAllText(baseFile) != agreed, "a send that worked moves the agreed copy");
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        Directory.Delete(work, true);
+        break;
+    }
+    case "collections":
+    {
+        // 2.1: favorites and collections (Hydra style), Steam's binary shortcuts file, Epic's GraphQL answers.
+        var dataDir = Path.GetDirectoryName(AppInfo.SettingsFile)!;
+        if (!dataDir.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) { Check(false, "collections needs a scratch HL_DATA under %TEMP%"); break; }
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        var s = SettingsStore.Load();
+        var fav = GameCollections.Create("Shooters");
+        GameCollections.Set(fav.Id, "steam:1", true);
+        GameCollections.Set(fav.Id, "STEAM:1", true);
+        GameCollections.Set(GameCollections.Favorites, "steam:2", true);
+        Check(fav.Games.Count == 1 && GameCollections.Contains(fav.Id, "steam:1"), "a game is in a collection once, whatever the case of its id");
+        Check(GameCollections.IsFavorite("steam:2") && s.PinnedGames.Contains("steam:2"), "favorites are the old pinned games");
+        Check(GameCollections.Create(" shooters ").Id == fav.Id, "a collection with the same name is not made twice");
+        s.Library.Collection = fav.Id;
+        s.ListFilter = new LibraryFilter { Collection = GameCollections.Favorites };
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        s = SettingsStore.Load();
+        Check(s.Collections.Count == 1 && s.Collections[0].Games.SequenceEqual(["steam:1"]) && s.Library.Collection == fav.Id, "collections and the library's filter are saved");
+        Check(s.Library.CopyFilters().Collection == fav.Id && s.Library.IsFiltering, "the collection is a filter and is copied with them");
+        GameCollections.Rename(fav.Id, "FPS");
+        GameCollections.Delete(fav.Id);
+        Check(s.Collections.Count == 0 && s.Library.Collection is null && s.ListFilter?.Collection == GameCollections.Favorites, "deleting a collection shows every game again; the favorites filter stays");
+        s.Library.Collection = "gone";
+        GameCollections.Sanitize(s);
+        Check(s.Library.Collection is null, "a filter on a collection that is gone is dropped at load");
+
+        // Steam's shortcuts.vdf: an entry is added after the ones there, which stay byte for byte.
+        var vdf = Path.Combine(dataDir, "shortcuts.vdf");
+        var first = new HybridLauncher.Core.Steam.SteamShortcuts.KvMap();
+        var list = new HybridLauncher.Core.Steam.SteamShortcuts.KvMap();
+        var entry = new HybridLauncher.Core.Steam.SteamShortcuts.KvMap();
+        entry.Set("appid", -123);
+        entry.Set("AppName", "Old");
+        entry.Set("Exe", "\"C:\\Old\\old.exe\"");
+        entry.Set("LastPlayTime", 1700000000);
+        entry.Set("tags", new HybridLauncher.Core.Steam.SteamShortcuts.KvMap());
+        list.Set("0", entry);
+        first.Set("shortcuts", list);
+        var before = HybridLauncher.Core.Steam.SteamShortcuts.Write(first);
+        File.WriteAllBytes(vdf, before);
+        Check(HybridLauncher.Core.Steam.SteamShortcuts.Write(HybridLauncher.Core.Steam.SteamShortcuts.Read(before)).SequenceEqual(before), "the binary format reads and writes back the same bytes");
+        var game = new Game { Id = "custom:abc", Name = "Fake Game", Store = GameStore.Custom, InstallDir = dataDir };
+        var written = Shortcuts.CreateSteam(game, new GameSettings(), vdf);
+        var back = HybridLauncher.Core.Steam.SteamShortcuts.Read(File.ReadAllBytes(vdf));
+        var entries = ((HybridLauncher.Core.Steam.SteamShortcuts.KvMap)back.Get("shortcuts")!).Items;
+        Check(written == vdf && entries.Count == 2 && entries[1].Key == "1", "the game is added as the next entry");
+        var added = (HybridLauncher.Core.Steam.SteamShortcuts.KvMap)entries[1].Value;
+        Check(added.Get("AppName") as string == "Fake Game" && (added.Get("LaunchOptions") as string)!.Contains("--launch \"custom:abc\""), "it starts the game through Hybrid Launcher");
+        Check(((HybridLauncher.Core.Steam.SteamShortcuts.KvMap)entries[0].Value).Get("AppName") as string == "Old", "the entry already there stays");
+        Check(Shortcuts.CreateSteam(game, new GameSettings(), vdf) is null, "a second time adds nothing");
+        Check(HybridLauncher.Core.Steam.SteamShortcuts.AppId("\"a\"", "b") >= 0x80000000, "the shortcut's id has its top bit set as Steam's");
+        File.Delete(vdf);
+        File.Delete(vdf + ".hl-backup");
+
+        // Epic: an error answer is not a definitions answer (it must not be kept for a week).
+        Check(!HybridLauncher.Core.Accounts.EpicStats.IsAnswer("{\"errors\":[{\"message\":\"x\"}],\"data\":{}}"), "an answer with errors is not kept");
+        Check(!HybridLauncher.Core.Accounts.EpicStats.IsAnswer("<html>"), "a page that is not JSON is not kept");
+        Check(HybridLauncher.Core.Accounts.EpicStats.IsAnswer("{\"data\":{\"Achievement\":null}}"), "a real answer is kept");
+        var probe = new Game { Id = "epic:probe", Name = "probe", Store = GameStore.Epic, InstallDir = "", EpicLaunchUri = "com.epicgames.launcher://APPS/ns1%3Acat%3Aprobe?action=launch" };
+        Check(HybridLauncher.Core.Accounts.EpicStats.NamespaceOf(probe) == "ns1", "the namespace is found whatever the case of the link");
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        break;
+    }
+    case "epicstats":
+    {
+        // Read-only, with HL_DATA's Epic sign-in (a copy): the account's play time and one game's achievements, live.
+        if (!HybridLauncher.Core.Accounts.EpicAccount.SignedIn) { Check(false, "needs an Epic sign-in in HL_DATA"); break; }
+        SettingsStore.Load();
+        bool fresh = HybridLauncher.Core.Accounts.EpicStats.RefreshPlaytimeAsync(CancellationToken.None, TimeSpan.Zero).GetAwaiter().GetResult();
+        var minutes = HybridLauncher.Core.Accounts.EpicStats.ParsePlaytime(File.ReadAllText(Path.Combine(AppInfo.CacheDir, "epic", "playtime.json")));
+        Check(fresh && minutes.Count > 0, $"Epic play time: {minutes.Count} games, {minutes.Values.Sum() / 3600} h in all");
+        var ns = args.Length > 1 ? args[1] : "2c42520d342a46d7a6e0cfa77b4715de";
+        var game = new Game { Id = "epic:probe", Name = "probe", Store = GameStore.Epic, InstallDir = "", EpicLaunchUri = $"com.epicgames.launcher://apps/{ns}%3Acat%3Aprobe?action=launch" };
+        var set = HybridLauncher.Core.Accounts.EpicStats.ReadAsync(game, CancellationToken.None).GetAwaiter().GetResult();
+        Check(set is { Total: > 0 }, $"achievements of {ns}: {set?.UnlockedCount} of {set?.Total}");
+        Check(HybridLauncher.Core.Accounts.EpicStats.ReadCached(game)?.Total == set?.Total, "kept for the library to read without the network");
+        break;
+    }
+    case "v21":
+    {
+        // 2.1: old themes carry on as one of the five, launcher verify plans, a game's own pictures, profiles kept in settings.
+        // Runs only on a scratch data folder (HL_DATA in %TEMP%): it deletes and rewrites settings files there.
+        var dataDir = Path.GetDirectoryName(AppInfo.SettingsFile)!;
+        if (!dataDir.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) { Check(false, "v21 needs a scratch HL_DATA under %TEMP%"); break; }
+        foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
+        foreach (var (from, to) in new[] { ("Cozy", "Dark"), ("Graphite", "Dark"), ("Cyberpunk", "Hybrid"), ("Windows", "Windows"), ("Custom", "Hybrid"), ("Gray", "Gray"), ("TotalDark", "TotalDark"), ("Dark", "Dark"), ("Hybrid", "Hybrid"), ("", "Windows"), (null, "Windows") })
+        {
+            File.WriteAllText(AppInfo.SettingsFile, from is null ? "{ }" : "{ \"Palette\": \"" + from + "\" }");
+            File.Delete(AppInfo.SettingsFile + ".bak");
+            Check(SettingsStore.Load().Palette == to, $"theme {from ?? "(none)"} carries on as {to}");
+        }
+        var steam = new Game { Id = "steam:1091500", Name = "Cyberpunk 2077", Store = GameStore.Steam, InstallDir = @"C:\x", SteamAppId = "1091500" };
+        var epic = new Game { Id = "epic:Ginger", Name = "x", Store = GameStore.Epic, InstallDir = @"C:\x",
+            EpicLaunchUri = "com.epicgames.launcher://apps/ns%3Acat%3AGinger?action=launch&silent=true" };
+        var gog = new Game { Id = "gog:1207658924", Name = "x", Store = GameStore.Gog, InstallDir = @"C:\x" };
+        var custom = new Game { Id = "custom:x", Name = "x", Store = GameStore.Custom, InstallDir = @"C:\x" };
+        Check(GameVerify.For(steam).Uri == "steam://validate/1091500", "Steam verifies from steam://validate");
+        Check(GameVerify.For(epic).Uri == "com.epicgames.launcher://apps/ns%3Acat%3AGinger?action=verify", "Epic verifies from its launch link with action=verify");
+        Check(GameVerify.For(gog) is { Direct: false, OpenUri: "goggalaxy://openGameView/1207658924", Steps: not null }, "GOG opens Galaxy on the game with steps");
+        Check(!GameVerify.For(custom).Possible, "a game added by hand cannot be verified");
+        // Epic definitions kept a week (2.1 audit): a game without achievements (null record) is a good copy, an old one without the product id is not.
+        Check(HybridLauncher.Core.Accounts.EpicStats.DefsUsable("{\"data\":{\"Achievement\":{\"productAchievementsRecordBySandbox\":null}}}"), "Epic: a game without achievements is kept");
+        Check(HybridLauncher.Core.Accounts.EpicStats.DefsUsable("{\"data\":{\"Achievement\":{\"productAchievementsRecordBySandbox\":{\"productId\":\"p\",\"achievements\":[]}}}}"), "Epic: definitions with the product id are kept");
+        Check(!HybridLauncher.Core.Accounts.EpicStats.DefsUsable("{\"data\":{\"Achievement\":{\"productAchievementsRecordBySandbox\":{\"achievements\":[]}}}}"), "Epic: an old copy without the product id is asked again");
+        Check(!HybridLauncher.Core.Accounts.EpicStats.DefsUsable("{\"errors\":[{\"message\":\"x\"}]}"), "Epic: an error is never kept");
+        // GTA V on Epic (2.1): the older version is named Legacy beside Enhanced, with its own art found by that name.
+        Check(HybridLauncher.Core.Accounts.EpicTitles.Name("9d2d0eb64d5c44529cece33fe2a46482", "Grand Theft Auto V") == "Grand Theft Auto V Legacy", "Epic: GTA V's older version is Legacy");
+        Check(HybridLauncher.Core.Accounts.EpicTitles.Name("8769e24080ea413b8ebca3f1b8c50951", "Grand Theft Auto V Enhanced") == "Grand Theft Auto V Enhanced", "Epic: GTA V Enhanced keeps its name");
+        var pair = HybridLauncher.Core.Accounts.EpicTitles.Disambiguate([
+            new HybridLauncher.Core.Accounts.OwnedGame(GameStore.Epic, "epic:a", "Some Game", "c", "w", "", null), new HybridLauncher.Core.Accounts.OwnedGame(GameStore.Epic, "epic:b", "Some Game Enhanced", "c", "w", "", null)]);
+        Check(pair[0] is { Name: "Some Game Legacy", Cover: null } && pair[1].Name == "Some Game Enhanced", "Epic: a title beside its Enhanced version reads Legacy");
+        // GTA V Legacy (2.1): Steam's search no longer lists it, so its page comes from the known id; its achievements live in
+        // Rockstar's Social Club and the page says so.
+        Check(HybridLauncher.Core.Media.GameInfo.FindSteamAppIdAsync("Grand Theft Auto V Legacy", CancellationToken.None).GetAwaiter().GetResult() == "271590", "GTA V Legacy: its Steam page is known without the store search");
+        Check(HybridLauncher.Core.Accounts.EpicTitles.AchievementsElsewhere("epic:9d2d0eb64d5c44529cece33fe2a46482") is { Length: > 0 }
+            && HybridLauncher.Core.Accounts.EpicTitles.AchievementsElsewhere("epic:8769e24080ea413b8ebca3f1b8c50951") is null, "GTA V Legacy: the page says where its achievements are, Enhanced does not");
+        // An archive that gives no file is a failed read (the caller then tries tar.exe), not an empty success.
+        var emptyZip = Path.Combine(dataDir, "empty.zip");
+        using (System.IO.Compression.ZipFile.Open(emptyZip, System.IO.Compression.ZipArchiveMode.Create)) { }
+        var emptyOut = Path.Combine(dataDir, "empty-out");
+        Directory.CreateDirectory(emptyOut);
+        bool emptyThrew = false;
+        try { HybridLauncher.Core.Opti.ArchiveExtractor.ExtractManaged(emptyZip, emptyOut, CancellationToken.None); }
+        catch (InvalidDataException) { emptyThrew = true; }
+        Check(emptyThrew, "an archive with no files is not taken as extracted");
+        // Backups (2.1): "Replace them, no backup" carries on as the master switch off.
+        File.WriteAllText(AppInfo.SettingsFile, "{ \"ModBackups\": \"replace\" }");
+        File.Delete(AppInfo.SettingsFile + ".bak");
+        Check(SettingsStore.Load() is { BackupGameFiles: false, ModBackups: "backup" }, "backups: the old no-backup choice turns the master switch off");
+        File.WriteAllText(AppInfo.SettingsFile, "{ }");
+        Check(SettingsStore.Load() is { BackupGameFiles: true, ModBackups: "backup" }, "backups: on by default");
+        // A game's own pictures.
+        SettingsStore.Load();
+        var png = Path.Combine(dataDir, "pic.png");
+        File.WriteAllBytes(png, [0x89, 0x50, 0x4E, 0x47]);
+        string? changed = null;
+        ArtOverrides.Changed += (id, kind) => changed = $"{id}:{kind}";
+        var hero = ArtOverrides.Import("steam:1091500", ArtKind.Banner, png);
+        Check(ArtOverrides.Get("steam:1091500", ArtKind.Banner) == hero && changed == "steam:1091500:Banner", "an own banner is kept and announced");
+        var art = ArtOverrides.Apply(steam, new GameArt { HeroImage = "store.jpg", LogoImage = "logo.png", SteamAppId = "1091500" });
+        Check(art.HeroImage == hero && art.LogoImage == "logo.png" && art.SteamAppId == "1091500", "the own banner replaces the store's, the rest stays");
+        var hero2 = ArtOverrides.Import("steam:1091500", ArtKind.Banner, png);
+        Check(!File.Exists(hero) && File.Exists(hero2), "a new pick deletes the picture it replaces");
+        ArtOverrides.Set("steam:1091500", ArtKind.Banner, null);
+        Check(ArtOverrides.Get("steam:1091500", ArtKind.Banner) is null && !File.Exists(hero2), "back to the store's removes the own picture");
+        // Profiles survive a save and a read.
+        SettingsStore.Current.Profiles.Add(new UserProfile { Name = "Alex" });
+        SettingsStore.Current.ActiveProfile = "missing";
+        SettingsStore.Save();
+        SettingsStore.Flush();
+        var back = SettingsStore.Load();
+        Check(back.Profiles.Count == 1 && back.Profiles[0].Name == "Alex", "a profile is kept in settings");
+        Check(back.ActiveProfile == back.Profiles[0].Id, "a profile in use that is gone falls back to the first one");
         foreach (var old in Directory.GetFiles(dataDir, "settings*")) File.Delete(old);
         break;
     }
@@ -1778,7 +2340,9 @@ switch (cmd)
 
             // Saves, the game's settings folder and the Steam emulator's achievements go up together and come back each to its place.
             var emuGame = new Game { Id = game.Id + "-emu", Name = "Hybrid Launcher smoke: Emulated", Store = GameStore.Custom, InstallDir = Path.Combine(root, "install"), EmulatorAppId = "999999901" };
-            var gseRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves");
+            // The emulator's %APPDATA% folder in the test's own scratch folder, never the real one (2.1-rc.10 audit).
+            HybridLauncher.Core.Steam.SteamEmulator.AppData = Directory.CreateDirectory(Path.Combine(root, "appdata")).FullName;
+            var gseRoot = Path.Combine(HybridLauncher.Core.Steam.SteamEmulator.AppData, "GSE Saves");
             bool gseExisted = Directory.Exists(gseRoot);
             var gse = Directory.CreateDirectory(Path.Combine(gseRoot, emuGame.EmulatorAppId)).FullName;
             try

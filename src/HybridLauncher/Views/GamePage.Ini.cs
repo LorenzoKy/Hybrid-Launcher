@@ -1148,7 +1148,7 @@ public partial class GamePage
             settings.IniOverrides.Clear();
             SettingsStore.Save();
             _iniStale = true;
-            if (_tab == "settings") LoadIni();
+            if (IniOpen) LoadIni();
             App.Window?.ShowSuccess(changed == 0 ? L.T("Every setting was already at its default.")
                 : L.N(changed, "{0} setting is back to its default.", "{0} settings are back to their defaults."));
         }

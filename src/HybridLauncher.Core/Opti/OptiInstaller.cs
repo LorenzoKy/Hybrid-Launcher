@@ -203,9 +203,11 @@ public static class OptiInstaller
 
         var backupRoot = manifest.BackupRoot!;
 
-        // 1. Back up everything that is about to be replaced or that the bat may delete (unless the user chose to just replace).
+        // 1. Back up everything that is about to be replaced or that the bat may delete. With backups off (the user chose to just
+        //    replace) the copies are temporary: a failed or cancelled install still puts the folder back, a good one drops them.
+        var temporary = new List<string>();
         if (req.Backup) progress?.Report(new(0.62, L.T("Backing up existing files")));
-        foreach (var rel in !req.Backup ? Enumerable.Empty<string>() : payloadFiles.Concat(BatTouched).Append(req.Options.DllName).Append(@$"{manifest.PluginsDir}\OptiPatcher.asi")
+        foreach (var rel in payloadFiles.Concat(BatTouched).Append(req.Options.DllName).Append(@$"{manifest.PluginsDir}\OptiPatcher.asi")
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var src = Path.Combine(target, rel);
@@ -214,6 +216,7 @@ public static class OptiInstaller
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             File.Copy(src, dst, overwrite: true);
             manifest.Backups[rel] = dst;
+            if (!req.Backup) temporary.Add(rel);
         }
 
         foreach (var d in payloadDirs.Append(manifest.PluginsDir).Append(Path.GetDirectoryName(manifest.PluginsDir) ?? ""))
@@ -299,6 +302,20 @@ public static class OptiInstaller
             }
             // An older OptiScaler under another name (installed as dxgi.dll before, winmm.dll now) would load twice.
             OptiDllSwap.RemoveOtherCopies(manifest, userOwn || userBefore.Count > 0);
+            // Only step 1's temporary copies go: another OptiScaler copy moved aside just above (maybe the user's own, put back
+            // at uninstall) stays in the backup folder.
+            foreach (var rel in temporary)
+            {
+                if (manifest.Backups.Remove(rel, out var copy)) try { File.Delete(copy); } catch { }
+                manifest.UserOptiBackups.RemoveAll(u => u.Equals(rel, StringComparison.OrdinalIgnoreCase));
+            }
+            if (temporary.Count > 0)
+                try
+                {
+                    if (Directory.Exists(backupRoot) && !Directory.EnumerateFiles(backupRoot, "*", SearchOption.AllDirectories).Any())
+                        Directory.Delete(backupRoot, recursive: true);
+                }
+                catch { }
 
             progress?.Report(new(1, L.F("OptiScaler {0} installed as {1}", manifest.DisplayVersion, manifest.DllName)));
             Log.Info($"Installed {manifest.DisplayVersion} into {target} as {manifest.DllName}");

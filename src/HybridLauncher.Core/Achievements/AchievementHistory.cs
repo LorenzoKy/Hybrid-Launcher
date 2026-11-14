@@ -18,9 +18,12 @@ public static class AchievementHistory
 {
     static string Dir => AppInfo.Ensure(Path.Combine(AppInfo.DataRoot, "achievements"));
     public static string File_ => Path.Combine(Dir, "history.jsonl");
-    static readonly object Gate = new();
+    internal static readonly object Gate = new();
 
     public static event Action? Changed;
+
+    /// <summary>The file changed from outside (another PC's unlocks merged in, "Hybrid Config and Stats").</summary>
+    public static void NotifyChanged() => Changed?.Invoke();
 
     public static void Add(UnlockEntry e)
     {

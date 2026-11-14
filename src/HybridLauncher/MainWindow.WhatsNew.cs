@@ -126,7 +126,7 @@ public sealed partial class MainWindow
         // Seen as soon as it shows: a crash or a closed app never brings it back at every start.
         AppState.Settings.LastVersionSeen = version;
         SettingsStore.Save();
-        try { await dialog.ShowAsync(); }
+        try { await dialog.ShowOnceAsync(); }
         catch (Exception ex) { Log.Warn($"Welcome to {version}: {ex.Message}"); }
         finally { _whatsNew = null; }
     }

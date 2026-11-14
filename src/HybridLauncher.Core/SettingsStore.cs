@@ -261,14 +261,46 @@ public static class SettingsStore
     }
 
 
+    /// <summary>A set read from JSON, case-insensitive again (deserialization drops the comparer), without empty entries.</summary>
+    static HashSet<string> CI(HashSet<string>? set) =>
+        new((set ?? []).Where(static x => !string.IsNullOrEmpty(x)), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A map read from JSON, case-insensitive again; keys that now collide keep the first value (never throws).</summary>
+    static Dictionary<string, T> CI<T>(Dictionary<string, T>? map)
+    {
+        var next = new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (k, v) in map ?? []) if (k is not null) next.TryAdd(k, v);
+        return next;
+    }
+
+    /// <summary>The library's and the side list's filters, read the same way (2.1-rc.10 audit: the list's were left case-sensitive).</summary>
+    static void NormalizeFilter(LibraryFilter f)
+    {
+        f.Launchers = CI(f.Launchers);
+        f.Tech = CI(f.Tech);
+    }
+
     // Deserialization drops the case-insensitive comparers; put them back.
     static void Normalize(AppSettings s)
     {
         s.HiddenGames = new HashSet<string>(s.HiddenGames ?? [], StringComparer.OrdinalIgnoreCase);
+        s.Profiles = (s.Profiles ?? []).Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Id)).ToList();
+        if (s.ActiveProfile is not null && !s.Profiles.Any(p => p.Id == s.ActiveProfile)) s.ActiveProfile = s.Profiles.FirstOrDefault()?.Id;
         s.CollapsedCards = new HashSet<string>(s.CollapsedCards ?? [], StringComparer.OrdinalIgnoreCase);
         s.InboxOff = new HashSet<string>(s.InboxOff ?? [], StringComparer.OrdinalIgnoreCase);
         s.PopupOff = new HashSet<string>(s.PopupOff ?? [], StringComparer.OrdinalIgnoreCase);
-        s.Palette ??= "Windows";
+        // 2.1: five themes (Windows, Total Dark, Dark, Gray, Hybrid); every earlier one carries on as Dark (the plain dark
+        // ones), Windows (2.0's own Windows accent, or none saved) or Hybrid.
+        s.Palette = s.Palette switch
+        {
+            "Windows" or "TotalDark" or "Dark" or "Gray" or "Hybrid" => s.Palette,
+            "Graphite" or "Cozy" => "Dark",
+            null or "" => "Windows",
+            _ => "Hybrid",
+        };
+        // 2.1: "Replace them, no backup" became the master switch of backups turned off.
+        if (s.ModBackups == "replace") { s.BackupGameFiles = false; s.ModBackups = "backup"; }
+        if (s.ModBackups is not ("backup" or "ask")) s.ModBackups = "backup";
         s.IniView = string.IsNullOrWhiteSpace(s.IniView) ? "essentials" : s.IniView;
         s.GameTab = string.IsNullOrWhiteSpace(s.GameTab) ? "overview" : s.GameTab;
         s.TabOrder = (s.TabOrder ?? []).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -298,13 +330,26 @@ public static class SettingsStore
         s.CollapsedGroups = new HashSet<string>(s.CollapsedGroups ?? [], StringComparer.OrdinalIgnoreCase);
         s.GroupOrder = (s.GroupOrder ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         s.Library ??= new LibraryFilter();
-        s.Library.Launchers = new HashSet<string>(s.Library.Launchers ?? [], StringComparer.OrdinalIgnoreCase);
-        s.Library.Tech = new HashSet<string>(s.Library.Tech ?? [], StringComparer.OrdinalIgnoreCase);
+        NormalizeFilter(s.Library);
+        if (s.ListFilter is { } listFilter) NormalizeFilter(listFilter);
+        s.HiddenFromStats = CI(s.HiddenFromStats);
+        s.HiddenCoverTags = CI(s.HiddenCoverTags);
+        s.DashboardHidden = CI(s.DashboardHidden);
+        s.OptiSeen = CI(s.OptiSeen);
+        s.UltraPlusSeen = CI(s.UltraPlusSeen);
+        s.UltraPlusPresets = CI(s.UltraPlusPresets);
+        foreach (var key in s.UltraPlusPresets.Keys.ToList())
+        {
+            var presets = CI(s.UltraPlusPresets[key]);
+            foreach (var name in presets.Keys.ToList()) presets[name] = CI(presets[name]);
+            s.UltraPlusPresets[key] = presets;
+        }
         s.SettingsTab = string.IsNullOrWhiteSpace(s.SettingsTab) ? "appearance" : s.SettingsTab;
         s.CustomAccent ??= "#9A5CFF";
         s.CustomTint ??= "#8A4DFF";
         s.CustomBackground ??= "#16121F";
         s.Popup ??= new PopupSettings();
+        s.Popup.LookColours = CI(s.Popup.LookColours);
         s.Controller ??= new ControllerSettings();
         s.Controller.Buttons = new Dictionary<string, string>(s.Controller.Buttons ?? [], StringComparer.OrdinalIgnoreCase);
         s.Popup.TierSounds = new Dictionary<string, string>(s.Popup.TierSounds ?? [], StringComparer.OrdinalIgnoreCase);
@@ -324,6 +369,7 @@ public static class SettingsStore
         s.Popup.Seconds = Math.Clamp(s.Popup.Seconds, 2, 15);
         s.LibraryView = s.LibraryView == "grid" ? "grid" : "list";
         s.PinnedGames = (s.PinnedGames ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        GameCollections.Sanitize(s);
         s.Games = new Dictionary<string, GameSettings>(s.Games ?? [], StringComparer.OrdinalIgnoreCase);
         s.GameLibraries ??= [];
         s.CustomGames ??= [];
@@ -360,9 +406,18 @@ public static class SettingsStore
                     (m.CustomDlls ?? []).ToDictionary(e => e.Key, e => new Dictionary<string, string>(e.Value ?? [], StringComparer.OrdinalIgnoreCase)),
                     StringComparer.OrdinalIgnoreCase);
                 m.CreatedDirs ??= [];
+                m.UserOptiBackups ??= [];
+                if (m.DlssNrAmd is { } amd) amd.OptiIniBefore = CI(amd.OptiIniBefore);
             }
             // Per game since 0.11: a game starts with the plugins its install already holds (the old shared switches).
-            g.CustomDlls = new HashSet<string>(g.CustomDlls ?? [], StringComparer.OrdinalIgnoreCase);
+            g.CustomDlls = CI(g.CustomDlls);
+            if (g.Luma is { } luma) luma.Backups = CI(luma.Backups);
+            if (g.UltraPlus is { } ultra)
+            {
+                ultra.Backups = CI(ultra.Backups);
+                ultra.Addons = CI(ultra.Addons);
+                ultra.Files ??= [];
+            }
             g.AsiPlugins = new HashSet<string>(g.AsiPlugins ?? g.Install?.AsiPlugins.Keys ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         }
         MigrateTabs(s);

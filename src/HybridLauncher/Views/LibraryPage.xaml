@@ -37,23 +37,24 @@
              with the latest achievements, then the covers under their own bar (what is shown, the cover size, the filters). -->
         <StackPanel x:Name="Root" Padding="0,8,0,32" Spacing="18" HorizontalAlignment="Center">
             <StackPanel Spacing="2">
-                <TextBlock Text="Library" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Text="Library" Style="{StaticResource TitleTextBlockStyle}" FontSize="32" FontWeight="Bold" CharacterSpacing="-10" />
                 <TextBlock x:Name="SummaryText" Style="{StaticResource RowDescription}" />
             </StackPanel>
 
             <!-- The game played last on its own banner, the latest achievements beside it (LibraryPage.Recent.cs). -->
             <StackPanel x:Name="RecentSection" Visibility="Collapsed" />
 
-            <!-- The covers' bar. It spans the page whatever the zoom, so the slider under the pointer never moves. -->
+            <!-- The covers' bar. It spans the page whatever the zoom, so the slider under the pointer never moves. On the left the
+                 choices drawn like Hydra's (LibraryPage.Toolbar.cs) and how many games show; on the right the cover size. -->
             <Grid ColumnSpacing="12" Margin="0,6,0,-6">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <TextBlock x:Name="CountText" Style="{StaticResource RowDescription}" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                <StackPanel x:Name="Choices" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" />
+                <TextBlock x:Name="CountText" Grid.Column="1" Margin="6,0,0,0" Style="{StaticResource RowDescription}" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
                     <!-- Cover size (Ctrl + mouse wheel does the same); Auto goes back to as many columns as fit. -->
                     <StackPanel x:Name="ZoomBar" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                         <Button x:Name="ZoomOutButton" Background="Transparent" BorderThickness="0" Padding="8,6" Click="ZoomOut_Click" ToolTipService.ToolTip="Smaller covers">
@@ -67,32 +68,18 @@
                             <TextBlock Text="Auto" FontSize="12" />
                         </Button>
                     </StackPanel>
-                    <!-- Sort and filters: the flyout is built in code. -->
-                    <DropDownButton x:Name="FiltersButton" VerticalAlignment="Center" Padding="14,7">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE71C;" FontSize="14" />
-                            <TextBlock Text="Filters" />
-                            <Border x:Name="FilterBadge" CornerRadius="9" MinWidth="18" Padding="5,0,5,1" VerticalAlignment="Center" Visibility="Collapsed"
-                                    Background="{ThemeResource AccentFillColorDefaultBrush}">
-                                <TextBlock x:Name="FilterBadgeText" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center"
-                                           Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
-                            </Border>
-                        </StackPanel>
-                        <DropDownButton.Flyout>
-                            <Flyout x:Name="FiltersFlyout" Placement="BottomEdgeAlignedRight" Opening="FiltersFlyout_Opening" />
-                        </DropDownButton.Flyout>
-                    </DropDownButton>
                 </StackPanel>
             </Grid>
 
             <!-- The covers, from the page's left edge (only this block changes width with the zoom). -->
             <StackPanel x:Name="Block" Spacing="20" HorizontalAlignment="Left">
-            <!-- Quick access: the pinned games, always on top. -->
+            <!-- The favorite games (the heart), always on top. -->
             <StackPanel x:Name="PinnedSection" Spacing="8" Visibility="Collapsed">
-                <StackPanel Orientation="Horizontal" Spacing="8" Canvas.ZIndex="1">
-                    <FontIcon Glyph="&#xE718;" FontSize="13" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                    <TextBlock Text="PINNED" Style="{StaticResource GroupHeader}" VerticalAlignment="Center" />
-                </StackPanel>
+                <Grid x:Name="PinnedHead" ColumnSpacing="8" Canvas.ZIndex="1" Padding="8,6,10,6">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xEB52;" FontSize="13" Foreground="#FFFF5A6E" />
+                    <TextBlock Grid.Column="1" Text="FAVORITES" Style="{StaticResource GroupHeader}" VerticalAlignment="Center" />
+                </Grid>
                 <GridView x:Name="PinnedGrid" SelectionMode="None" IsItemClickEnabled="True" ItemClick="Tile_Click" ItemContainerStyle="{StaticResource TileItem}"
                           ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Hidden" Padding="12,18,0,0" Margin="-12,-18,-16,0" />
             </StackPanel>

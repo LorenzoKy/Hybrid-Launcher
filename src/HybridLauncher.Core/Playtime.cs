@@ -37,7 +37,30 @@ public static class Playtime
             var last = Max(own.LastPlayed, stats.LastPlayed);
             return last == best.LastPlayed ? best : best with { LastPlayed = last };
         }
+        if (game.Store is GameStore.Epic or GameStore.Gog && StoreCount(game) is { } store)
+        {
+            // The launcher's own count (Epic's account, GOG Galaxy) also covers sessions started outside Hybrid Launcher and
+            // games never installed on this PC (2.1-rc.4: Epic games showed no hours).
+            var best = store.Minutes > own.Minutes ? store : own;
+            var last = Max(own.LastPlayed, store.LastPlayed);
+            return last == best.LastPlayed ? best : best with { LastPlayed = last };
+        }
         return own;
+    }
+
+    /// <summary>Epic's count for the account (as last read) and GOG Galaxy's on this PC, the bigger one; null when neither has the game.</summary>
+    static PlayStats? StoreCount(Game game)
+    {
+        PlayStats? best = null;
+        try
+        {
+            if (game.Store == GameStore.Epic && game.Id.StartsWith("epic:", StringComparison.Ordinal) && Accounts.EpicStats.Minutes(game.Id[5..]) is { } epic)
+                best = new PlayStats(epic, null, "Epic Games");
+            if (Accounts.GalaxyPlaytime.For(game) is { } galaxy && (best is null || galaxy.Minutes > best.Value.Minutes))
+                best = new PlayStats(galaxy.Minutes, Max(galaxy.Last, best?.LastPlayed), "GOG Galaxy");
+        }
+        catch (Exception ex) { Log.Warn($"Store play time for {game.Name}: {ex.Message}"); }
+        return best;
     }
 
     /// <summary>The time Hybrid Launcher counted: the game's settings and its own record (which keeps it across installs).</summary>

@@ -39,7 +39,7 @@ mods that make them run and look better: **OptiScaler** first of all, then **ReS
 in early and experimental form, **DLSS 5**. A launcher and a mod tool in one window, for several stores at once.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/f3d5303a-d989-4724-8d4f-76170061e6a7" width="100%" alt="A game's page in Hybrid Launcher: the game list on the left, the banner, the launch bar with Play, HDR and Cloud, the tabs and the store details" />
+  <img src="docs/images/readme-game-page.webp" width="100%" alt="A game's page in Hybrid Launcher: the tabs across the top, the game's videos and pictures, its news and updates, and cards for activity, mods, controllers, how long to beat and scores" />
 </p>
 
 > [!IMPORTANT]
@@ -66,6 +66,7 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
   and quick access follow.
 - **Direct downloads** from your Steam, Epic and GOG accounts, with pause, resume and updates that leave your mods in place.
 - **Cloud saves** on OneDrive, MEGA or a folder (Google Drive, a NAS, a USB drive), one or several at once, with history and conflict handling.
+  Hybrid Launcher's own settings and stats go along too ("Hybrid Config and Stats"), merged between your PCs.
 
 **Mods**
 - **OptiScaler** through its own installer, with a quick panel, profiles, saved versions, custom builds and
@@ -104,8 +105,8 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
 **Extras**
 - **Achievement pop-ups** that look like a console's or a store's (PlayStation 5, PlayStation 4, Xbox, Steam, GOG, Epic, all
   *Like* looks drawn by Hybrid Launcher) or your own: bronze, silver or gold by rarity, the game's own platinum, your own sounds
-  per tier, a light, dark or coloured background for the PlayStation looks, a preview with a real game. Steam, Xbox / Game
-  Pass, local and GOG achievements are read; each unlock can save a screenshot, rumble the controller and go into an
+  per tier, a light, dark or coloured background for the PlayStation looks, a preview with a real game. Steam, Epic, Xbox /
+  Game Pass, local and GOG achievements are read; each unlock can save a screenshot, rumble the controller and go into an
   unlock history you can export.
 - **Local achievements**: games that keep their achievements in save files on this PC show them on the game page and
   unlock them with the same pop-ups as Steam and GOG. Cloud saves carry them along with the saves. On by default, in
@@ -123,10 +124,15 @@ in `%LOCALAPPDATA%\HybridLauncher`, and the app updates itself after asking once
   move a game.
 - **Interface size** from 50 to 200%, scroll bars shown or hidden, Shading on or off, and Settings' tabs as a list.
 - **Make it yours**: keep only the features you need (*Everything*, *Only OptiScaler*, *Just a launcher*…), and toggle,
-  drag or hide tabs, launch bar items and colour themes, including the warm *Cozy* theme.
+  drag or hide tabs and launch bar items, and pick a theme: *Windows* (the default: your Windows accent colour on a dark
+  window) or one of four with their own background (*Total Dark*, *Dark*, *Gray*, *Hybrid*).
+- **Your profile**: a name and a picture under the Hybrid title, and a dashboard of your whole library, installed or only
+  owned on your launchers (hours, achievements, perfect games, the games you play most, each list in full with *See all*).
+  Epic games show their hours from your Epic account, GOG games from GOG Galaxy. Covers, banners, logos and icons can be
+  changed from SteamGridDB or your own files. *Verify game files* asks the game's launcher to check and repair it.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4847c3da-0a9a-43c3-91ef-3180316ca6e7" width="100%" alt="The first-start picker in Hybrid Launcher: five starting points, a live preview of a game's page, and a switch for each feature" />
+  <img src="docs/images/readme-feature-picker.webp" width="100%" alt="The first-start picker in Hybrid Launcher: five starting points, a live preview of a game's page, and a switch for each feature" />
 </p>
 
 <p align="center">
@@ -145,7 +151,7 @@ owned library.
 <details>
 <summary><b>Can I go back to the original game files?</b></summary>
 
-Yes, when the backup is on (the default): removing a mod puts back the files it replaced.
+Yes, when backups are on (the default): removing a mod puts back the files it replaced. They can be turned off in Settings → Features → Mods → *Back up the game files Hybrid Launcher replaces*.
 </details>
 
 <details>

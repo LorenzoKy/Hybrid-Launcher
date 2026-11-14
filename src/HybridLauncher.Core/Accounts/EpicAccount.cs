@@ -42,10 +42,15 @@ public static class EpicAccount
     public static async Task<string> SignInAsync(string code, CancellationToken ct)
     {
         await TokenRequestAsync($"grant_type=authorization_code&code={Uri.EscapeDataString(code)}&token_type=eg1", ct);
+        EpicStats.Reset();
         return AccountTokens.Read(GameStore.Epic)?.GetValueOrDefault("name") ?? "Epic Games";
     }
 
-    public static void SignOut() => AccountTokens.Delete(GameStore.Epic);
+    public static void SignOut()
+    {
+        AccountTokens.Delete(GameStore.Epic);
+        EpicStats.Reset();
+    }
 
     static async Task TokenRequestAsync(string form, CancellationToken ct)
     {
@@ -71,6 +76,9 @@ public static class EpicAccount
 
     static readonly SemaphoreSlim TokenLock = new(1);
 
+    /// <summary>The account's access token, refreshed when it ran out (for the store page's achievement queries, 2.1-rc.11).</summary>
+    public static async Task<string> AccessTokenAsync(CancellationToken ct) => (await TokensAsync(ct))["access"];
+
     static async Task<Dictionary<string, string>> TokensAsync(CancellationToken ct)
     {
         await TokenLock.WaitAsync(ct);
@@ -89,6 +97,50 @@ public static class EpicAccount
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", (await TokensAsync(ct))["access"]);
         using var resp = await Http.Client.SendAsync(req, ct);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>A signed-in GET (the stats in <see cref="EpicStats"/> use it).</summary>
+    internal static Task<string> GetAuthorizedAsync(string url, CancellationToken ct) => GetStringAsync(url, ct);
+
+    /// <summary>The signed-in account's id, or null.</summary>
+    public static string? AccountId => AccountTokens.Read(GameStore.Epic)?.GetValueOrDefault("account") is { Length: > 0 } a ? a : null;
+
+    /// <summary>
+    /// The Epic Games Launcher's user agent, as Legendary, Heroic and Playnite's SuccessStory send it (2.1-rc.12). Epic's GraphQL
+    /// answers it, and answers any other agent (Hybrid Launcher's own, none, curl) with a 403 and an hCaptcha page. On a client
+    /// of its own: added next to Hybrid Launcher's agent on the shared client, both went out and Epic still refused (rc.8).
+    /// </summary>
+    const string LauncherAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) EpicGamesLauncher";
+
+    static readonly HttpClient Launcher = CreateLauncherClient();
+
+    static HttpClient CreateLauncherClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            ConnectTimeout = TimeSpan.FromSeconds(15),
+        };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", LauncherAgent);
+        return client;
+    }
+
+    /// <summary>
+    /// A query to the Epic Games Launcher's own GraphQL service (achievements), sent as the launcher sends it: with the account's
+    /// token, or without one for public data such as definitions. A 403 (Epic's bot check) comes back as HttpRequestException.
+    /// </summary>
+    internal static async Task<string> GraphQlAsync(string body, bool signed, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://launcher.store.epicgames.com/graphql")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        if (signed) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", (await TokensAsync(ct))["access"]);
+        using var resp = await Launcher.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadAsStringAsync(ct);
     }
@@ -133,6 +185,8 @@ public static class EpicAccount
         var local = OwnedGames.EpicLocal().Games.ToDictionary(g => g.Id, StringComparer.OrdinalIgnoreCase);
         var list = new List<OwnedGame>();
         using var gate = new SemaphoreSlim(8);
+        // The namespaces are where the account's achievements live (EpicStats): kept for the games not installed too.
+        EpicStats.KeepNamespaces(records.Select(r => (r.App, r.Ns)));
         var tasks = records.DistinctBy(r => r.App).Select(async r =>
         {
             await gate.WaitAsync(ct);
@@ -150,7 +204,7 @@ public static class EpicAccount
             finally { gate.Release(); }
         });
         await Task.WhenAll(tasks);
-        return list.OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        return EpicTitles.Disambiguate(list).OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
     /// <summary>

@@ -150,15 +150,21 @@
             <!-- Search and the button that folds the game list share one row: same height, same look. Folded, only the button
                  stays, in the middle of the strip. -->
             <NavigationView.PaneCustomContent>
-                <Grid x:Name="PaneBar" Margin="12,2,12,8" ColumnSpacing="6">
+                <Grid x:Name="PaneBar" Margin="12,2,12,8" ColumnSpacing="6" RowSpacing="10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Search games" QueryIcon="Find" TextChanged="SearchBox_TextChanged" VerticalAlignment="Center" />
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- The local user under the title (2.1): picture and name; a click opens their dashboard. -->
+                    <Grid x:Name="ProfileChip" Grid.ColumnSpan="3" />
+                    <AutoSuggestBox x:Name="SearchBox" Grid.Row="1" PlaceholderText="Search games" QueryIcon="Find" TextChanged="SearchBox_TextChanged" VerticalAlignment="Center" />
                     <!-- Sort and filters for the list (the same ones as the library grid); a dot while any is on. -->
-                    <Button x:Name="PaneFilterButton" Grid.Column="1" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center" ToolTipService.ToolTip="Sort and filters">
+                    <Button x:Name="PaneFilterButton" Grid.Row="1" Grid.Column="1" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center" ToolTipService.ToolTip="Sort and filters">
                         <Grid>
                             <FontIcon Glyph="&#xE71C;" FontSize="14" />
                             <Ellipse x:Name="PaneFilterDot" Width="7" Height="7" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-5,-7,0"
@@ -168,7 +174,7 @@
                             <Flyout x:Name="PaneFiltersFlyout" Placement="RightEdgeAlignedTop" Opening="PaneFilters_Opening" />
                         </Button.Flyout>
                     </Button>
-                    <Button x:Name="PaneButton" Grid.Column="2" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center"
+                    <Button x:Name="PaneButton" Grid.Row="1" Grid.Column="2" Width="34" Height="32" Padding="0" MinWidth="0" VerticalAlignment="Center"
                             Click="PaneButton_Click" ToolTipService.ToolTip="Hide the game list">
                         <!-- A side panel with an arrow: points left while the list is open (hide), right while it is folded (show). -->
                         <Viewbox Width="17" Height="17">

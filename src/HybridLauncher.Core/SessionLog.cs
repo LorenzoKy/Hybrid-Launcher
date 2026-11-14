@@ -15,8 +15,11 @@ public sealed record PlaySession(string GameId, string Name, DateTime Start, dou
 public static class SessionLog
 {
     public static string File_ => Path.Combine(AppInfo.DataRoot, "sessions.jsonl");
-    static readonly object Gate = new();
+    internal static readonly object Gate = new();
     static List<PlaySession>? _cache;
+
+    /// <summary>Forgets the sessions read (the file was merged with another PC's).</summary>
+    public static void Reload() { lock (Gate) _cache = null; }
 
     /// <summary>A session ended (shorter than half a minute: a launcher window that closed at once, left out).</summary>
     public static void Add(PlaySession s)
@@ -51,6 +54,9 @@ public static class SessionLog
         return All().Where(s => s.GameId.Equals(game.Id, StringComparison.OrdinalIgnoreCase) || PlaytimeLedger.NormalName(s.Name) == name)
             .OrderByDescending(s => s.Start).ToList();
     }
+
+    /// <summary>Every session logged on this PC (a copy), in the order they were written.</summary>
+    public static List<PlaySession> Everything() => All();
 
     static List<PlaySession> All()
     {

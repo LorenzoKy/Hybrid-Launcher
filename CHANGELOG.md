@@ -1,5 +1,90 @@
 # Changelog
 
+## 2.1.0 — 2026-11-14 · Profiles, Epic achievements and new themes
+
+Everything below is new since 2.0.0:
+
+### ✨ New
+
+- **Profiles.** Make a local profile with your name and a picture you choose, right under the Hybrid title. It opens
+  your dashboard: games, hours played, achievements, average completion, perfect games, the last two weeks of play, the
+  games you played most, the progress of each game's achievements and your latest unlocks. It counts every game you own
+  on your linked launchers, installed or not, with their hours and achievements. The Launchers section shows each
+  launcher's games and invites you to sign in where you have not yet. Edit, switch or remove the profile from its page.
+  *Most played* fills the row with up to eight covers; it, *The last two weeks* and *Achievement progress* each open their
+  full list with *See all*. Right-click a game in *Most played* to hide it (for apps and tools that are not games).
+- **Epic achievements.** With your Epic account signed in (Downloads → Accounts), Epic games show your achievements, installed
+  or not, with their rarity. If Epic ever asks you to confirm something first, Settings → Achievements → *Confirm on Epic*
+  opens its store page so you can answer it.
+- **Hours of Epic and GOG games.** Epic games now show the hours counted by your Epic account (Downloads → Accounts),
+  installed or not, and GOG games the hours GOG Galaxy counted on this PC. Hybrid Launcher keeps the bigger count.
+- **Hybrid Config and Stats in the cloud.** With cloud saves on, Hybrid Launcher's own settings, play time, sessions,
+  achievement history, profile and the covers you picked go to the same cloud, and are merged with what your other PCs
+  send: no hours or unlocks are lost, a setting changed on two PCs keeps the newer one, and folders, accounts and
+  installed mods stay per PC. It can be turned off in Settings → Cloud saves.
+- **Edit artwork with SteamGridDB.** Right-click a game → *Edit artwork…* (or Game settings → Library → Artwork) to pick
+  the cover, banner, logo and icon from SteamGridDB's community pictures, or from your own files. SteamGridDB asks for a
+  free API key of your own, which the picker helps you set up once. Its pictures are kept for a day, so the other tabs and
+  the next visit open at once.
+- **Favorites and collections.** The pin on a game's page is now a heart: favorites sit at the top of the list and the
+  Library. Make your own collections, like folders, and put a game in as many as you like from its right-click menu
+  (*Collection*). The Library's *Collection* choice and the side list's Filters show every game, only the favorites or one
+  collection; right-click a collection there to rename or delete it.
+- **A fuller right-click menu**, laid out like Hydra's: *Play* (or *Stop* while the game runs), *Collection*, *Create
+  shortcut* (on the desktop, or in Steam as a non-Steam game that starts through Hybrid Launcher), *Options* (artwork,
+  rename, folder, verify, hide, uninstall) and *Properties*. Games you own but have not installed get one too.
+- **Uninstall all** in the Mods tab's overview and in the Auto tab takes out every mod Hybrid Launcher installed in the
+  game, with one confirmation, and puts back the game files they replaced. Mods put in another way stay.
+- **Hours and achievements of games you have not installed** now show on their page too, not only on your profile.
+- **Backups can be turned off.** Settings → Features → Mods → *Back up the game files Hybrid Launcher replaces* (on by
+  default). On, the game's own files that OptiScaler, Luma, DXVK, Ultra+ or a DLSS NR file replace are kept and put back
+  when you uninstall, always or asked at each install. Off, they are simply replaced and nothing is kept. This takes the
+  place of the earlier *Replace them, no backup* choice, which carries on as backups off.
+- **Verify game files.** Right-click a game → *Verify game files…* (or Game settings → Files → Repair). Steam and Epic
+  start the check at once, and GOG Galaxy, Ubisoft Connect, the EA app, the Xbox app and the Rockstar Games Launcher are
+  opened with the steps to follow. Mods that replaced a game file are listed first, since a verify puts the original back.
+
+### 🎨 Look
+
+- **New themes.** *Windows*, the default, takes the accent colour you set in Windows, adjusted to read well on a dark
+  window, with a faint trace of your wallpaper behind it; it changes as soon as you change the accent in Windows. Four
+  more have their own background: Total Dark (pure black, for OLED screens), Dark, Gray and Hybrid. They replace every
+  earlier theme and My colours; a theme you had carries on as the closest one.
+- **Library covers** spring up under the pointer with a sweep of light, a highlight that follows the pointer and a glow in
+  the theme's colour; a click presses them in. The keyboard and a controller pop them too. Covers stand on a soft shadow,
+  with light from above and a deeper foot, and each launcher group has a fading rule beside its name.
+- **Library bar** drawn like Hydra's: *Launchers* and *Sort by* show what is chosen with its icon, and every choice in
+  their lists has its own icon (the launchers' logos, an icon per order). The other filters are under *Filters*.
+- **Play in the Library** (on the covers and the Last played banner) is a flat button with soft corners and its word,
+  and it follows the game: Play, Starting, Playing (Stop under the pointer), Closing, and Updating or Installing with the
+  download's progress inside it.
+- **Tags on the covers** share one look: time played, favorites and the mods all sit on the same dark chip with smooth
+  corners, readable over bright covers too. The upscaler tags are off by default (Filters → Tags on the covers).
+- **Play on the game's page** is flatter and quieter, in one even colour.
+- **Games you own but have not installed** (Downloads and the Library) have the Library's covers: the launcher's logo
+  and *Installed* on the same dark chips, the same spring under the pointer, and *Install* as the Library's button in the
+  middle of the cover.
+- **Achievements card** on the game's Dashboard: a gold progress bar, your unlocks counted by rarity (gold, silver,
+  bronze) and the latest and rarest unlocks drawn as prizes, without a trophy drawn behind the text.
+
+### 🐛 Fixes
+
+- *Group by launcher* now applies to the game list in the side pane too, and the not installed games sit in their
+  launcher's group when the library is grouped. Every filter applies to them, the order included.
+- The Library no longer freezes for seconds with *Also games you own but have not installed* on: only the covers on
+  screen are made, the side list keeps its items, and a zoom resizes the covers instead of making them again.
+- The game list and the covers are no longer redrawn every time play time is counted: only when the order changes.
+- The Filters panel of the side list no longer cuts its longer lines.
+- The side list and the Library have their own filters: each Filters button sets only its own.
+- A game whose update is paused can no longer be started halfway through it; its page shows the update's bar.
+- Updates of games Hybrid Launcher downloaded from GOG no longer download and rewrite every small file of the game.
+- Covers in Downloads no longer stay empty after a busy moment of the network: each cover is downloaded once and kept.
+  Steam games whose art moved to a new address and GOG copies without a picture of their own (the *Amazon Prime*
+  ones) now show their cover too.
+- Grand Theft Auto V on Epic: the older version, which Epic lists with the same name as Enhanced, is now called
+  *Grand Theft Auto V Legacy*, with its own cover, store page and news. Only Enhanced has achievements on Epic; Legacy's
+  page says they are kept by Rockstar's Social Club.
+
 ## 2.0.0 — 2026-11-13 · Dashboard, Mods tab and DLSS 5 (experimental)
 
 **Hybrid Launcher 2.0** is the biggest update so far! DLSS5, Auto tab, reworked Achievements managing and much more!

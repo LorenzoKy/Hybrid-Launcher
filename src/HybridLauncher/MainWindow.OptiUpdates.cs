@@ -68,28 +68,31 @@ public sealed partial class MainWindow
         {
             var name = OptiUpdates.Name(first, AppState.Settings);
             // "OptiScaler Stable: v0.9.5 is out"; a fork already has OptiScaler in its name ("OptiScaler Venom (LorenzoKy): ...").
-            title = L.F("{0}: {1} is out", name.StartsWith("OptiScaler", StringComparison.OrdinalIgnoreCase) ? name : "OptiScaler " + name, found[0].Release.Tag);
-            text = game is null ? L.T("A new version of the OptiScaler build you follow. Click to open Hybrid Launcher.")
-                                : L.F("Click to see it on {0}'s OptiScaler tab, where Update available installs it.", game.Title);
+            // Short and plain (2.1-rc.9): what is out in the title, one line on what to do in the text.
+            title = L.F("{0} {1} is out", OptiName(name), found[0].Release.Tag);
+            text = game is null ? L.T("A new version of the build you follow.") : L.F("Click to update it in {0}.", game.Title);
         }
         else
         {
-            title = L.F("{0} new OptiScaler versions are out", found.Count);
-            text = string.Join(", ", found.Select(f => $"{OptiUpdates.Name(f.Key, AppState.Settings)} {f.Release.Tag}"));
+            title = L.F("{0} OptiScaler updates", found.Count);
+            text = string.Join("  ·  ", found.Select(f => $"{OptiUpdates.Name(f.Key, AppState.Settings)} {f.Release.Tag}"));
         }
         // The bell keeps one line per release, each opening a game that uses its source; Windows gets the one notification.
         foreach (var (key, release) in found)
         {
             var name = OptiUpdates.Name(key, AppState.Settings);
             var user = AppState.Games.FirstOrDefault(g => AppState.Settings.For(g.Id).Install is { } m && OptiUpdates.Key(m).Equals(key, StringComparison.OrdinalIgnoreCase));
-            Inbox.Add(Inbox.Opti, L.F("{0}: {1} is out", name.StartsWith("OptiScaler", StringComparison.OrdinalIgnoreCase) ? name : "OptiScaler " + name, release.Tag),
-                user is null ? L.T("A new version of the OptiScaler build you follow.") : L.F("On {0}'s OptiScaler tab, Update available installs it.", user.Title),
+            Inbox.Add(Inbox.Opti, L.F("{0} {1} is out", OptiName(name), release.Tag),
+                user is null ? L.T("A new version of the build you follow.") : L.F("Update it from {0}'s OptiScaler tab.", user.Title),
                 user?.Id, "opti", key: $"opti:{key}:{release.Tag}");
         }
         if (!Popup(Inbox.Opti)) return;
         EnsureTray();
         _tray?.Notify(title, text, () => OpenFromNotification(game?.Id));
     }
+
+    /// <summary>A source's name as a notification shows it: forks already carry OptiScaler in their name.</summary>
+    static string OptiName(string name) => name.StartsWith("OptiScaler", StringComparison.OrdinalIgnoreCase) ? name : "OptiScaler " + name;
 
     /// <summary>A click on an update notification: the window opens, on the game's OptiScaler tab when there is one.</summary>
     void OpenFromNotification(string? gameId)

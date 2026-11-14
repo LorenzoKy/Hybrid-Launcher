@@ -238,7 +238,8 @@ public static class EpicScanner
                 game = new Game
                 {
                     Id = $"epic:{appName}",
-                    Name = S("DisplayName") ?? appName,
+                    // GTA V's older version is "Grand Theft Auto V" on Epic, beside "… Enhanced": named Legacy (EpicTitles).
+                    Name = Accounts.EpicTitles.Name(appName, S("DisplayName") ?? appName),
                     Store = GameStore.Epic,
                     InstallDir = dir,
                     StoreExe = string.IsNullOrEmpty(exe) ? null : Path.GetFullPath(Path.Combine(dir, exe)),

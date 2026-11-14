@@ -52,6 +52,15 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     // Hardware acceleration off (or paused while a game runs): the blur is left out and the surface is a flat colour, which costs the
     // GPU nothing. The brush is made again when the setting changes, so the blur comes back by itself.
     bool _flat;
+    CompositionBackdropBrush? _backdrop;
+
+    void Release()
+    {
+        CompositionBrush?.Dispose();
+        CompositionBrush = null;
+        _backdrop?.Dispose();
+        _backdrop = null;
+    }
 
     /// <summary>The tint laid over a dark base, nearly opaque: what the glass looks like without the picture behind it.</summary>
     Color FlatColor()
@@ -72,8 +81,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     void OnPolicyChanged()
     {
         if (CompositionBrush is null || _flat == WantFlat()) return;
-        CompositionBrush.Dispose();
-        CompositionBrush = null;
+        Release();
         OnConnected();
     }
 
@@ -117,7 +125,9 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
                 _factoryCompositor = compositor;
             }
             var brush = _factory.CreateBrush();
-            brush.SetSourceParameter("backdrop", compositor.CreateBackdropBrush());
+            _backdrop?.Dispose();
+            _backdrop = compositor.CreateBackdropBrush();
+            brush.SetSourceParameter("backdrop", _backdrop);
             CompositionBrush = brush;
             Update();
         }
@@ -131,8 +141,7 @@ public sealed partial class GlassBrush : XamlCompositionBrushBase
     protected override void OnDisconnected()
     {
         MediaPolicy.Changed -= OnPolicyChanged;
-        CompositionBrush?.Dispose();
-        CompositionBrush = null;
+        Release();
     }
 
     void Update()

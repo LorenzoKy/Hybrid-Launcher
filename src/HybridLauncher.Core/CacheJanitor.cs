@@ -108,6 +108,8 @@ public static class CacheJanitor
         long freed = 0;
         foreach (var f in Files().ToList())
             try { long size = f.Length; f.Delete(); freed += size; } catch { }
+        Media.OwnedCovers.ForgetAll();
+        Media.SteamGridDb.ForgetAnswers();
         Log.Info($"Cache emptied: {DiskUsage.Format(freed)} freed");
         return freed;
     });

@@ -424,7 +424,7 @@ public partial class GamePage
             error.Text = problem;
             error.Visibility = Visibility.Visible;
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
 
         var entry = existing.FirstOrDefault(e => e.Equals(EntryText(), StringComparison.OrdinalIgnoreCase)) ?? EntryText();
         var picked = rows.Select(r => (r.Source, Name: r.Name.Text.Trim(), Kind: CustomDlls.Kinds[Math.Max(0, r.Kind.SelectedIndex)])).ToList();

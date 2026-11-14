@@ -9,10 +9,13 @@ namespace HybridLauncher.Core.Steam;
 /// </summary>
 public static class SteamEmulator
 {
+    /// <summary>%APPDATA%, where the emulators keep their saves; the smoke tests point it at a scratch folder (2.1-rc.10 audit).</summary>
+    public static string AppData { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
     /// <summary>The emulator's per-game save folders under %APPDATA% (gbe_fork's first, then the original Goldberg's).</summary>
     public static IEnumerable<string> SaveRoots()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var appData = AppData;
         yield return Path.Combine(appData, "GSE Saves");
         yield return Path.Combine(appData, "Goldberg SteamEmu Saves");
     }

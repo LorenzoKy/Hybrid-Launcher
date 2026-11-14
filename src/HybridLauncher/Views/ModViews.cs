@@ -37,6 +37,16 @@ public sealed class ModContext
 
     public XamlRoot? Root { get; set; }
 
+    /// <summary>
+    /// "Uninstall all" is running (2.1-rc.6): it asked once for every mod, so each mod's own "Uninstall …?" is answered yes.
+    /// Only the removal questions read it (<see cref="ConfirmRemovalAsync"/>); any other question is still asked.
+    /// </summary>
+    public static bool UninstallingAll { get; set; }
+
+    /// <summary>A mod's removal question: asked, unless "Uninstall all" already asked for every mod.</summary>
+    public Task<bool> ConfirmRemovalAsync(FrameworkElement owner, string title, string message, string primary) =>
+        UninstallingAll ? Task.FromResult(true) : ConfirmAsync(owner, title, message, primary);
+
     public async Task<bool> ConfirmAsync(FrameworkElement owner, string title, string message, string primary)
     {
         var dialog = new ContentDialog
@@ -50,7 +60,7 @@ public sealed class ModContext
             DefaultButton = ContentDialogButton.Primary,
             RequestedTheme = owner.ActualTheme,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await dialog.ShowOnceAsync() == ContentDialogResult.Primary;
     }
 }
 
@@ -691,7 +701,7 @@ public sealed partial class ReShadeView : UserControl
             App.Window?.ShowError(L.T("Close the game first"), L.F("{0} is running from this folder.", running));
             return;
         }
-        if (!await _ctx.ConfirmAsync(this, L.T("Remove ReShade from this game?"),
+        if (!await _ctx.ConfirmRemovalAsync(this, L.T("Remove ReShade from this game?"),
                 L.F("Deletes {0} from the game folder. ReShade.ini, presets and shaders are kept.", found.FileName), L.T("Remove"))) return;
         try
         {
@@ -1101,7 +1111,7 @@ public sealed partial class RenoDxView : UserControl
             return;
         }
         var names = string.Join(", ", files.Select(Path.GetFileName));
-        if (!await _ctx.ConfirmAsync(this, L.T("Remove RenoDX from this game?"), L.F("Deletes {0} from\n{1}", names, dir), L.T("Remove"))) return;
+        if (!await _ctx.ConfirmRemovalAsync(this, L.T("Remove RenoDX from this game?"), L.F("Deletes {0} from\n{1}", names, dir), L.T("Remove"))) return;
         Ui.Safe(() =>
         {
             foreach (var f in files)
@@ -1441,7 +1451,7 @@ public sealed partial class QuickAccessView : UserControl
             DefaultButton = ContentDialogButton.Primary,
         };
         dialog.Opened += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
-        var result = await dialog.ShowAsync();
+        var result = await dialog.ShowOnceAsync();
         if (result == ContentDialogResult.None) return;
         link.Label = result == ContentDialogResult.Primary && box.Text.Trim().Length > 0 ? box.Text.Trim() : null;
         SettingsStore.Save();
@@ -2113,7 +2123,7 @@ public sealed partial class LumaView : UserControl
     {
         var state = _ctx.Settings.Luma;
         if (state is null || _busy || !CanInstall(out var dir)) return;
-        if (!await _ctx.ConfirmAsync(this, L.F("Uninstall {0}?", state.Mod),
+        if (!await _ctx.ConfirmRemovalAsync(this, L.F("Uninstall {0}?", state.Mod),
                 L.F("Removes the {0} files Luma added and puts back the {1} file(s) it replaced.", state.Files.Count, state.Backups.Count), L.T("Uninstall")))
             return;
         var job = GameJobs.TryStart(_ctx.Game.Id, _ctx.Game.Title, "luma", "Luma");

@@ -1,4 +1,4 @@
-﻿using HybridLauncher.Core;
+using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Media;
 using HybridLauncher.Core.Steam;
@@ -39,6 +39,8 @@ public sealed partial class LibraryPage : Page
     }
 
     CancellationTokenSource _cts = new();
+    // The library's order the covers were last built in (Library.OrderKey).
+    string? _order;
     string _filter = "";
 
     /// <summary>The pane's search text the covers were last built for.</summary>
@@ -52,12 +54,15 @@ public sealed partial class LibraryPage : Page
     readonly List<GridView> _grids = [];
     bool _ready, _syncing;
     ulong _lastWheel;
-    DispatcherQueueTimer? _saveTimer, _ownedTimer, _dragTimer;
+    DispatcherQueueTimer? _saveTimer, _dragTimer;
     bool _dragging;
     double _pendingZoom = -1;
 
     /// <summary>Self-test: the page's scroller (scroll smoothness).</summary>
     internal ScrollView SelfTestScroller => Scroller;
+    /// <summary>Self-test: the placeholder fill of a cover (Collapsed once its picture loaded), null when it has none.</summary>
+    internal static Visibility? CoverFill(FrameworkElement tileRoot) => CoverTile.BackdropOf(tileRoot);
+
     /// <summary>Self-test (perf): the first cover shown, to click.</summary>
     internal FrameworkElement? SelfTestFirstTile() =>
         _grids.Append(PinnedGrid).Where(g => g.Items.Count > 0).Select(g => g.ContainerFromIndex(0) as FrameworkElement).FirstOrDefault(c => c is not null);
@@ -81,15 +86,28 @@ public sealed partial class LibraryPage : Page
         ZoomSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => ZoomDrag(true)), true);
         ZoomSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, _) => ZoomDrag(false)), true);
         ZoomSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, _) => ZoomDrag(false)), true);
+        var pinRule = Divider();
+        Grid.SetColumn(pinRule, 2);
+        PinnedHead.Children.Add(pinRule);
+        PinnedGrid.GotFocus += (_, e) => FocusTile(e.OriginalSource, true);
+        PinnedGrid.LostFocus += (_, e) => FocusTile(e.OriginalSource, false);
         _ready = true;
         // Play time and last played are read in the background: the Last played section and an order that needs them follow.
         Library.StatsReady += () =>
         {
             var f = AppState.Settings.Library;
-            bool order = f.Sort is not "name" and not "added" || f.Tech.Count > 0;
+            // Only an order the new stats really change redraws the covers (a session's minutes counted rarely does).
+            bool order = (f.Sort is not "name" and not "added" || f.Tech.Count > 0) && Library.OrderKey() != _order;
             if (!IsLoaded) { if (order) _shown = default; else _recentStale = true; return; }
             if (order) Reload(_filter);
             else FillRecent();
+        };
+        // The owned games' hours and achievements came in: their covers take the order that needs them (once).
+        Library.OwnedStatsReady += () =>
+        {
+            var f = AppState.Settings.Library;
+            if (!f.ShowNotInstalled || f.Sort is "name" or "added" or "tech") return;
+            if (IsLoaded) Reload(_filter); else _shown = default;
         };
         // An achievement unlocked while the app runs: the Latest achievements panel and the summary line follow.
         Library.UnlocksChanged += () =>
@@ -116,7 +134,13 @@ public sealed partial class LibraryPage : Page
                     + $"settings [{string.Join(", ", Helpers.SettingsKeys.Changed(_shownParts, Helpers.SettingsKeys.Parts(AppState.Settings)).Take(6))}]");
             Reload(filter);
         }
-        else if (_recentStale) FillRecent();
+        else
+        {
+            if (_recentStale) FillRecent();
+            // Groups folded or opened from the side list while this page was away: the folds are applied in place (a fold no
+            // longer counts as a settings change that rebuilds every cover, 2.1-rc.3 audit).
+            foreach (var key in _folds.Keys.ToList()) ApplyFold(key);
+        }
         _recentStale = false;
         _ = Library.LoadStatsAsync(DispatcherQueue);
     }
@@ -124,6 +148,7 @@ public sealed partial class LibraryPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        foreach (var t in _tiles) t.Rest();
         // The covers still loading go on: the page is kept in memory and shows them when it comes back (Reload cancels them).
         // A zoom still waiting for its save is written now: the page may not come back.
         if (_saveTimer is { IsRunning: true })
@@ -131,7 +156,6 @@ public sealed partial class LibraryPage : Page
             _saveTimer.Stop();
             SettingsStore.Save();
         }
-        _ownedTimer?.Stop();
     }
 
     /// <summary>
@@ -165,8 +189,8 @@ public sealed partial class LibraryPage : Page
             _tileWidth = tile;
             foreach (var t in _tiles) t.Resize(tile);
             SizeSlots();
-            // The not-installed covers are built at a fixed width: rebuilt once the zoom settles.
-            if (_ownedWrap is not null && Math.Abs(_ownedWidth - tile) >= 0.5) ScheduleOwnedRefill();
+            // The not-installed covers made so far are resized in place (the others are made at this width).
+            ResizeOwned(tile);
         }
         SyncZoom();
     }
@@ -368,28 +392,6 @@ public sealed partial class LibraryPage : Page
         SetZoom(size, 0);
     }
 
-    /// <summary>The not-installed covers are plain elements built at one width: after a zoom they are drawn again, once, when it pauses.</summary>
-    void ScheduleOwnedRefill()
-    {
-        if (_ownedTimer is null)
-        {
-            _ownedTimer = DispatcherQueue.CreateTimer();
-            _ownedTimer.Interval = TimeSpan.FromMilliseconds(180);
-            _ownedTimer.IsRepeating = false;
-            _ownedTimer.Tick += (_, _) => FillOwned();
-        }
-        _ownedTimer.Stop();
-        _ownedTimer.Start();
-    }
-
-    void FillOwned()
-    {
-        if (_ownedWrap is null || _owned is null || _tileWidth <= 0) return;
-        _ownedWidth = _tileWidth;
-        _ownedWrap.Children.Clear();
-        foreach (var g in _owned) _ownedWrap.Children.Add(OwnedLibrary.Tile(g, _tileWidth));
-    }
-
     /// <summary>The grids' panels keep the first item's size: give them the new slot size so the tiles reflow.</summary>
     void SizeSlots()
     {
@@ -425,23 +427,31 @@ public sealed partial class LibraryPage : Page
     /// </summary>
     static int SettingsKey() => Helpers.SettingsKeys.Of(AppState.Settings);
 
+    /// <summary>Builds the covers again only when the search, the games or the settings the grid reads changed.</summary>
+    public void ReloadIfChanged(string filter)
+    {
+        if (_shown != (filter, SettingsKey(), AppState.GamesVersion, OwnedLibrary.IsLoaded)) Reload(filter);
+    }
+
     public void Reload(string filter)
     {
         using var __perf = UiPerf.Scope("LibraryPage.Reload");
         _filter = filter;
         _shown = (filter, SettingsKey(), AppState.GamesVersion, OwnedLibrary.IsLoaded);
         _shownParts = Helpers.SettingsKeys.Parts(AppState.Settings);
+        _order = Library.OrderKey();
         _cts.Cancel();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         _tiles.Clear();
         _grids.Clear();
-        _ownedWrap = null;
-        _owned = null;
+        _ownedBlocks.Clear();
         var f = AppState.Settings.Library;
 
         bool Matches(Game g) => _filter.Length == 0 || g.Title.Contains(_filter, StringComparison.CurrentCultureIgnoreCase) || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase);
-        var visible = Library.Apply(AppState.VisibleGames.Where(Matches));
+        // A game owned but not installed that was opened once is in the app's list as a page-only game: it shows with the
+        // other not-installed games, never as an installed cover.
+        var visible = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled).Where(Matches));
         var pinned = AppState.PinnedGames().Where(g => visible.Contains(g)).ToList();
         var rest = visible.Where(g => !AppState.IsPinned(g.Id)).ToList();
 
@@ -453,14 +463,24 @@ public sealed partial class LibraryPage : Page
         _folds.Clear();
         _sections.Clear();
         if (pinned.Count > 0) _sections.Add((0, "", pinned.Count, true));
+        // Games you own on a linked launcher but have not installed (Filters → Not installed), with Install on their cover: in
+        // their launcher's group when the library is grouped (2.1-rc.3), else in a block of their own after the others.
+        if (f.ShowNotInstalled && !f.OptiOnly && !OwnedLibrary.IsLoaded) _ = LoadOwnedAsync();
+        var owned = OwnedShown(_filter);
         if (f.GroupByLauncher)
         {
-            foreach (var (key, games) in Library.Groups(rest))
+            _widestRow = pinned.Count;
+            var ownedBy = owned.GroupBy(g => "store:" + g.Store).ToDictionary(g => g.Key, g => g.ToList());
+            var groups = Library.Groups(rest.Concat(ownedBy.Where(o => !rest.Any(g => StoreLogos.GroupOf(g).Key == o.Key)).Select(o => OwnedLibrary.AsGame(o.Value[0]))));
+            foreach (var (key, list) in groups)
             {
-                Groups.Children.Add(Section(key, games, ct));
-                _sections.Add((1, key, games.Count, !Library.IsCollapsed(key)));
+                var games = list.Where(g => !g.NotInstalled).ToList();
+                var mine = ownedBy.GetValueOrDefault(key) ?? [];
+                Groups.Children.Add(Section(key, games, mine, list[0], ct));
+                _sections.Add((1, key, games.Count + mine.Count, !Library.IsCollapsed(key)));
+                _widestRow = Math.Max(_widestRow, Math.Max(games.Count, mine.Count));
             }
-            _widestRow = Math.Max(pinned.Count, Library.Groups(rest).Select(g => g.Games.Count).DefaultIfEmpty(0).Max());
+            _widestRow = Math.Max(_widestRow, pinned.Count);
         }
         else
         {
@@ -469,63 +489,42 @@ public sealed partial class LibraryPage : Page
             Groups.Children.Add(grid);
             if (rest.Count > 0) _sections.Add((1, "", rest.Count, true));
             _widestRow = Math.Max(pinned.Count, rest.Count);
+            if (owned.Count > 0)
+            {
+                var section = new StackPanel { Spacing = 8 };
+                section.Children.Add(OwnedHeading(owned.Count, false));
+                section.Children.Add(OwnedBlock(owned));
+                Groups.Children.Add(section);
+                _sections.Add((2, "", owned.Count, true));
+                // The block is as wide as its widest row: the not-installed covers count too.
+                _widestRow = Math.Max(_widestRow, owned.Count);
+            }
         }
         _tileWidth = -1;
         Center(Scroller.ActualWidth);
         // The grids create their panels on first layout.
         DispatcherQueue.TryEnqueue(SizeSlots);
 
-        // Games you own on a linked launcher but have not installed (Filters → Not installed), with Install on their cover.
-        // A game not on this PC has no OptiScaler: "Only games with OptiScaler installed" leaves them out.
-        if (f.ShowNotInstalled && !f.OptiOnly)
-        {
-            if (!OwnedLibrary.IsLoaded) _ = LoadOwnedAsync();
-            var owned = OwnedLibrary.NotInstalled().Where(g => _filter.Length == 0 || g.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
-            if (owned.Count > 0)
-            {
-                var section = new StackPanel { Spacing = 8 };
-                var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 6, 0, 0) };
-                head.Children.Add(new FontIcon { Glyph = "\uE896", FontSize = 13, Foreground = (Brush)HybridLauncher.Helpers.ThemeRes.Current["AccentTextFillColorPrimaryBrush"] });
-                head.Children.Add(new TextBlock { Text = L.T("NOT INSTALLED"), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["GroupHeader"], VerticalAlignment = VerticalAlignment.Center });
-                head.Children.Add(new TextBlock { Text = owned.Count.ToString(), FontSize = 11, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
-                section.Children.Add(head);
-                var wrap = new WrapPanel(Gap, []);
-                foreach (var g in owned.Take(300)) wrap.Children.Add(OwnedLibrary.Tile(g, _tileWidth > 0 ? _tileWidth : 204));
-                section.Children.Add(wrap);
-                Groups.Children.Add(section);
-                _ownedWrap = wrap;
-                _owned = owned.Take(300).ToList();
-                _ownedWidth = _tileWidth > 0 ? _tileWidth : 204;
-                _sections.Add((2, "", _owned.Count, true));
-                // The block is as wide as its widest row: the not-installed covers count too.
-                if (owned.Count > _widestRow) _widestRow = owned.Count;
-                Center(Scroller.ActualWidth);
-            }
-        }
-
         int total = pinned.Count + rest.Count;
-        int all = AppState.VisibleGames.Count();
+        int all = AppState.VisibleGames.Count(g => !g.NotInstalled);
+        // The order is on its own pill now: the line says only how many.
         CountText.Text = (_filter.Length > 0 ? L.F(total == 1 ? "{0} game matching \"{1}\"" : "{0} games matching \"{1}\"", total, _filter)
-                : f.IsFiltering ? L.F("{0} of {1} games (filtered)", total, all) : L.N(total, "{0} game", "{0} games"))
-            + "  ·  " + L.F("sorted by {0}", SortName(f.Sort).ToLower());
-        int active = Library.ActiveFilters();
-        FilterBadge.Visibility = active > 0 ? Visibility.Visible : Visibility.Collapsed;
-        FilterBadgeText.Text = active.ToString();
-        EmptyText.Visibility = total == 0 ? Visibility.Visible : Visibility.Collapsed;
+                : f.IsFiltering && total != all ? L.F("{0} of {1} games (filtered)", total, all) : L.N(total, "{0} game", "{0} games"))
+            + (owned.Count > 0 ? "  ·  " + L.F("{0} not installed", owned.Count) : "");
+        FillToolbar();
+        EmptyText.Visibility = total == 0 && owned.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         FillRecent();
         EmptyText.Text = _filter.Length > 0 ? L.T("No game matches the search.")
             : f.IsFiltering ? L.T("No game passes the filters. Open Filters and reset them.")
             : L.T("No games found. Use “Add a game or games folder” at the bottom of the pane.");
     }
 
-    WrapPanel? _ownedWrap;
-    List<OwnedGame>? _owned;
-    double _ownedWidth;
-
     async Task LoadOwnedAsync()
     {
         await OwnedLibrary.LoadAsync();
         if (AppState.Settings.Library.ShowNotInstalled) Reload(_filter);
+        // Their hours and achievements, for the orders that need them.
+        _ = Library.LoadOwnedStatsAsync(DispatcherQueue);
     }
 
     // ---------- launcher groups: fold, drag to reorder ----------
@@ -555,7 +554,7 @@ public sealed partial class LibraryPage : Page
         }
     }
 
-    StackPanel Section(string key, List<Game> games, CancellationToken ct)
+    StackPanel Section(string key, List<Game> games, List<OwnedGame> owned, Game sample, CancellationToken ct)
     {
         bool collapsed = Library.IsCollapsed(key);
         var chevron = Motion.Chevron(!collapsed, 11);
@@ -565,24 +564,39 @@ public sealed partial class LibraryPage : Page
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         head.Children.Add(chevron);
-        var label = StoreLogos.GroupHeader(games[0], games.Count, (Style)HybridLauncher.Helpers.ThemeRes.Current["GroupHeader"]);
+        var label = StoreLogos.GroupHeader(sample, games.Count, (Style)HybridLauncher.Helpers.ThemeRes.Current["GroupHeader"]);
         Grid.SetColumn(label, 1);
         head.Children.Add(label);
+        // A hairline that fades out to the right: the groups read as chapters of the page (2.1).
+        var rule = Divider();
+        Grid.SetColumn(rule, 2);
+        head.Children.Add(rule);
         ToolTipService.SetToolTip(head, L.T("Click to fold or open. Drag to move this group."));
 
         var grid = NewGrid();
         foreach (var game in games) grid.Items.Add(Tile(game, ct));
-        grid.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        // The group's games you own but have not installed, under its installed ones (2.1-rc.3); folded with them.
+        FrameworkElement body = grid;
+        if (owned.Count > 0)
+        {
+            var both = new StackPanel { Spacing = 8 };
+            if (games.Count > 0) both.Children.Add(grid);
+            else _grids.Remove(grid);
+            both.Children.Add(OwnedHeading(owned.Count, true));
+            both.Children.Add(OwnedBlock(owned));
+            body = both;
+        }
+        body.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
 
         var section = new StackPanel { Spacing = 6, Tag = key, RenderTransform = new TranslateTransform() };
         // The grid's top room (see NewGrid) reaches under the heading: the heading takes the pointer there.
         Canvas.SetZIndex(head, 1);
         section.Children.Add(head);
-        section.Children.Add(grid);
+        section.Children.Add(body);
 
         head.PointerEntered += (_, _) => head.Background = (Brush)HybridLauncher.Helpers.ThemeRes.Current["SubtleFillColorSecondaryBrush"];
         head.PointerExited += (_, _) => head.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        _folds[key] = (chevron, grid, !collapsed);
+        _folds[key] = (chevron, body, !collapsed);
         DragToReorder(head, section, Groups, () =>
         {
             Library.SetCollapsed(key, !Library.IsCollapsed(key));
@@ -596,6 +610,26 @@ public sealed partial class LibraryPage : Page
         });
         return section;
     }
+
+    static Brush? _divider;
+
+    /// <summary>A thin line from the accent fading to nothing, beside a group's heading.</summary>
+    internal static Border Divider()
+    {
+        if (_divider is null)
+        {
+            var accent = Palettes.Current?.Accent ?? Microsoft.UI.Colors.White;
+            var b = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 0) };
+            b.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x70, accent.R, accent.G, accent.B), Offset = 0 });
+            b.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x18, 255, 255, 255), Offset = 0.35 });
+            b.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0, 255, 255, 255), Offset = 1 });
+            _divider = b;
+        }
+        return new Border { Height = 1, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 1, 0, 0), Background = _divider, IsHitTestVisible = false };
+    }
+
+    /// <summary>A new theme: the shared divider takes its accent.</summary>
+    internal static void ForgetLook() => _divider = null;
 
     /// <summary>
     /// A press on <paramref name="handle"/> that does not move is a click; moved more than a few pixels, <paramref name="item"/>
@@ -695,8 +729,18 @@ public sealed partial class LibraryPage : Page
         ScrollViewer.SetVerticalScrollBarVisibility(grid, ScrollBarVisibility.Hidden);
         grid.ItemClick += Tile_Click;
         grid.Loaded += (_, _) => SizeSlots();
+        // Keyboard and controller focus pop the cover like the pointer (2.1).
+        grid.GotFocus += (_, e) => FocusTile(e.OriginalSource, true);
+        grid.LostFocus += (_, e) => FocusTile(e.OriginalSource, false);
         _grids.Add(grid);
         return grid;
+    }
+
+    static void FocusTile(object source, bool on)
+    {
+        if (source is not GridViewItem { Content: StackPanel root } item || !CoverTile.Tiles.TryGetValue(root, out var tile)) return;
+        if (on && item.FocusState != FocusState.Keyboard) return;
+        tile.Focus(on);
     }
 
     void Tile_Click(object sender, ItemClickEventArgs e)
@@ -711,23 +755,18 @@ public sealed partial class LibraryPage : Page
 
     static string SortName(string key) => L.T(Sorts.FirstOrDefault(s => s.Key == key).Name ?? "Name");
 
-    void FiltersFlyout_Opening(object sender, object e) => FiltersFlyout.Content = FiltersPanel(FiltersFlyout.Hide);
 
     /// <summary>
     /// The Filters flyout, in three plain steps: how the games are ordered, which games show, and how the covers look. Every
-    /// change applies at once, to the grid and to the game list in the pane alike; Reset puts the order and the filters back
-    /// (the cover size and the look stay). The pane's filter button opens the same panel.
+    /// change applies at once; Reset puts the order and the filters back (the cover size and the look stay). The pane's
+    /// filter button opens the same panel for the list's own filters (<paramref name="list"/>).
     /// </summary>
-    internal static FrameworkElement FiltersPanel(Action hide)
+    internal static FrameworkElement FiltersPanel(Action hide, bool full = true, bool list = false)
     {
-        var f = AppState.Settings.Library;
+        // The side list's panel sets the list's own filters; the library's bar sets the grid's (2.1-rc.4).
+        var f = list ? Library.ListFilter : AppState.Settings.Library;
         var res = HybridLauncher.Helpers.ThemeRes.Current;
-        void Changed()
-        {
-            SettingsStore.Save();
-            // The pane redraws the grid too, when the library is the page shown.
-            App.Window?.RefreshList();
-        }
+        void Changed() => FiltersChanged(f);
         TextBlock Head(string text, string hint)
         {
             var t = new TextBlock { Style = (Style)res["GroupHeader"], Margin = new Thickness(0, 10, 0, 0), Text = text };
@@ -736,46 +775,27 @@ public sealed partial class LibraryPage : Page
         }
         CheckBox Check(string text, bool on, Action<bool> set, string? tip = null)
         {
-            var cb = new CheckBox { Content = text, IsChecked = on, MinWidth = 0 };
+            var cb = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, MinWidth = 0 };
             if (tip is not null) ToolTipService.SetToolTip(cb, tip);
             cb.Click += (_, _) => { set(cb.IsChecked == true); Changed(); };
             return cb;
         }
 
-        var panel = new StackPanel { Spacing = 4, Width = 300 };
+        // Wide enough for its longest line, which wraps rather than being cut (2.1-rc.3: the side list's panel cut its lines).
+        var panel = new StackPanel { Spacing = 4, Width = 320 };
 
-        // 1. Order.
-        panel.Children.Add(Head(L.T("ORDER"), L.T("How the games are sorted")));
-        var sort = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var (key, name) in Sorts) sort.Items.Add(new ComboBoxItem { Content = L.T(name), Tag = key });
-        sort.SelectedIndex = Math.Max(0, Array.FindIndex(Sorts, s => s.Key == f.Sort));
-        sort.SelectionChanged += (_, _) =>
+        if (full)
         {
-            if (sort.SelectedItem is ComboBoxItem { Tag: string key } && key != f.Sort) { f.Sort = key; Changed(); }
-        };
-        panel.Children.Add(sort);
-        panel.Children.Add(Check(L.T("Reverse the order"), f.Descending, v => f.Descending = v));
-
-        // 2. Which games.
-        panel.Children.Add(Head(L.T("SHOW"), L.T("Which games are listed")));
-        foreach (var (key, games) in Library.Groups(AppState.VisibleGames))
-        {
-            var g = StoreLogos.GroupOf(games[0]);
-            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            content.Children.Add(StoreLogos.Tile(games[0].Store, g.Folder is not null, 20));
-            content.Children.Add(new TextBlock { Text = $"{g.Label}  ({games.Count})", VerticalAlignment = VerticalAlignment.Center });
-            var cb = new CheckBox { Content = content, IsChecked = f.Launchers.Count == 0 || f.Launchers.Contains(key), MinWidth = 0 };
-            cb.Click += (_, _) =>
-            {
-                // No launcher ticked off = every launcher; ticking one off keeps the others.
-                var all = Library.Groups(AppState.VisibleGames).Select(x => x.Key).ToList();
-                if (f.Launchers.Count == 0) foreach (var k in all) f.Launchers.Add(k);
-                if (cb.IsChecked == true) f.Launchers.Add(key); else f.Launchers.Remove(key);
-                if (all.All(f.Launchers.Contains)) f.Launchers.Clear();
-                Changed();
-            };
-            panel.Children.Add(cb);
+            // 1. Order and 2. launchers: the same lists as the library's bar, each entry with its own icon.
+            panel.Children.Add(Head(L.T("ORDER"), L.T("How the games are sorted")));
+            panel.Children.Add(SortList(() => { }, f));
+            panel.Children.Add(Head(L.T("LAUNCHERS"), L.T("Which launchers' games are listed")));
+            panel.Children.Add(LaunchersList(null, f));
+            // 3. The collection (the library has its own pill for it).
+            panel.Children.Add(Head(L.T("COLLECTION"), L.T("Only the favorites or the games of one collection")));
+            panel.Children.Add(CollectionList(hide, f));
         }
+        panel.Children.Add(Head(L.T("SHOW"), L.T("Which games are listed")));
         panel.Children.Add(Check(L.T("Also games you own but have not installed"), f.ShowNotInstalled, v => f.ShowNotInstalled = v,
             L.T("Games you own on Steam, Epic or GOG but have not installed, with an Install button (accounts in Downloads).")));
         panel.Children.Add(Check(L.T("Only games with OptiScaler installed"), f.OptiOnly, v => f.OptiOnly = v));
@@ -796,27 +816,33 @@ public sealed partial class LibraryPage : Page
         // 3. How the covers look.
         panel.Children.Add(Head(L.T("LOOK"), L.T("How the list and the covers look")));
         panel.Children.Add(Check(L.T("Group by launcher"), f.GroupByLauncher, v => f.GroupByLauncher = v));
-        // Tags on the covers: all of them, then each kind on its own (greyed while all are off).
-        var kinds = new WrapPanel(4, []) { Margin = new Thickness(26, 0, 0, 0) };
-        void Kinds() { foreach (var c in kinds.Children.OfType<CheckBox>()) c.IsEnabled = AppState.Settings.ShowCoverOverlays; }
-        panel.Children.Add(Check(L.T("Tags on the covers"), AppState.Settings.ShowCoverOverlays, v => { AppState.Settings.ShowCoverOverlays = v; Kinds(); }));
-        foreach (var (key, label) in AppSettings.CoverTagKinds)
+        // Tags on the covers: all of them, then each kind on its own (greyed while all are off). The list has no covers.
+        if (!list)
         {
-            var cb = Check(L.T(label), AppState.Settings.ShowCoverTags && key == "tech" || key != "tech" && !AppState.Settings.HiddenCoverTags.Contains(key), v => AppState.Settings.SetCoverTag(key, v));
-            cb.MinWidth = 130;
-            kinds.Children.Add(cb);
+            var kinds = new WrapPanel(4, []) { Margin = new Thickness(26, 0, 0, 0) };
+            void Kinds() { foreach (var c in kinds.Children.OfType<CheckBox>()) c.IsEnabled = AppState.Settings.ShowCoverOverlays; }
+            panel.Children.Add(Check(L.T("Tags on the covers"), AppState.Settings.ShowCoverOverlays, v => { AppState.Settings.ShowCoverOverlays = v; Kinds(); }));
+            foreach (var (key, label) in AppSettings.CoverTagKinds)
+            {
+                var cb = Check(L.T(label), AppState.Settings.ShowCoverTags && key == "tech" || key != "tech" && !AppState.Settings.HiddenCoverTags.Contains(key), v => AppState.Settings.SetCoverTag(key, v));
+                cb.MinWidth = 130;
+                kinds.Children.Add(cb);
+            }
+            Kinds();
+            panel.Children.Add(kinds);
         }
-        Kinds();
-        panel.Children.Add(kinds);
 
         var reset = new Button { Content = L.T("Reset order and filters"), Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
         ToolTipService.SetToolTip(reset, L.T("The cover size and the look stay as they are."));
         reset.Click += (_, _) =>
         {
             // The cover size and the grouping are not filters: they stay.
-            AppState.Settings.Library = new LibraryFilter { TileSize = f.TileSize, GroupByLauncher = f.GroupByLauncher };
+            if (list) AppState.Settings.ListFilter = new LibraryFilter { GroupByLauncher = f.GroupByLauncher, DefaultsVersion = f.DefaultsVersion };
+            else AppState.Settings.Library = new LibraryFilter { TileSize = f.TileSize, GroupByLauncher = f.GroupByLauncher, DefaultsVersion = f.DefaultsVersion };
             hide();
-            Changed();
+            // The filter just made, not the one this panel was opened on (2.1-rc.10 audit: the old one no longer was the list's,
+            // so a Reset in the side list redrew the library and left the list as it was).
+            FiltersChanged(list ? AppState.Settings.ListFilter : AppState.Settings.Library);
         };
         panel.Children.Add(reset);
         // The flyout scrolls by itself: a scroller of our own inside it drew a second bar.
@@ -876,14 +902,27 @@ public sealed partial class LibraryPage : Page
 
             // The cover is painted as a rounded fill (Smooth.Art): an Image cut by the tile's corners would show jagged edges.
             var cover = new Border { CornerRadius = new CornerRadius(10), IsHitTestVisible = false };
-            _art = new Grid { CornerRadius = new CornerRadius(10), Background = PlaceholderBrush() };
-            _art.Children.Add(placeholder);
-            _art.Children.Add(cover);
+            // Two layers (2.1-rc.4): the picture, which grows under the pointer, and over it the tags and Play, which never
+            // scale (they move out with its edges), so they stay sharp all through the motion.
+            // No rounded clip on the layer itself (2.1): every part of it is rounded on its own (antialiased), and a second,
+            // clipped edge over them cut their soft rim into steps. The light effects keep their own rounded clip (CoverFx).
+            var pic = new Grid();
+            // A transparent fill takes the pointer (2.1-rc.9): every layer of the picture is IsHitTestVisible=false, and without
+            // a fill of its own the cover let clicks, hover and right-clicks through to the page (rc.8: the library looked frozen).
+            _art = new Grid { Background = HitFill };
+            _art.Children.Add(pic);
+            // The placeholder's fill, under the picture: hidden once a cover that fills the tile has loaded (LoadCoverAsync).
+            pic.Children.Add(new Border { CornerRadius = new CornerRadius(10), Background = PlaceholderBrush(), IsHitTestVisible = false, Tag = BackdropTag });
+            pic.Children.Add(placeholder);
+            pic.Children.Add(cover);
+            // Light from above and a deeper foot (2.1): the cover reads as a solid object, not a flat picture.
+            pic.Children.Add(new Border { Background = Helpers.CoverFx.Gloss, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
+            pic.Children.Add(new Border { Background = Helpers.CoverFx.Floor, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
 
             var topShade = new Border { Height = 44, VerticalAlignment = VerticalAlignment.Top, Background = Shade(true), Visibility = Visibility.Collapsed, IsHitTestVisible = false, CornerRadius = new CornerRadius(10, 10, 0, 0) };
             var bottomShade = new Border { Height = 84, VerticalAlignment = VerticalAlignment.Bottom, Background = Shade(false), Visibility = Visibility.Collapsed, IsHitTestVisible = false, CornerRadius = new CornerRadius(0, 0, 10, 10) };
-            _art.Children.Add(topShade);
-            _art.Children.Add(bottomShade);
+            pic.Children.Add(topShade);
+            pic.Children.Add(bottomShade);
 
             // Top row as a grid: time played on the left, OptiScaler and the pin on the right; the left one gives way, never overlaps.
             var top = new Grid { Margin = new Thickness(6), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false, ColumnSpacing = 3 };
@@ -901,7 +940,7 @@ public sealed partial class LibraryPage : Page
             topRight.Children.Add(_mods);
             if (AppState.Settings.CoverTag("pin") && AppState.IsPinned(game.Id))
             {
-                topRight.Children.Add(Chip("", "", null, out _));
+                topRight.Children.Add(Chip("\uEB52", "", new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x5A, 0x6E)), out _));
                 topShade.Visibility = Visibility.Visible;
             }
 
@@ -912,7 +951,7 @@ public sealed partial class LibraryPage : Page
             bottom.Children.Add(ach);
             _art.Children.Add(bottom);
 
-            var name = new TextBlock
+            _name = new TextBlock
             {
                 Text = game.Title,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -922,13 +961,22 @@ public sealed partial class LibraryPage : Page
             };
             var store = new TextBlock { Text = StoreLogos.GroupOf(game).Label, Margin = new Thickness(2, 0, 2, 2), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowDescription"], TextTrimming = TextTrimming.CharacterEllipsis };
 
-            // Covers stand off the page with a soft shadow and rise a little under the pointer (Helpers.Depth).
-            HybridLauncher.Helpers.Depth.LiftOnHover(_art);
-            _art.ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(180) };
+            // 2.1: the cover stands on a soft contact shadow; under the pointer it springs up, a band of light crosses it, a
+            // highlight follows the pointer and the theme's accent glows under it (Helpers.CoverFx, all on the compositor).
+            var fxHost = new Border();
+            var glowHost = new Border();
+            _contact = new Border { Height = 26, VerticalAlignment = VerticalAlignment.Bottom, Background = Helpers.CoverFx.ContactShadow, IsHitTestVisible = false };
+            var stage = new Grid();
+            stage.Children.Add(_contact);
+            stage.Children.Add(glowHost);
+            stage.Children.Add(_art);
+            pic.Children.Add(fxHost);
+            _fx = new Helpers.CoverFx(_art, pic, fxHost, glowHost, (topLeft, -1, -1), (topRight, 1, -1), (bottom, -1, 1));
             Root = new StackPanel { Tag = game.Id };
-            Root.Children.Add(_art);
-            Root.Children.Add(name);
+            Root.Children.Add(stage);
+            Root.Children.Add(_name);
             Root.Children.Add(store);
+            Tiles.AddOrUpdate(Root, this);
             // Under the pointer the cover pops: it grows a little on a spring and stands over its neighbours (1.4.0-rc.20,
             // in place of the grey veil). Play sits on it, small and round; it turns into Stop while the game runs, and then
             // stays on the cover without the pointer too.
@@ -938,25 +986,31 @@ public sealed partial class LibraryPage : Page
             _art.PointerCaptureLost += (_, _) => Pop(false);
             if (!game.NotInstalled && !game.Installing)
             {
-                // Play in the middle of the cover, on a soft dark halo so it reads on any art. It comes up from a little
-                // below and grows into place when the pointer arrives, and sizes itself with the cover (see ShowLaunch).
-                var halo = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = LaunchSize * 2.6, Height = LaunchSize * 2.6, IsHitTestVisible = false, Fill = HaloBrush };
-                _launchChip = new Controls.LaunchChip(game, size: LaunchSize) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                // Play in the middle of the cover (2.1-rc.3: a pill with its word, following the game's states, see LaunchChip), on
+                // a soft dark halo so it reads on any art. It comes up from a little below and grows into place when the pointer
+                // arrives; it stays while the game runs or downloads an update.
+                _launchHeight = Math.Clamp(Math.Round(width * 0.19), 36, 46);
+                _launchMadeFor = width;
+                var halo = new Microsoft.UI.Xaml.Shapes.Ellipse { IsHitTestVisible = false, Fill = HaloBrush, Margin = new Thickness(-_launchHeight * 1.1, -_launchHeight * 0.9, -_launchHeight * 1.1, -_launchHeight * 0.9) };
+                _launchChip = new Controls.LaunchChip(game, withLabel: true, size: _launchHeight) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 _launch = new Grid
                 {
-                    Width = LaunchSize * 2.6, Height = LaunchSize * 2.6,
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                     Opacity = 0, IsHitTestVisible = false,
-                    CenterPoint = new System.Numerics.Vector3((float)(LaunchSize * 1.3), (float)(LaunchSize * 1.3), 0),
                     OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) },
-                    ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(220) },
-                    TranslationTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(220) },
+                    TranslationTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(200) },
                 };
+                _launch.SizeChanged += (_, e) => _launch.CenterPoint = new System.Numerics.Vector3((float)e.NewSize.Width / 2, (float)e.NewSize.Height / 2, 0);
                 _launch.Children.Add(halo);
                 _launch.Children.Add(_launchChip);
                 _art.Children.Add(_launch);
-                _art.Loaded += (_, _) => { GameSessions.Changed -= OnSession; GameSessions.Changed += OnSession; ShowLaunch(); };
-                _art.Unloaded += (_, _) => GameSessions.Changed -= OnSession;
+                _art.Loaded += (_, _) =>
+                {
+                    GameSessions.Changed -= OnSession; GameSessions.Changed += OnSession;
+                    Downloads.Changed -= OnDownload; Downloads.Changed += OnDownload;
+                    ShowLaunch();
+                };
+                _art.Unloaded += (_, _) => { GameSessions.Changed -= OnSession; Downloads.Changed -= OnDownload; };
             }
             Resize(width);
 
@@ -971,7 +1025,22 @@ public sealed partial class LibraryPage : Page
             if (s.CoverTag("ach")) _ = LoadAchievementsAsync(ach, bottomShade, game, ct);
         }
 
-        const double LaunchSize = 52;
+        double _launchHeight, _launchMadeFor;
+        readonly Helpers.CoverFx _fx;
+        readonly TextBlock _name;
+        readonly Border _contact;
+
+        /// <summary>The tile behind a cover's root element (keyboard and controller focus land on the grid's item).</summary>
+        internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<StackPanel, CoverTile> Tiles = new();
+
+        bool _focusPop;
+
+        /// <summary>Focus from the keyboard or a controller pops the cover like the pointer does (and only that focus lets it down).</summary>
+        internal void Focus(bool on)
+        {
+            if (on) { _focusPop = true; Pop(true); }
+            else if (_focusPop) { _focusPop = false; Pop(false); }
+        }
         Grid? _launch;
         Controls.LaunchChip? _launchChip;
         bool _hover;
@@ -995,17 +1064,34 @@ public sealed partial class LibraryPage : Page
             if (Root.Tag is string mine && mine.Equals(id, StringComparison.OrdinalIgnoreCase)) ShowLaunch();
         }
 
+        void OnDownload()
+        {
+            if (Root.Tag is string id && (_busy || Downloads.Active(id) is not null)) ShowLaunch();
+        }
+
+        bool _busy;
+
         void ShowLaunch()
         {
             if (_launch is null || Root.Tag is not string id) return;
-            bool on = _hover || GameSessions.IsActive(id);
+            _busy = GameSessions.IsActive(id) || Downloads.Active(id) is { State: DownloadState.Downloading or DownloadState.Waiting or DownloadState.Paused };
+            bool on = _hover || _busy;
             _launch.Opacity = on ? 1 : 0;
             _launch.IsHitTestVisible = on;
-            // As big as the cover asks (small covers a smaller button); away, it waits smaller and a little lower.
-            float fit = (float)Math.Clamp(_width / 230, 0.72, 1.3);
-            float s = on ? fit : fit * 0.6f;
-            _launch.Scale = new System.Numerics.Vector3(s, s, 1);
-            _launch.Translation = new System.Numerics.Vector3(0, on ? 0 : 14, 0);
+            // Made for the cover's width when it was built: a zoom scales it with the cover; away, it waits smaller and lower.
+            // Never scaled (2.1-rc.4: it grew from 60% and was blurred until it settled): it fades in rising a few pixels,
+            // and a zoom makes it again at the cover's size (Resize).
+            _launch.Translation = new System.Numerics.Vector3(0, on ? 0 : 10, 0);
+        }
+
+        /// <summary>
+        /// Back to rest: the page goes away (a click on a cover opens its game with the pointer still on it, and no
+        /// PointerExited comes), so the cover does not come back popped with its glow spilling over its neighbours.
+        /// </summary>
+        internal void Rest()
+        {
+            _focusPop = false;
+            if (_hover) Pop(false);
         }
 
         /// <summary>Self-test: the cover as under the pointer (popped, Play shown), or back.</summary>
@@ -1027,9 +1113,9 @@ public sealed partial class LibraryPage : Page
                 DependencyObject? up = _art;
                 while (up is not null && up is not GridViewItem) up = VisualTreeHelper.GetParent(up);
                 if (up is UIElement item) Canvas.SetZIndex(item, on ? 10 : 0);
-                _art.CenterPoint = new System.Numerics.Vector3((float)_art.Width / 2, (float)_art.Height / 2, 0);
-                float s = on && _art.Width > 0 ? (float)((_art.Width + 16) / _art.Width) : 1f;
-                _art.Scale = new System.Numerics.Vector3(s, s, 1);
+                _fx.Hover(on);
+                if (on) _name.Foreground = (Brush)HybridLauncher.Helpers.ThemeRes.Current["AccentTextFillColorPrimaryBrush"];
+                else _name.ClearValue(TextBlock.ForegroundProperty);
             }
             catch (Exception ex) { Log.Warn($"Cover pop: {ex.Message}"); }
         }
@@ -1040,6 +1126,17 @@ public sealed partial class LibraryPage : Page
             Root.Width = width;
             _art.Width = width;
             _art.Height = Math.Round(width * 1.5);
+            _fx.Resize(_art.Width, _art.Height);
+            // Play at the cover's size: made again when a zoom changed it (it is never scaled, so it stays sharp).
+            if (_launchChip is not null && _launch is not null && Math.Clamp(Math.Round(width * 0.19), 36, 46) is var h && h != _launchHeight)
+            {
+                _launchHeight = h;
+                _launchMadeFor = width;
+                _launch.Children.Remove(_launchChip);
+                _launchChip = new Controls.LaunchChip(_game, withLabel: true, size: h) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                _launch.Children.Add(_launchChip);
+            }
+            _contact.Margin = new Thickness(Math.Round(width * 0.08), 0, Math.Round(width * 0.08), -14);
             ShowLaunch();
             Shorten();
         }
@@ -1099,14 +1196,59 @@ public sealed partial class LibraryPage : Page
             {
                 Background = ChipFill,
                 BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(5),
+                CornerRadius = new CornerRadius(ChipCorner),
                 Padding = new Thickness(5, 2, 5, 3),
                 Child = panel,
             };
         }
 
+        /// <summary>
+        /// The time played, laid out as Hydra's library draws it (2.1-rc.3): 24 px tall, GitHub's clock icon at 11 px and the
+        /// hours in 12 px. Since 2.1 on the same dark chip as every other tag of the cover (no glass, no hairline): the glass
+        /// went pale over bright art and its clipped edge looked rough.
+        /// </summary>
+        static FrameworkElement TimeChip(out TextBlock text)
+        {
+            var ink = new SolidColorBrush(Windows.UI.Color.FromArgb(0xF0, 0xFF, 0xFF, 0xFF));
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
+            {
+                Data = (Geometry)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(typeof(Geometry), ClockPath),
+                Width = 11, Height = 11, Stretch = Stretch.Uniform, Fill = ink, VerticalAlignment = VerticalAlignment.Center,
+            });
+            text = new TextBlock { FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = ink, VerticalAlignment = VerticalAlignment.Center, TextLineBounds = TextLineBounds.Tight, TextTrimming = TextTrimming.CharacterEllipsis };
+            row.Children.Add(text);
+            var tag = new Border
+            {
+                Height = 24, Padding = new Thickness(8, 0, 8, 0), CornerRadius = new CornerRadius(ChipCorner), Child = row,
+                Background = ChipFill,
+            };
+            // No shadow box under it (2.1-rc.4): offset from the glass, its edge read as a glitch.
+            var host = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+            host.Children.Add(tag);
+            return host;
+        }
+
+
+        // GitHub's Octicons "clock-16", as Hydra uses it.
+        const string ClockPath = "M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm7-3.25v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5a.75.75 0 0 1 1.5 0Z";
+
+        // Marks the placeholder's fill under the picture (see LoadCoverAsync).
+        static readonly object BackdropTag = new();
+
+        /// <summary>Self-test: the placeholder's fill of the first cover, hidden once its picture loaded.</summary>
+        internal static Visibility? BackdropOf(FrameworkElement tileRoot) =>
+            Tiles.TryGetValue(tileRoot as StackPanel ?? new StackPanel(), out var t) ? Find(t._art)?.Visibility : null;
+
+        static Border? Find(Panel art) => art.Children.OfType<Panel>().SelectMany(p => p.Children.OfType<Border>()).FirstOrDefault(b => ReferenceEquals(b.Tag, BackdropTag));
+
+        static SolidColorBrush? _hitFill;
+        static SolidColorBrush HitFill => _hitFill ??= new(Microsoft.UI.Colors.Transparent);
+
         static SolidColorBrush? _chipFill;
-        static SolidColorBrush ChipFill => _chipFill ??= new(Windows.UI.Color.FromArgb(0xC4, 0x12, 0x12, 0x17));
+        // Every tag of a cover on one chip (2.1): the same near-black fill, dark enough to read over bright art, and the same corners.
+        static SolidColorBrush ChipFill => _chipFill ??= new(Windows.UI.Color.FromArgb(0xE0, 0x0E, 0x0E, 0x12));
+        const double ChipCorner = 5;
 
         static LinearGradientBrush Shade(bool top)
         {
@@ -1128,7 +1270,7 @@ public sealed partial class LibraryPage : Page
         {
             try
             {
-                foreach (var source in new[] { game.IconPath, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var source in new[] { ArtOverrides.Get(game.Id, ArtKind.Icon), game.IconPath, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     if (await IconCache.GetAsync(source!) is { } icon)
                     {
@@ -1161,18 +1303,20 @@ public sealed partial class LibraryPage : Page
                 var brush = new ImageBrush { Stretch = fills ? Stretch.UniformToFill : Stretch.Uniform };
                 // A cover that fills the tile takes the placeholder's fill away (2.0.0): the dark fill under it showed as a dark
                 // rim on the rounded corners. A landscape header keeps it around the picture.
-                var tile = target.Parent as Panel;
-                if (fills && tile is not null)
+                // Since 2.1-rc.4 that fill is a layer of its own under the picture, not the tile's background (2.1-rc.10 audit:
+                // clearing the background left the layer, a dark rim around every loaded cover).
+                var backdrop = (target.Parent as Panel)?.Children.OfType<Border>().FirstOrDefault(b => ReferenceEquals(b.Tag, BackdropTag));
+                if (fills && backdrop is not null)
                 {
                     // A picture decoded before (kept in Covers) may not raise ImageOpened again.
-                    if (source is BitmapImage { PixelWidth: > 0 }) tile.Background = null;
-                    else brush.ImageOpened += (_, _) => tile.Background = null;
+                    if (source is BitmapImage { PixelWidth: > 0 }) backdrop.Visibility = Visibility.Collapsed;
+                    else brush.ImageOpened += (_, _) => backdrop.Visibility = Visibility.Collapsed;
                 }
                 // An unreadable file brings the placeholder back (and is tried again next time).
                 brush.ImageFailed += (_, _) =>
                 {
                     placeholder.Visibility = Visibility.Visible;
-                    if (tile is not null) tile.Background = PlaceholderBrush();
+                    if (backdrop is not null) backdrop.Visibility = Visibility.Visible;
                     Covers.Remove(game.Id);
                 };
                 target.Opacity = 0;
@@ -1224,7 +1368,7 @@ public sealed partial class LibraryPage : Page
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             panel.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(m.Color), VerticalAlignment = VerticalAlignment.Center });
             panel.Children.Add(new TextBlock { Text = m.Short, FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = White, VerticalAlignment = VerticalAlignment.Center });
-            return new Border { Background = ChipFill, CornerRadius = new CornerRadius(5), Padding = new Thickness(5, 2, 6, 3), Child = panel };
+            return new Border { Background = ChipFill, CornerRadius = new CornerRadius(ChipCorner), Padding = new Thickness(5, 2, 6, 3), Child = panel };
         }
 
         async Task LoadTagsAsync(UIElement shade, CancellationToken ct)
@@ -1258,12 +1402,10 @@ public sealed partial class LibraryPage : Page
                 var stats = await Task.Run(() => Playtime.Get(game, s), ct);
                 if (ct.IsCancellationRequested || stats.Minutes <= 0) return;
                 _minutes = stats.Minutes;
-                var chip = Chip("", "", null, out _);
-                _timeText = new TextBlock { FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = White, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-                ((StackPanel)chip.Child).Children.Add(_timeText);
+                var chip = TimeChip(out _timeText);
                 ToolTipService.SetToolTip(chip, L.F("Played {0:0.#} hours", stats.Minutes / 60.0) + (stats.LastPlayed is { } t ? ", " + L.F("last on {0:d MMM yyyy}", t) : ""));
+                // Glass needs no dark band behind it to read (as on Hydra's covers).
                 target.Children.Add(chip);
-                shade.Visibility = Visibility.Visible;
                 Shorten();
             }
             catch (OperationCanceledException) { }

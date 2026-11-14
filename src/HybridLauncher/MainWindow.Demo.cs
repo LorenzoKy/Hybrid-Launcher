@@ -251,7 +251,7 @@ public sealed partial class MainWindow
             if (Settings().FindName("PaletteCombo") is ComboBox palettes)
             {
                 Look("palette", palettes);
-                foreach (var palette in new[] { "Cozy", "Cyberpunk", "VenomViolet" })
+                foreach (var palette in new[] { "TotalDark", "Gray", "Dark" })
                 {
                     await Click("palette", palettes, () => palettes.IsDropDownOpen = true, 0.9);
                     await Wait(1.2);

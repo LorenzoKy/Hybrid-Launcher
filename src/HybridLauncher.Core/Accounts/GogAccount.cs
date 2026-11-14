@@ -208,7 +208,12 @@ public static class GogAccount
                 else if (type == "DepotFile")
                 {
                     if (sfc is not null && item.TryGetProperty("sfcRef", out var refEl))
-                        plan.Files.Add(new PlanFile { Path = path, Size = refEl.GetProperty("size").GetInt64(), Slice = (sfc, refEl.GetProperty("offset").GetInt64()) });
+                        plan.Files.Add(new PlanFile
+                        {
+                            Path = path, Size = refEl.GetProperty("size").GetInt64(), Slice = (sfc, refEl.GetProperty("offset").GetInt64()),
+                            // Its own checksum, so an update can keep it without downloading the container again.
+                            Md5 = FileMd5(item),
+                        });
                     else plan.Files.Add(FileOf(path, item, link));
                 }
             }
@@ -236,11 +241,14 @@ public static class GogAccount
             }));
             offset += size;
         }
-        // The file's own md5 when GOG lists it; a file in one chunk has that chunk's.
-        var fileMd5 = item.TryGetProperty("md5", out var fm) && fm.GetString() is { Length: 32 } whole ? whole
-            : item.GetProperty("chunks").GetArrayLength() == 1 ? item.GetProperty("chunks")[0].GetProperty("md5").GetString() : null;
-        return new PlanFile { Path = path, Size = offset, Chunks = chunks, Temporary = temporary, Md5 = fileMd5 };
+        return new PlanFile { Path = path, Size = offset, Chunks = chunks, Temporary = temporary, Md5 = FileMd5(item) };
     }
+
+    /// <summary>The file's own md5 when GOG lists it; a file in one chunk has that chunk's.</summary>
+    static string? FileMd5(JsonElement item) =>
+        item.TryGetProperty("md5", out var fm) && fm.ValueKind == JsonValueKind.String && fm.GetString() is { Length: 32 } whole ? whole
+        : item.TryGetProperty("chunks", out var ch) && ch.ValueKind == JsonValueKind.Array && ch.GetArrayLength() == 1
+          && ch[0].TryGetProperty("md5", out var cm) && cm.GetString() is { Length: 32 } one ? one : null;
 
     /// <summary>The CDN address maker for a product's files: GOG signs a base address per product (it expires after hours).</summary>
     static async Task<Func<string, string>> SecureLinkAsync(string product, CancellationToken ct)

@@ -113,6 +113,11 @@ public static partial class GraphicsApi
             if (found.Contains("DX12") && found.Contains("DX11")) found.Remove("DX11");
             return new GraphicsApiInfo(Order.Where(found.Contains).ToList(), "exe imports");
         }
+        catch (UnauthorizedAccessException)
+        {
+            // Xbox / Microsoft Store games (C:\XboxGames, WindowsApps): Windows keeps their exe unreadable. Expected, not a fault.
+            return GraphicsApiInfo.Unknown;
+        }
         catch (Exception ex)
         {
             Log.Warn($"Reading imports of {exe} failed: {ex.Message}");

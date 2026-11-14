@@ -85,6 +85,8 @@ public sealed partial class SettingsPage : Page
         GuardSearchFocus();
         SizeChanged += (_, _) => FitColumn(PageScroller.ViewportWidth > 0 ? Math.Min(PageScroller.ActualWidth, PageScroller.ViewportWidth) : PageScroller.ActualWidth);
         AchievementExtrasView.SourcesChanged += OnAchievementSourcesChanged;
+        Loaded += (_, _) => { HybridLauncher.Helpers.ThemeRes.Applied -= OnThemeApplied; HybridLauncher.Helpers.ThemeRes.Applied += OnThemeApplied; };
+        Unloaded += (_, _) => HybridLauncher.Helpers.ThemeRes.Applied -= OnThemeApplied;
         // Read by index: the labels follow the UI language.
         foreach (var v in TabIconChoices) TabIconsCombo.Items.Add(L.T(v.Label));
         foreach (var (_, name) in L.Choices) LanguageCombo.Items.Add(name == "Automatic (Windows)" ? L.T(name) : name);
@@ -105,6 +107,7 @@ public sealed partial class SettingsPage : Page
         Fill();
         FillTabs();
         ShowFeatures();
+        if (_searching) { SettingsSearch.Text = ""; ShowSearch(""); }
         var tab = SettingsTabs.Items.FirstOrDefault(i => i.Tag as string == S.SettingsTab) ?? SettingsTabs.Items[0];
         SettingsTabs.SelectedItem = tab;
         ShowSettingsTab(tab.Tag as string ?? "appearance");
@@ -126,14 +129,19 @@ public sealed partial class SettingsPage : Page
         ShortcutToggle.IsOn = S.ShortcutOnInstall;
         ShowUpdateState();
         HltbToggle.IsOn = S.ShowHltb;
-        foreach (var mode in ModBackups.Modes) ModBackupsCombo.Items.Add(ModBackups.ModeName(mode));
+        // Filled once: the page is cached (NavigationCacheMode Required), so every visit would add the modes again.
+        if (ModBackupsCombo.Items.Count != ModBackups.Modes.Length)
+        {
+            ModBackupsCombo.Items.Clear();
+            foreach (var mode in ModBackups.Modes) ModBackupsCombo.Items.Add(ModBackups.ModeName(mode));
+        }
         ModBackupsCombo.SelectedIndex = Math.Max(0, Array.IndexOf(ModBackups.Modes, S.ModBackups));
+        BackupGameFilesToggle.IsOn = S.BackupGameFiles;
+        ShowBackupMode();
         CoverOverlaysToggle.IsOn = S.ShowCoverOverlays;
         FillCoverTagKinds();
         MetacriticToggle.IsOn = S.ShowMetacritic;
-        PaletteCombo.Items.Clear();
-        foreach (var p in Palettes.All) PaletteCombo.Items.Add(PaletteItem(p));
-        PaletteCombo.SelectedIndex = Array.FindIndex(Palettes.All, p => p.Key == Palettes.Get(S.Palette).Key);
+        FillPalettes();
         SteamCheck.IsChecked = S.ScanSteam;
         EpicCheck.IsChecked = S.ScanEpic;
         GogCheck.IsChecked = S.ScanGog;
@@ -170,7 +178,6 @@ public sealed partial class SettingsPage : Page
         SecondsText.Text = $"{o.Seconds:0.#} s";
         RarityToggle.IsOn = o.ShowRarity;
         UpdatePopupOptions();
-        LoadCustomColors();
         _loading = false;
     }
 
@@ -205,7 +212,7 @@ public sealed partial class SettingsPage : Page
             CloseButtonText = L.T("Cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
         try
         {
             var d = new AppSettings();
@@ -692,77 +699,57 @@ public sealed partial class SettingsPage : Page
         App.Window?.ApplyTheme(S.Theme);
     }
 
-    // ---------- my colours ----------
-
-    DispatcherTimer? _colorTimer;
-
-    void LoadCustomColors()
-    {
-        AccentPicker.Color = Palettes.ParseHex(S.CustomAccent) ?? Microsoft.UI.Colors.MediumPurple;
-        TintPicker.Color = Palettes.ParseHex(S.CustomTint) ?? AccentPicker.Color;
-        BackgroundPicker.Color = Palettes.ParseHex(S.CustomBackground) ?? Windows.UI.Color.FromArgb(255, 0x16, 0x12, 0x1F);
-        BackdropToggle.IsOn = S.CustomBackdrop;
-        UpdateSwatches();
-    }
-
-    void UpdateSwatches()
-    {
-        AccentSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(AccentPicker.Color);
-        TintSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(TintPicker.Color);
-        BackgroundSwatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(BackgroundPicker.Color);
-        BackgroundPickButton.Opacity = BackdropToggle.IsOn ? 1 : 0.6;
-    }
+    // The Windows colours the theme list was last drawn with: drawn again only when Windows' accent changed since.
+    Windows.UI.Color? _paletteStamp;
+    bool _paletteFilled;
 
     /// <summary>
-    /// Any picker or the background switch: saved at once, switched to "My colours", and applied a moment after the last
-    /// change (re-theming the whole window on every drag step would stutter).
+    /// The theme list, built once and again only when Windows' colours changed (the Windows theme's swatch shows them); the
+    /// saved theme selected. Quiet: the change handler ignores it.
     /// </summary>
-    void CustomColor_Changed(object sender, object e)
+    void FillPalettes()
     {
-        if (_loading) return;
-        S.CustomAccent = Palettes.ToHex(AccentPicker.Color);
-        S.CustomTint = Palettes.ToHex(TintPicker.Color);
-        S.CustomBackground = Palettes.ToHex(BackgroundPicker.Color);
-        S.CustomBackdrop = BackdropToggle.IsOn;
-        S.Palette = "Custom";
-        UpdateSwatches();
-        _colorTimer ??= CreateColorTimer();
-        _colorTimer.Stop();
-        _colorTimer.Start();
+        bool was = _loading;
+        _loading = true;
+        var stamp = Palettes.Get("Windows").Accent;
+        if (!_paletteFilled || stamp != _paletteStamp)
+        {
+            PaletteCombo.Items.Clear();
+            foreach (var p in Palettes.All) PaletteCombo.Items.Add(PaletteItem(p));
+            _paletteStamp = stamp;
+            _paletteFilled = true;
+        }
+        PaletteCombo.SelectedIndex = Array.FindIndex(Palettes.All, p => p.Key == Palettes.Get(S.Palette).Key);
+        _loading = was;
     }
 
-    DispatcherTimer CreateColorTimer()
+    /// <summary>Windows' colours changed while the page is open (MainWindow.WatchWindowsColours applied them): the swatch follows.</summary>
+    void OnThemeApplied()
     {
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            SettingsStore.Save();
-            App.Window?.ApplyTheme(S.Theme);
-            _loading = true;
-            try
-            {
-                // The "My colours" entry shows the new accent.
-                int index = Array.FindIndex(Palettes.All, p => p.Key == "Custom");
-                PaletteCombo.Items[index] = PaletteItem(Palettes.All[index]);
-                PaletteCombo.SelectedIndex = index;
-            }
-            finally { _loading = false; }
-        };
-        return timer;
+        if (!IsLoaded) return;
+        FillPalettes();
     }
 
     /// <summary>A palette entry: its accent as a swatch, the name and a short description.</summary>
     static ComboBoxItem PaletteItem(Palette p)
     {
+        // The Windows theme's colours come from Windows: its swatch shows them, on a dark shade of the accent.
+        p = Palettes.Get(p.Key);
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        var swatch = new Border { Width = 14, Height = 14, CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
-        if (Palettes.Get(p.Key).Accent is { } c) swatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(c);
-        else
+        // The theme in small: its background with its accent as a dot in the middle.
+        var swatch = new Border
         {
-            swatch.BorderThickness = new Thickness(1.5);
-            swatch.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)HybridLauncher.Helpers.ThemeRes.Current["TextFillColorSecondaryBrush"];
-        }
+            Width = 20, Height = 20, CornerRadius = new CornerRadius(6), VerticalAlignment = VerticalAlignment.Center,
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(p.Backdrop?.Top
+                ?? (p.Tint is { } t ? Windows.UI.Color.FromArgb(0xFF, (byte)(0x14 + t.R / 10), (byte)(0x14 + t.G / 10), (byte)(0x18 + t.B / 10)) : Microsoft.UI.Colors.Black)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+            Child = new Microsoft.UI.Xaml.Shapes.Ellipse
+            {
+                Width = 8, Height = 8, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(p.Accent ?? Microsoft.UI.Colors.White),
+            },
+        };
         panel.Children.Add(swatch);
         panel.Children.Add(new TextBlock { Text = L.T(p.Name), VerticalAlignment = VerticalAlignment.Center });
         var item = new ComboBoxItem { Content = panel, Tag = p.Key };
@@ -947,7 +934,7 @@ public sealed partial class SettingsPage : Page
             CloseButtonText = L.T("Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
         try
         {
             Log.Info("Report: opening GitHub's bug form");
@@ -1013,6 +1000,22 @@ public sealed partial class SettingsPage : Page
         Grid.SetColumn(toggle, 1);
         grid.Children.Add(toggle);
         return new Border { Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowStyle"], Child = grid };
+    }
+
+    void BackupGameFiles_Toggled(object sender, RoutedEventArgs e)
+    {
+        ShowBackupMode();
+        if (_loading || S.BackupGameFiles == BackupGameFilesToggle.IsOn) return;
+        S.BackupGameFiles = BackupGameFilesToggle.IsOn;
+        SettingsStore.Save();
+    }
+
+    /// <summary>"When to back up" means something only with backups on.</summary>
+    void ShowBackupMode()
+    {
+        bool on = BackupGameFilesToggle.IsOn;
+        ModBackupsCombo.IsEnabled = on;
+        ModBackupsRow.Opacity = on ? 1 : 0.5;
     }
 
     void ModBackups_Changed(object sender, SelectionChangedEventArgs e)

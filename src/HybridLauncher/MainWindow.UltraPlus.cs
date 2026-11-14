@@ -61,12 +61,12 @@ public sealed partial class MainWindow
         if (updated.Count == 0 || _closed) return;
         // What was installed by itself is always kept in the bell's list (read there later), with or without a pop-up.
         foreach (var (game, version) in updated)
-            Inbox.Add(Inbox.Ultra, L.F("Ultra+ updated to {0} for {1}", version, game.Title), L.T("Installed by itself. Your settings were kept."), game.Id, "ultra");
+            Inbox.Add(Inbox.Ultra, L.F("Ultra+ {0} installed in {1}", version, game.Title), L.T("Updated by itself. Your settings were kept."), game.Id, "ultra");
         if (!AppState.Settings.UltraPlusNotify || !Popup(Inbox.Ultra)) return;
         var id = updated[0].Game.Id;
         EnsureTray();
-        _tray?.Notify(updated.Count == 1 ? L.F("Ultra+ updated to {0} for {1}", updated[0].Version, updated[0].Game.Title) : L.F("Ultra+ updated in {0} games", updated.Count),
-            string.Join(", ", updated.Select(u => u.Game.Title)) + ". " + L.T("Your settings were kept."), () =>
+        _tray?.Notify(updated.Count == 1 ? L.F("Ultra+ {0} installed in {1}", updated[0].Version, updated[0].Game.Title) : L.F("Ultra+ updated in {0} games", updated.Count),
+            updated.Count == 1 ? L.T("Updated by itself. Your settings were kept.") : string.Join("  ·  ", updated.Select(u => u.Game.Title)), () =>
             {
                 ShowFromTray();
                 if (AppState.Find(id) is null) return;
@@ -95,13 +95,13 @@ public sealed partial class MainWindow
         if (fresh.Count == 0) return;
         SettingsStore.Save();
         foreach (var e in fresh)
-            Inbox.Add(Inbox.Ultra, L.F("Ultra+ {0} is out for {1}", e.Update!.Version, e.Game.Title), L.T("On the game's Ultra+ tab. Updating keeps your settings."),
+            Inbox.Add(Inbox.Ultra, L.F("Ultra+ {0} is out for {1}", e.Update!.Version, e.Game.Title), L.T("Update it from the game's Ultra+ tab. Your settings stay."),
                 e.Game.Id, "ultra", key: $"ultra:{e.Ultra.Key}:{e.Update.FileName}");
         if (!AppState.Settings.UltraPlusNotify || !Popup(Inbox.Ultra)) return;
         var id = fresh[0].Game.Id;
         EnsureTray();
         _tray?.Notify(fresh.Count == 1 ? L.F("Ultra+ {0} is out for {1}", fresh[0].Update!.Version, fresh[0].Game.Title) : L.F("New Ultra+ versions for {0} games", fresh.Count),
-            fresh.Count == 1 ? L.T("Click to see it on the game's Ultra+ tab. Updating keeps your settings.") : string.Join(", ", fresh.Select(e => $"{e.Game.Title} {e.Update!.Version}")), () =>
+            fresh.Count == 1 ? L.T("Click to update it. Your settings stay.") : string.Join("  ·  ", fresh.Select(e => $"{e.Game.Title} {e.Update!.Version}")), () =>
             {
                 ShowFromTray();
                 if (AppState.Find(id) is null) return;

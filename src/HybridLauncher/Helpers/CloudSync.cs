@@ -292,7 +292,7 @@ public static class CloudSync
             CloseButtonText = L.T("Decide later"),
             DefaultButton = ContentDialogButton.Secondary,
         };
-        return await dialog.ShowAsync() switch
+        return await dialog.ShowOnceAsync() switch
         {
             ContentDialogResult.Primary => CloudSaves.Choice.UseCloud,
             ContentDialogResult.Secondary => CloudSaves.Choice.KeepHere,

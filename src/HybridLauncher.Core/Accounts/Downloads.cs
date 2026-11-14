@@ -32,6 +32,17 @@ public sealed class DownloadJob
     public string? Error { get; set; }
     /// <summary>An update of a game Hybrid Launcher downloaded: only the files that changed are fetched, into the game's own folder.</summary>
     public bool IsUpdate { get; set; }
+    /// <summary>
+    /// A verify of the game's files (2.1-rc.3): an update in the game's own folder against the store's file list, every file
+    /// checked by its checksum first; only the files missing or different are downloaded again.
+    /// </summary>
+    public bool IsVerify { get; set; }
+    /// <summary>A verify reading the files on disk: how many were checked, of how many.</summary>
+    public int Checked { get; set; }
+    public int CheckTotal { get; set; }
+    public bool Checking => IsVerify && State == DownloadState.Downloading && CheckTotal > 0 && Checked < CheckTotal;
+    /// <summary>After a verify: how many files were downloaded again (0: every file was as it should be).</summary>
+    public int Repaired { get; set; } = -1;
     /// <summary>A direct download waiting its turn: Hybrid Launcher downloads one game at a time, like Steam, the others queue.</summary>
     public bool Queued { get; set; }
     /// <summary>A direct download reading the store's file list (its size is not known yet).</summary>
@@ -41,6 +52,11 @@ public sealed class DownloadJob
     /// <summary>The file list the install dialog already read: used for the first try instead of asking the store again.</summary>
     internal DownloadPlan? Plan;
     internal CancellationTokenSource? Cts;
+    /// <summary>
+    /// The task of the run going on (or still winding down after a pause): a new run of the same job waits for it, and Cancel
+    /// waits for it before deleting anything, so two writers never share the game's folder and its download list.
+    /// </summary>
+    internal Task? Worker;
     internal long LastBytes = -1;
     internal DateTime LastAt;
     internal DateTime LastMoved;
@@ -228,7 +244,7 @@ public static class Downloads
     /// <paramref name="plan"/> (read by the install dialog) the download starts at once. Another direct download running,
     /// this one queues and starts when that one ends.
     /// </summary>
-    public static DownloadJob StartDirect(OwnedGame game, string root, DownloadPlan? plan = null, string? updateFolder = null)
+    public static DownloadJob StartDirect(OwnedGame game, string root, DownloadPlan? plan = null, string? updateFolder = null, bool verify = false)
     {
         if (plan is not null) plan.InstallDir = Path.Combine(root, Path.GetFileName(plan.InstallDir));
         _ui ??= SynchronizationContext.Current;
@@ -244,6 +260,9 @@ public static class Downloads
             job.Source = game;
             job.Root = root;
             job.IsUpdate = updateFolder is not null;
+            job.IsVerify = verify && updateFolder is not null;
+            job.Checked = job.CheckTotal = 0;
+            job.Repaired = -1;
             if (updateFolder is not null) job.Folder = updateFolder;
             job.Plan = plan;
             if (plan is not null)
@@ -269,10 +288,38 @@ public static class Downloads
         return StartDirect(game, Path.GetDirectoryName(install.InstallDir) ?? install.InstallDir, updateFolder: install.InstallDir);
     }
 
-    /// <summary>An update of the game is downloading or waiting: the game should not start until it is done.</summary>
+    /// <summary>
+    /// Verifies a game's files without its launcher (2.1-rc.3), from the signed-in account's file list of the store's current
+    /// build: every file in <paramref name="folder"/> is checked by its checksum, and the missing or damaged ones are downloaded
+    /// again in place. Files the store does not list (mods, settings, saves) are never touched. It queues and shows in Downloads
+    /// like an update. A game the launcher installed stays the launcher's: it is not added to Hybrid Launcher's own installs.
+    /// </summary>
+    public static DownloadJob StartVerify(OwnedGame game, string folder)
+    {
+        Log.Info($"Verify: {game.Name} in {folder}");
+        return StartDirect(game, Path.GetDirectoryName(folder) ?? folder, updateFolder: folder, verify: true);
+    }
+
+    /// <summary>
+    /// An update of the game is downloading, waiting or paused: the game should not start until it is done. A paused one counts
+    /// too: its files may be half written (2.1-rc.3 audit: Play started a game whose update was paused).
+    /// </summary>
     public static bool Updating(string id)
     {
-        lock (Jobs) return Jobs.Any(j => j.IsUpdate && j.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && j.State is DownloadState.Waiting or DownloadState.Downloading);
+        lock (Jobs) return Jobs.Any(j => j.IsUpdate && j.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && j.State is DownloadState.Waiting or DownloadState.Downloading or DownloadState.Paused);
+    }
+
+    /// <summary>The job's update, if one is unfinished (the game page and the Play chip show it instead of Play).</summary>
+    public static DownloadJob? UpdateOf(string id)
+    {
+        lock (Jobs) return Jobs.FirstOrDefault(j => j.IsUpdate && j.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && j.State is DownloadState.Waiting or DownloadState.Downloading or DownloadState.Paused);
+    }
+
+    /// <summary>Waits for the job's run to wind down (its writers stopped, its list saved), at most <paramref name="limit"/>.</summary>
+    static async Task WaitWorkerAsync(DownloadJob job, TimeSpan limit)
+    {
+        if (job.Worker is not { IsCompleted: false } worker) return;
+        if (await Task.WhenAny(worker, Task.Delay(limit)) != worker) Log.Warn($"{job.Name}: the download did not stop within {limit.TotalSeconds:0} s");
     }
 
     // The direct download running now (one at a time, as Steam does); the others wait with Queued set.
@@ -366,10 +413,17 @@ public static class Downloads
         job.LastBytes = -1;
         Raise();
         var game = job.Source!;
-        _ = Task.Run(async () =>
+        // The run before this one (a Pause, then Resume at once; StartNow) may still be writing its last chunks: wait for it.
+        var previous = job.Worker;
+        job.Worker = Task.Run(async () =>
         {
+            if (previous is { IsCompleted: false })
+            {
+                try { await previous; } catch { }
+            }
             try
             {
+                cts.Token.ThrowIfCancellationRequested();
                 for (int attempt = 1; ; attempt++)
                 {
                     try
@@ -383,6 +437,13 @@ public static class Downloads
                             plan.InstallDir = own;
                             plan.Update = true;
                         }
+                        if (job.IsVerify)
+                        {
+                            plan.Checked = (n, total) => { job.Checked = n; job.CheckTotal = total; if (n == total || n % 64 == 0) Raise(); };
+                            // A verify of a game its launcher installed must leave the launcher's own records alone (Steam's
+                            // appmanifest rewritten and Steam restarted, 2.1-rc.3 audit).
+                            if (!IsMine(game.Id)) plan.Finish = null;
+                        }
                         job.Folder = plan.InstallDir;
                         job.Total = plan.TotalBytes;
                         job.Done = 0;
@@ -391,7 +452,14 @@ public static class Downloads
                         Raise();
                         // Chunks finish in any order on several threads: the count only goes up.
                         await DirectDownloader.RunAsync(plan, bytes => { lock (job) if (bytes > job.Done) job.Done = bytes; }, cts.Token);
-                        Register(game, plan);
+                        if (job.IsVerify)
+                        {
+                            job.Repaired = plan.Fetched;
+                            Log.Info($"Verify of {game.Name}: {plan.Fetched} file(s) downloaded again");
+                            // A game its launcher installed stays the launcher's; one Hybrid Launcher installed keeps its record current.
+                            if (IsMine(game.Id)) Register(game, plan);
+                        }
+                        else Register(game, plan);
                         break;
                     }
                     catch (Exception ex) when (!cts.IsCancellationRequested && attempt < 4 && Transient(ex))
@@ -442,6 +510,12 @@ public static class Downloads
         });
     }
 
+    /// <summary>Whether Hybrid Launcher installed the game itself (it is in its own installs).</summary>
+    static bool IsMine(string id)
+    {
+        lock (SettingsStore.Current) return SettingsStore.Current.DirectInstalls.Any(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>The finished game joins the list as a Hybrid Launcher install (what to start, from the store's own launch data).</summary>
     static void Register(OwnedGame game, DownloadPlan plan)
     {
@@ -469,15 +543,16 @@ public static class Downloads
         {
             // An update runs in the installed game's folder: nothing is deleted. The files already updated stay (they are checked
             // again by checksum next time), only the download's own list goes; the game stays on its old build until it updates.
-            await Task.Delay(800);
+            // The run is waited for first: it saves the list as it stops and would write it back after the delete.
+            await WaitWorkerAsync(job, TimeSpan.FromSeconds(30));
             if (folder is not null) DirectDownloader.DeleteState(folder);
             Forget(job);
             return null;
         }
         if (folder is not null && Directory.Exists(folder) && DirectDownloader.HasState(folder))
         {
-            // The writers stop at their next chunk: give them a moment before deleting.
-            await Task.Delay(800);
+            // The writers stop at their next chunk: the run is waited for (it closes its files) before deleting.
+            await WaitWorkerAsync(job, TimeSpan.FromSeconds(30));
             try { await Task.Run(() => Directory.Delete(folder, recursive: true)); }
             catch (Exception ex) { Log.Warn($"Cancel {job.Name}: {ex.Message}"); return L.F("The download stopped, but its folder could not be deleted: {0}", ex.Message); }
         }

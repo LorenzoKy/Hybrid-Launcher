@@ -110,7 +110,7 @@ public static class UltraPlusLibrary
             CloseButtonText = L.T("Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await dialog.ShowOnceAsync() == ContentDialogResult.Primary;
     }
 
     static TextBlock Text(string s) => new() { Text = s, TextWrapping = TextWrapping.Wrap };
@@ -159,7 +159,7 @@ public static class UltraPlusLibrary
         }
         var previous = settings.UltraPlus is { } p && p.GameKey.Equals(ultra.Key, StringComparison.OrdinalIgnoreCase) ? p : null;
         bool backup;
-        if (previous is not null) backup = AppState.Settings.ModBackups != "replace";
+        if (previous is not null) backup = AppState.Settings.BackupGameFiles && AppState.Settings.ModBackups != "replace";
         else if (await ModBackups.DecideAsync("Ultra+", game.Title) is { } b) backup = b;
         else return false;
         try

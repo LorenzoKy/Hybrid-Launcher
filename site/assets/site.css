@@ -171,6 +171,17 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 .chip .ico { width: 16px; height: 16px; color: var(--red-soft); }
 .chip.c-a { left: 5%; top: 70px; animation: bob 7s ease-in-out infinite; }
 
+/* 2.1: the rest of the features as a compact list under the two picture tiles: an icon, a name, one sentence. */
+.flist { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.flist li { display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px; border-radius: var(--radius); background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--line); transition: background .25s ease, transform .25s var(--ease); }
+.flist li:hover { background: var(--card-hover); transform: translateY(-2px); }
+.flist .ico { flex: none; width: 22px; height: 22px; margin-top: 2px; color: var(--red-soft); fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.flist h3 { margin: 0 0 4px; font-size: 16.5px; }
+.flist h3 i { font-weight: 400; color: var(--muted); font-size: .85em; }
+.flist p { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--muted); }
+.bento .vis { flex-basis: 280px; }
+
 /* Decorative dashed arcs, like a blueprint */
 .deco.arcs { position: absolute; width: 340px; height: 340px; left: -90px; top: -80px; fill: none; stroke: rgba(246,244,241,.12); stroke-width: .6; stroke-dasharray: 3 4; animation: spin 60s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -361,6 +372,8 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
   .tile, .tile.s4, .tile.s5, .tile.s6, .tile.s7, .tile.s8 { grid-column: span 1; }
   .tile.s7, .tile.s8 { grid-column: span 2; }
   .steps { grid-template-columns: 1fr; }
+  .flist { grid-template-columns: repeat(2, 1fr); }
+  .tile.s6 { grid-column: span 2; }
   .steps::before { display: none; }
   /* The menu scrolls sideways on its own row under the brand */
   .top .wrap { flex-wrap: wrap; height: auto; padding: 10px 0 0; row-gap: 6px; }
@@ -372,7 +385,7 @@ h2 { font: 700 clamp(30px, 3.8vw, 52px)/1.06 "Segoe UI Variable Display", "Segoe
 }
 @media (max-width: 720px) {
   .hero { padding-top: 56px; }
-  .bento, .grid, .grid.two-up { grid-template-columns: 1fr; }
+  .bento, .grid, .grid.two-up, .flist { grid-template-columns: 1fr; }
   .tile, .tile.s7, .tile.s8 { grid-column: span 1; }
   .vis { flex-basis: 250px; }
   .vis.tall { flex-basis: 300px; }

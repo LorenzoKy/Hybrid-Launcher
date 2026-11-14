@@ -250,6 +250,6 @@ public static class NameDialog
             box.Focus(FocusState.Programmatic);
             box.SelectAll();
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? box.Text.Trim() : null;
+        return await dialog.ShowOnceAsync() == ContentDialogResult.Primary ? box.Text.Trim() : null;
     }
 }

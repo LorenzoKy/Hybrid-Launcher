@@ -271,9 +271,9 @@ public sealed partial class MainWindow
 
         var game = entry.GameId is null ? null : AppState.Find(entry.GameId);
         var text = new StackPanel { Spacing = 2 };
-        text.Children.Add(new TextBlock { Text = entry.Title, FontWeight = entry.Read ? FontWeights.Normal : FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(new TextBlock { Text = entry.Title, FontWeight = entry.Read ? FontWeights.Normal : FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis });
         if (!string.IsNullOrWhiteSpace(entry.Text))
-            text.Children.Add(new TextBlock { Text = entry.Text, FontSize = 12, Opacity = 0.75, TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis });
+            text.Children.Add(new TextBlock { Text = entry.Text, FontSize = 12, Opacity = 0.75, TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis });
         text.Children.Add(new TextBlock { Text = KindName(entry.Kind) + "  ·  " + When(entry.Time), FontSize = 11, Opacity = 0.55, Margin = new Thickness(0, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);

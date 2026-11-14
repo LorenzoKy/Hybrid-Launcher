@@ -183,7 +183,8 @@ public static class DlssNr
             return true;
         }
         if (ours || !File.Exists(stored) || !NeededBy(m)) return false;
-        if (File.Exists(dst))
+        // Backups off (Settings → Mods): the game's own file is simply replaced.
+        if (File.Exists(dst) && SettingsStore.Current.BackupGameFiles)
         {
             if (m.BackupRoot is not { } root) return false;   // nowhere to keep the game's own file: leave it
             var backup = Path.Combine(root, FileName);

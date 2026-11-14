@@ -34,6 +34,9 @@ public static class WarmUp
         var exes = games.ToDictionary(g => g.Id, g => Core.Detection.GameScanner.EffectiveExe(g, s.For(g.Id)), StringComparer.OrdinalIgnoreCase);
         _ = Task.Run(async () =>
         {
+            // The graphics cards are read once and kept; read here, the first Mods tab or DLSS 5 card does not read them on the
+            // UI thread (2.0.1: real logs showed one 330-490 ms "GamePage.ModsSection" stall per session).
+            Core.Hardware.HardwareInfo.Gpus();
             int done = await RunAsync(games, exes, first);
             if (first && done == games.Count && !App.ShuttingDown)
                 ui.TryEnqueue(() => { AppState.Settings.CacheWarmed = true; SettingsStore.Save(); });

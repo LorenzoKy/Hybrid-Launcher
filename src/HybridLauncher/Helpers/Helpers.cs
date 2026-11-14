@@ -61,7 +61,7 @@ public static class IconCache
         if (Cache.TryGetValue(exe, out var cached)) return cached;
 
         // Package logos (Game Pass) are plain images, not exes.
-        if (Path.GetExtension(exe).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg")
+        if (Path.GetExtension(exe).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp")
         {
             ImageSource? image = null;
             try

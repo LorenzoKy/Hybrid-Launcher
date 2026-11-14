@@ -20,6 +20,12 @@ public sealed class CloudSaveSettings
     /// <summary>The folder of the "folder" provider.</summary>
     public string? Folder { get; set; }
     public int KeepVersions { get; set; } = 5;
+
+    /// <summary>
+    /// "Hybrid Config and Stats" (2.1-rc.4): Hybrid Launcher's own settings, play time and history go to the same cloud, merged
+    /// with what other PCs sent (<see cref="Cloud.ConfigSync"/>). On by default while cloud saves are on.
+    /// </summary>
+    public bool SyncConfig { get; set; } = true;
 }
 
 /// <summary>What sits next to a game's save.zip in the cloud: whose saves, which content, when and from which PC.</summary>
@@ -153,7 +159,7 @@ public static class CloudSaves
         if (game.EmulatorAppId is not { Length: > 0 } appId) return null;
         if (Steam.SteamEmulator.SaveDir(appId) is { } found) return found;
         // Brought from the cloud to a PC that never ran the game: gbe_fork's folder, the one it reads first.
-        return create ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GSE Saves", appId) : null;
+        return create ? Path.Combine(Steam.SteamEmulator.AppData, "GSE Saves", appId) : null;
     }
 
     static bool Inside(string dir, string? parent)

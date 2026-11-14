@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The user's dashboard (2.1): built in code (ProfilePage.xaml.cs). -->
+<Page
+    x:Class="HybridLauncher.Views.ProfilePage"
+    NavigationCacheMode="Required"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- PageRoot also holds the "See all" lists, over the page (ProfilePage.Overlay.cs). -->
+    <Grid x:Name="PageRoot">
+        <ScrollView x:Name="Scroller" HorizontalScrollMode="Disabled" ContentOrientation="Vertical">
+            <Grid x:Name="Outer" Padding="28,0,28,0" />
+        </ScrollView>
+    </Grid>
+</Page>

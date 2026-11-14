@@ -13,8 +13,12 @@ public static class SettingsKeys
     // What the app writes by itself while merely used: the window, the tab and game opened last, and the "already seen / already done"
     // marks of update checks, notifications and first-start steps (no page shows them).
     static readonly string[] Volatile = ["LastGameId", "GameTab", "SettingsTab", "WindowWidth", "WindowHeight", "WindowMaximized", "SidebarWidth", "LastVersionSeen",
-        "OptiSeen", "UltraPlusSeen", "CacheWarmed", "AppUpdatePopupShown", "SkippedAppUpdate", "TourSeen", "FeaturesChosen", "ModsPathDefaultApplied", "HdrRestore"];
-    static readonly string[] GameVolatile = ["SizeBytes", "SizeMeasuredAt", "CloudSyncedHash", "CloudSyncedAt", "Notes", "NoteSections", "QuickLinks", "DismissedModProblems"];
+        "OptiSeen", "UltraPlusSeen", "CacheWarmed", "AppUpdatePopupShown", "SkippedAppUpdate", "TourSeen", "FeaturesChosen", "ModsPathDefaultApplied", "HdrRestore",
+        "Profiles", "ActiveProfile", "SteamGridDbKey",
+        // Folds are applied in place where they are shown (LibraryPage.ApplyFold, the game page's cards): a fold must not
+        // rebuild a whole page (2.1-rc.3 audit). The side list's own filters only redraw the list (2.1-rc.4).
+        "CollapsedGroups", "CollapsedCards", "ListFilter", "HiddenFromStats"];
+    static readonly string[] GameVolatile = ["SizeBytes", "SizeMeasuredAt", "CloudSyncedHash", "CloudSyncedAt", "Notes", "NoteSections", "QuickLinks", "DismissedModProblems", "SgdbGameId", "SgdbGameName"];
     static int _partsVersion = -1;
     static Dictionary<string, int> _parts = [];
     static readonly Dictionary<string, (int Version, int Key)> Cache = [];

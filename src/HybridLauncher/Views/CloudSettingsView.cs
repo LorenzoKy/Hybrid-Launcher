@@ -233,6 +233,25 @@ public static class CloudSettingsView
             finally { all.IsEnabled = true; }
         };
         host.Children.Add(Row(allText, all));
+
+        // Hybrid Launcher's own settings and numbers, beside the games' saves (2.1-rc.4).
+        var configText = new StackPanel { Spacing = 1 };
+        configText.Children.Add(new TextBlock { Text = L.T("Hybrid Launcher's settings and stats"), Style = Ui.Style("RowHeader") });
+        var configState = new TextBlock
+        {
+            Text = L.F("Your preferences, play time, sessions, achievement history, profile and the covers you picked go to the cloud as \"{0}\", merged with what your other PCs send: no hours or unlocks are ever lost, and a setting changed on two PCs keeps the newer one. Folders, accounts and installed mods stay per PC.", HybridLauncher.Core.Cloud.ConfigSync.Key)
+                + (HybridLauncher.Core.Cloud.ConfigSync.LastSync is { } at ? "  " + L.F("Last synced {0:g}.", at.ToLocalTime()) : ""),
+            Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap,
+        };
+        configText.Children.Add(configState);
+        var config = new ToggleSwitch { IsOn = s.SyncConfig, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
+        config.Toggled += (_, _) =>
+        {
+            s.SyncConfig = config.IsOn;
+            SettingsStore.Save();
+            if (config.IsOn && CloudSaves.On) _ = Task.Run(() => HybridLauncher.Core.Cloud.ConfigSync.PushAsync(CancellationToken.None));
+        };
+        host.Children.Add(Row(configText, config));
     }
 
     static Border Row(FrameworkElement text, FrameworkElement action, bool compact = false)

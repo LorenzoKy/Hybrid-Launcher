@@ -50,6 +50,7 @@ public static class ArchiveExtractor
             return;
         }
         using var a = ArchiveFactory.Open(archive, null);
+        int written = 0;
         // Solid archives and 7z are read front to back (ExtractAllEntries); zip and the rest entry by entry. ExtractAllEntries
         // on an ordinary zip throws, which sent every zip release to tar.exe.
         if (a.IsSolid || a.Type == SharpCompress.Common.ArchiveType.SevenZip)
@@ -62,20 +63,24 @@ public static class ArchiveExtractor
                 {
                     using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
                     reader.WriteEntryTo(fs);
+                    written++;
                 }
             }
-            return;
         }
-        foreach (var entry in a.Entries)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (Place(root, destination, entry.Key, entry.IsDirectory) is { } file)
+        else
+            foreach (var entry in a.Entries)
             {
-                using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
-                using var es = entry.OpenEntryStream();
-                es.CopyTo(fs);
+                ct.ThrowIfCancellationRequested();
+                if (Place(root, destination, entry.Key, entry.IsDirectory) is { } file)
+                {
+                    using var fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
+                    using var es = entry.OpenEntryStream();
+                    es.CopyTo(fs);
+                    written++;
+                }
             }
-        }
+        // An archive that gave no file (damaged, or one the reader misread as empty) goes to tar.exe like a failed read.
+        if (written == 0) throw new InvalidDataException($"No files read from {Path.GetFileName(archive)}");
     }
 
     static bool IsCompressedTar(string archive) =>

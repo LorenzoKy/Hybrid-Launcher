@@ -127,7 +127,7 @@ public sealed class DlssNrAmdInstall
     public bool RenoDx { get; set; } = true;
     public string PluginHash { get; set; } = "";
     /// <summary>OptiScaler.ini keys changed for it ("Section|Key") and their values before.</summary>
-    public Dictionary<string, string> OptiIniBefore { get; set; } = [];
+    public Dictionary<string, string> OptiIniBefore { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>A dlssnr-amd folder the game had before, kept aside.</summary>
     public string? OwnFolderBackup { get; set; }
 }
@@ -216,6 +216,15 @@ public sealed class GameSettings
 
     /// <summary>A cover picked by the user (a copy under the data folder's covers\), shown instead of the store's.</summary>
     public string? CustomCover { get; set; }
+
+    /// <summary>The user's own banner, logo and icon (2.1, SteamGridDB or a file), copies under covers\ like the cover.</summary>
+    public string? CustomHero { get; set; }
+    public string? CustomLogo { get; set; }
+    public string? CustomIcon { get; set; }
+
+    /// <summary>The SteamGridDB game the user matched this game to in the artwork picker (null: found by its Steam id or name).</summary>
+    public long? SgdbGameId { get; set; }
+    public string? SgdbGameName { get; set; }
     public string LaunchArgs { get; set; } = "";
 
     /// <summary>Show the launch arguments box in the play bar (off: they are set in ⋯ → Launch options only).</summary>
@@ -662,10 +671,103 @@ public sealed class LibraryFilter
     /// <summary>Also show games you own on a linked launcher but have not installed (with a Download button).</summary>
     public bool ShowNotInstalled { get; set; }
 
+    /// <summary>
+    /// Only the games of one collection (2.1, Hydra style): <see cref="GameCollections.Favorites"/> for the favorites, else a
+    /// collection's id from <see cref="AppSettings.Collections"/>; null = every game.
+    /// </summary>
+    public string? Collection { get; set; }
+
     /// <summary>Cover width the user zoomed the grid to (Ctrl+wheel or the zoom slider), in px; 0 = automatic.</summary>
     public double TileSize { get; set; }
 
-    public bool IsFiltering => OptiOnly || Launchers.Count > 0 || Tech.Count > 0 || ShowNotInstalled;
+    public bool IsFiltering => OptiOnly || Launchers.Count > 0 || Tech.Count > 0 || ShowNotInstalled || Collection is not null;
+
+    /// <summary>The same order and filters in a new object (the cover size is the grid's own and is not copied).</summary>
+    public LibraryFilter CopyFilters() => new()
+    {
+        Sort = Sort, Descending = Descending, GroupByLauncher = GroupByLauncher, DefaultsVersion = DefaultsVersion, OptiOnly = OptiOnly,
+        Launchers = new(Launchers, StringComparer.OrdinalIgnoreCase), Tech = new(Tech, StringComparer.OrdinalIgnoreCase), ShowNotInstalled = ShowNotInstalled,
+        Collection = Collection,
+    };
+}
+
+/// <summary>A collection of games the user made: a name and the ids of its games, in the order they were added.</summary>
+public sealed class GameCollection
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
+    public string Name { get; set; } = "";
+    public List<string> Games { get; set; } = [];
+}
+
+/// <summary>The favorites and the user's collections, shared by the library, the side list and the right-click menus.</summary>
+public static class GameCollections
+{
+    /// <summary>The favorites' key in <see cref="LibraryFilter.Collection"/>.</summary>
+    public const string Favorites = "favorites";
+
+    static AppSettings S => SettingsStore.Current;
+
+    public static IReadOnlyList<GameCollection> All => S.Collections;
+
+    public static GameCollection? Find(string? id) => id is null ? null : S.Collections.FirstOrDefault(c => c.Id == id);
+
+    public static bool IsFavorite(string gameId) => S.PinnedGames.Contains(gameId, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether the game is in the collection (<see cref="Favorites"/> = the favorites). An unknown collection has none.</summary>
+    public static bool Contains(string collection, string gameId) => collection == Favorites
+        ? IsFavorite(gameId)
+        : Find(collection)?.Games.Contains(gameId, StringComparer.OrdinalIgnoreCase) == true;
+
+    /// <summary>How many games the collection lists (installed or not).</summary>
+    public static int Count(string collection) => collection == Favorites ? S.PinnedGames.Count : Find(collection)?.Games.Count ?? 0;
+
+    /// <summary>The collection's name as shown (the favorites' through the translation).</summary>
+    public static string NameOf(string collection) => collection == Favorites ? L.T("Favorites") : Find(collection)?.Name ?? "";
+
+    /// <summary>A new collection with this name (trimmed), or the one already called so.</summary>
+    public static GameCollection Create(string name)
+    {
+        name = name.Trim();
+        if (S.Collections.FirstOrDefault(c => c.Name.Equals(name, StringComparison.CurrentCultureIgnoreCase)) is { } same) return same;
+        var c = new GameCollection { Name = name };
+        S.Collections.Add(c);
+        return c;
+    }
+
+    public static void Rename(string id, string name)
+    {
+        if (Find(id) is { } c && name.Trim().Length > 0) c.Name = name.Trim();
+    }
+
+    /// <summary>Deletes the collection (its games stay in the library); a filter showing it goes back to every game.</summary>
+    public static void Delete(string id)
+    {
+        S.Collections.RemoveAll(c => c.Id == id);
+        if (S.Library.Collection == id) S.Library.Collection = null;
+        if (S.ListFilter?.Collection == id) S.ListFilter.Collection = null;
+    }
+
+    /// <summary>Puts the game in the collection or takes it out (<see cref="Favorites"/> = the favorites).</summary>
+    public static void Set(string collection, string gameId, bool member)
+    {
+        var list = collection == Favorites ? S.PinnedGames : Find(collection)?.Games;
+        if (list is null) return;
+        bool has = list.Contains(gameId, StringComparer.OrdinalIgnoreCase);
+        if (member && !has) list.Add(gameId);
+        else if (!member && has) list.RemoveAll(g => g.Equals(gameId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Drops empty names, repeated ids and repeated games; a filter on a collection that is gone shows every game.</summary>
+    public static void Sanitize(AppSettings s)
+    {
+        s.Collections = (s.Collections ?? []).Where(c => c is not null && !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Id))
+            .GroupBy(c => c.Id).Select(g => g.First()).ToList();
+        foreach (var c in s.Collections)
+            c.Games = (c.Games ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        bool Known(string? id) => id is null || id == Favorites || s.Collections.Any(c => c.Id == id);
+        if (s.Library is { } lib && !Known(lib.Collection)) lib.Collection = null;
+        if (s.ListFilter is { } list && !Known(list.Collection)) list.Collection = null;
+    }
 }
 
 public sealed class CustomGame
@@ -797,14 +899,23 @@ public sealed class AppSettings
     public bool ShowHltb { get; set; } = true;
     public bool ShowMetacritic { get; set; } = true;
 
-    /// <summary>Colour palette on top of the light/dark theme: "Windows" keeps the Windows accent colour.</summary>
+    /// <summary>The theme (2.1): "Windows" (the default since rc.11: Windows' accent), "TotalDark", "Dark", "Gray" or "Hybrid".</summary>
     public string Palette { get; set; } = "Windows";
 
-    /// <summary>The "My colours" palette (#RRGGBB): accent, the glow behind the window, and an optional own dark background.</summary>
+    /// <summary>The "My colours" palette of 2.0 (#RRGGBB), no longer offered since 2.1; kept so older settings files still read.</summary>
     public string CustomAccent { get; set; } = "#9A5CFF";
     public string CustomTint { get; set; } = "#8A4DFF";
     public bool CustomBackdrop { get; set; }
     public string CustomBackground { get; set; } = "#16121F";
+
+    /// <summary>The local users of this PC (2.1): a name and a picture each; the one in use is <see cref="ActiveProfile"/>.</summary>
+    public List<UserProfile> Profiles { get; set; } = [];
+
+    /// <summary>The id of the profile in use (null: none made yet).</summary>
+    public string? ActiveProfile { get; set; }
+
+    /// <summary>The user's own SteamGridDB API key (2.1, game artwork); null until they give one.</summary>
+    public string? SteamGridDbKey { get; set; }
 
     public string? LastGameId { get; set; }
 
@@ -814,8 +925,14 @@ public sealed class AppSettings
     /// </summary>
     public bool CacheWarmed { get; set; }
 
-    /// <summary>Games pinned to the quick-access row on top of the list, in pin order.</summary>
+    /// <summary>
+    /// The favorite games (the heart; "pinned" before 2.1, hence the name kept for older settings), on top of the list in the
+    /// order they were added.
+    /// </summary>
     public List<string> PinnedGames { get; set; } = [];
+
+    /// <summary>The user's own collections of games, like folders (2.1, Hydra style); a game can be in several.</summary>
+    public List<GameCollection> Collections { get; set; } = [];
 
     /// <summary>How the games are shown: "list" (in the side pane, by store) or "grid" (cover art in the library page).</summary>
     public string LibraryView { get; set; } = "list";
@@ -883,6 +1000,12 @@ public sealed class AppSettings
     /// <summary>The library's order and filters (the Filters button of the grid).</summary>
     public LibraryFilter Library { get; set; } = new();
 
+    /// <summary>
+    /// The side list's own order and filters (2.1-rc.4: they were the library's; now each is set from its own Filters button).
+    /// Null until first used: then it starts as a copy of the library's, so nothing moves on the update.
+    /// </summary>
+    public LibraryFilter? ListFilter { get; set; }
+
     /// <summary>The main window at the last close (size in physical pixels); null = first start.</summary>
     public int? WindowWidth { get; set; }
     public int? WindowHeight { get; set; }
@@ -923,8 +1046,8 @@ public sealed class AppSettings
     /// <summary>Cloud saves: where they go and whether the sync runs (Settings → Cloud saves).</summary>
     public CloudSaveSettings Cloud { get; set; } = new();
 
-    /// <summary>Library covers show the upscaler and frame generation tags (DLSS, FSR, XeSS...). Settings → Library, or the library's Filters.</summary>
-    public bool ShowCoverTags { get; set; } = true;
+    /// <summary>Library covers show the upscaler and frame generation tags (DLSS, FSR, XeSS...). Settings → Library, or the library's Filters. Off by default since 2.1.</summary>
+    public bool ShowCoverTags { get; set; }
 
     /// <summary>Library covers show their tags at all (play time, mods, upscalers, achievements). Off: the bare cover art.</summary>
     public bool ShowCoverOverlays { get; set; } = true;
@@ -935,7 +1058,7 @@ public sealed class AppSettings
     /// <summary>Every kind of tag a library cover can show, in the order of Settings → Library and the library's Filters.</summary>
     public static readonly (string Key, string Label)[] CoverTagKinds =
     [
-        ("pin", "Pinned"), ("time", "Play time"), ("opti", "OptiScaler"), ("rs", "ReShade"), ("rdx", "RenoDX"), ("uplus", "Ultra+"), ("dxvk", "DXVK"),
+        ("pin", "Favorites"), ("time", "Play time"), ("opti", "OptiScaler"), ("rs", "ReShade"), ("rdx", "RenoDX"), ("uplus", "Ultra+"), ("dxvk", "DXVK"),
         ("tech", "Upscalers (DLSS, FSR, XeSS)"), ("ach", "Achievements"),
     ];
 
@@ -950,6 +1073,12 @@ public sealed class AppSettings
     }
 
     public HashSet<string> HiddenGames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Games taken out of the profile dashboard's lists (Most played, the last two weeks, achievement progress; 2.1-rc.4):
+    /// apps and tools a launcher counts as games. Their hours still count in the totals.
+    /// </summary>
+    public HashSet<string> HiddenFromStats { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, GameSettings> Games { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Names the user gave to games (game id → shown name, see <see cref="Game.Title"/>); the game keeps its own for lookups.</summary>
@@ -968,8 +1097,15 @@ public sealed class AppSettings
     public string? CustomBuildsDir { get; set; }
 
     /// <summary>
-    /// Settings → Features: what happens to the game's own files a mod replaces (OptiScaler, Luma): "backup" (copied to the
-    /// backups first and put back on uninstall), "replace" (overwritten, nothing kept) or "ask" (asked at each install).
+    /// Settings → Features → Mods (2.1): the master switch of backups. On (the default), the game's own files Hybrid Launcher
+    /// replaces are kept first and put back on uninstall (how: <see cref="ModBackups"/>); off, every mod, DLSS NR file and
+    /// folder just replaces them and nothing is kept.
+    /// </summary>
+    public bool BackupGameFiles { get; set; } = true;
+
+    /// <summary>
+    /// Settings → Features: with backups on, whether they are made at once ("backup") or asked at each install ("ask").
+    /// "replace" (before 2.1: overwritten, nothing kept) carries on as <see cref="BackupGameFiles"/> off.
     /// </summary>
     public string ModBackups { get; set; } = "backup";
 
@@ -987,6 +1123,9 @@ public sealed class AppSettings
 
     /// <summary>Settings → Achievements → Sources: GOG games' achievements, from the signed-in GOG account.</summary>
     public bool ReadGogAchievements { get; set; } = true;
+
+    /// <summary>Settings → Achievements → Sources: Epic games' achievements, from the signed-in Epic Games account.</summary>
+    public bool ReadEpicAchievements { get; set; } = true;
 
     /// <summary>Settings → Achievements → Sources: with a Microsoft account signed in, Xbox unlocks pop up while the game runs.</summary>
     public bool XboxLivePopups { get; set; } = true;
@@ -1116,4 +1255,15 @@ public static class PageParts
 
     public static bool Hidden(AppSettings settings, GameSettings? game, string part) =>
         HiddenEverywhere(settings, part) || game?.HiddenPageParts.Contains(part) == true;
+}
+
+/// <summary>A local user of Hybrid Launcher (2.1): the name and picture shown under the title, and their dashboard.</summary>
+public sealed class UserProfile
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
+    public string Name { get; set; } = "";
+
+    /// <summary>The picture the user chose, a copy in the data folder's profiles\ (null: their initials).</summary>
+    public string? Picture { get; set; }
+    public DateTime Created { get; set; } = DateTime.UtcNow;
 }

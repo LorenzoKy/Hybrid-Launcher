@@ -58,7 +58,7 @@ public static class OptiSourceImport
             RequestedTheme = theme,
         };
         dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return null;
         var repo = OptiForks.ParseRepo(box.Text);
         if (repo is null)
         {

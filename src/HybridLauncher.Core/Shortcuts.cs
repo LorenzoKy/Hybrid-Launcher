@@ -51,6 +51,21 @@ public static class Shortcuts
         return path;
     }
 
+    /// <summary>
+    /// Adds the game to the Steam client as a non-Steam game that starts through Hybrid Launcher (2.1). Returns the shortcuts
+    /// file written, or null when the entry was there already. Throws when Steam has no signed-in account on this PC.
+    /// </summary>
+    public static string? CreateSteam(Game game, GameSettings settings, string? file = null)
+    {
+        file ??= Steam.SteamShortcuts.FileOfCurrentAccount() ?? throw new InvalidOperationException(L.T("Steam has no account signed in on this PC."));
+        var self = Environment.ProcessPath ?? throw new InvalidOperationException("Hybrid Launcher's own path is unknown.");
+        var exe = GameScanner.EffectiveExe(game, settings);
+        var icon = exe is not null && File.Exists(exe) ? exe : self;
+        bool added = Steam.SteamShortcuts.Add(file, game.Title, self, $"{LaunchSwitch} \"{game.Id}\"", icon);
+        Log.Info($"Steam shortcut for {game.Name}: {(added ? "written" : "already there")} in {file}");
+        return added ? file : null;
+    }
+
     /// <summary>The game id after --launch on a command line, if any.</summary>
     public static string? LaunchRequest(IReadOnlyList<string> args)
     {

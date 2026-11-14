@@ -2,6 +2,159 @@
 
 One entry per version: `run-perf.ps1 -Only snappy -Exe <published exe> -Report` (no input; a copy of real data). Every version must be at least as quick as the one before. Newest first.
 
+## 2.1.0 - 2026-11-14 18:49
+
+- summary [first]: first frame median 115 ms, worst 155 ms; jank median 372 ms, worst 456 ms
+- summary [return]: first frame median 5 ms, worst 10 ms; jank median 23 ms, worst 28 ms
+- summary [prepared]: first frame median 7 ms, worst 7 ms; jank median 52 ms, worst 89 ms
+- summary [tab]: first frame median 46 ms, worst 290 ms; jank median 70 ms, worst 584 ms
+- summary [scroll]: first frame median 12 ms, worst 253 ms; jank median 19 ms, worst 253 ms
+- summary [page]: first frame median 45 ms, worst 126 ms; jank median 100 ms, worst 188 ms
+- memory: 920 MB private, 942 MB working set, 8 game pages alive
+- verdict: FAIL (6 of 30 over budget)
+- gate vs 2.1.0-rc.12 - 2026-11-14 14:36: REGRESSION (2)
+  - [tab] first frame median 46 ms, was 18 ms
+  - [tab] jank median 70 ms, was 29 ms
+- note: not a code regression. rc.12's own exe measured alternately with this build on the same data right before gives
+  the same or worse rows (rc.12 tab 54 / 48 ms, jank 89 / 75; 2.1.0 tab 46 / 41 ms, jank 69 / 68): the user's real data
+  changed after the 14:36 row. The single tab mods 290 ms and scroll settings 253 ms (busy 0) of this run did not come
+  back in the four other runs of the same code (mods 66-105 ms, scroll worst 8-20 ms).
+- Over budget:
+  - [first] open Cyberpunk 2077: first frame 109 ms (busy 68), 63 missed, worst gap 111 ms, jank 456 ms, settled 726 ms  (budget 300 / 450)
+  - [prepared] open (prepared) Marvel's Spider-Man 2: first frame 6 ms (busy 3), 16 missed, worst gap 61 ms, jank 89 ms, settled 120 ms  (budget 50 / 80)
+  - [tab] tab auto: first frame 59 ms (busy 14), 30 missed, worst gap 158 ms, jank 224 ms, settled 241 ms  (budget 150 / 200)
+  - [tab] tab opti: first frame 94 ms (busy 47), 59 missed, worst gap 94 ms, jank 415 ms, settled 502 ms  (budget 150 / 200)
+  - [tab] tab mods: first frame 290 ms (busy 278), 54 missed, worst gap 212 ms, jank 584 ms, settled 628 ms  (budget 150 / 200)
+  - [scroll] scroll settings: first frame 253 ms (busy 0), 46 missed, worst gap 253 ms, jank 253 ms, settled 407 ms  (budget 34 / 60)
+
+## 2.1.0-rc.12 - 2026-11-14 14:36
+
+- summary [first]: first frame median 120 ms, worst 162 ms; jank median 364 ms, worst 522 ms
+- summary [return]: first frame median 6 ms, worst 10 ms; jank median 21 ms, worst 37 ms
+- summary [prepared]: first frame median 8 ms, worst 11 ms; jank median 33 ms, worst 47 ms
+- summary [tab]: first frame median 18 ms, worst 55 ms; jank median 29 ms, worst 209 ms
+- summary [scroll]: first frame median 0 ms, worst 7 ms; jank median 0 ms, worst 0 ms
+- summary [page]: first frame median 45 ms, worst 128 ms; jank median 91 ms, worst 430 ms
+- memory: 867 MB private, 880 MB working set, 8 game pages alive
+- verdict: FAIL (3 of 29 over budget)
+- gate vs 2.1.0-rc.11 - 2026-11-14 14:02: no regression
+- Over budget:
+  - [first] open HITMAN World of Assassination: first frame 162 ms (busy 112), 66 missed, worst gap 151 ms, jank 522 ms, settled 845 ms  (budget 300 / 450)
+  - [tab] tab opti: first frame 46 ms (busy 7), 29 missed, worst gap 67 ms, jank 209 ms, settled 264 ms  (budget 150 / 200)
+  - [page] settings: first frame 128 ms (busy 49), 56 missed, worst gap 243 ms, jank 430 ms, settled 618 ms  (budget 150 / 200)
+
+## 2.1.0-rc.11 - 2026-11-14 14:02
+
+- summary [first]: first frame median 127 ms, worst 146 ms; jank median 377 ms, worst 446 ms
+- summary [return]: first frame median 6 ms, worst 11 ms; jank median 28 ms, worst 33 ms
+- summary [prepared]: first frame median 8 ms, worst 9 ms; jank median 45 ms, worst 72 ms
+- summary [tab]: first frame median 19 ms, worst 109 ms; jank median 17 ms, worst 227 ms
+- summary [scroll]: first frame median 0 ms, worst 231 ms; jank median 0 ms, worst 229 ms
+- summary [page]: first frame median 38 ms, worst 159 ms; jank median 86 ms, worst 231 ms
+- memory: 887 MB private, 897 MB working set, 8 game pages alive
+- verdict: FAIL (4 of 29 over budget)
+- gate vs 2.1.0-rc.10 - 2026-11-14 13:35: no regression
+- Over budget:
+  - [tab] tab auto: first frame 109 ms (busy 12), 21 missed, worst gap 79 ms, jank 220 ms, settled 620 ms  (budget 150 / 200)
+  - [tab] tab opti: first frame 46 ms (busy 7), 34 missed, worst gap 74 ms, jank 227 ms, settled 277 ms  (budget 150 / 200)
+  - [page] settings: first frame 159 ms (busy 73), 14 missed, worst gap 63 ms, jank 231 ms, settled 314 ms  (budget 150 / 200)
+  - [scroll] scroll settings: first frame 231 ms (busy 0), 42 missed, worst gap 231 ms, jank 229 ms, settled 390 ms  (budget 34 / 60)
+
+## 2.1.0-rc.10 - 2026-11-14 13:35
+
+- summary [first]: first frame median 110 ms, worst 171 ms; jank median 316 ms, worst 386 ms
+- summary [return]: first frame median 6 ms, worst 10 ms; jank median 20 ms, worst 31 ms
+- summary [prepared]: first frame median 10 ms, worst 10 ms; jank median 43 ms, worst 70 ms
+- summary [tab]: first frame median 18 ms, worst 256 ms; jank median 19 ms, worst 556 ms
+- summary [scroll]: first frame median 0 ms, worst 16 ms; jank median 0 ms, worst 16 ms
+- summary [page]: first frame median 38 ms, worst 141 ms; jank median 81 ms, worst 212 ms
+- memory: 807 MB private, 828 MB working set, 8 game pages alive
+- verdict: FAIL (3 of 29 over budget)
+- gate vs 2.1.0-rc.9 - 2026-11-14 13:03: no regression
+- Over budget:
+  - [tab] tab auto: first frame 256 ms (busy 172), 56 missed, worst gap 199 ms, jank 556 ms, settled 595 ms  (budget 150 / 200)
+  - [tab] tab opti: first frame 33 ms (busy 7), 32 missed, worst gap 67 ms, jank 209 ms, settled 258 ms  (budget 150 / 200)
+  - [page] settings: first frame 141 ms (busy 58), 14 missed, worst gap 71 ms, jank 212 ms, settled 306 ms  (budget 150 / 200)
+
+- note: the first run on the published rc.10 (13:33) flagged [page] jank 124 ms vs 78, [prepared] jank 139 ms vs 47
+  (one sample each, a full self-test had just ended); that row was dropped and this second run shows no regression.
+
+## 2.1.0-rc.9 - 2026-11-14 13:03
+
+- summary [first]: first frame median 103 ms, worst 134 ms; jank median 391 ms, worst 436 ms
+- summary [return]: first frame median 5 ms, worst 10 ms; jank median 24 ms, worst 31 ms
+- summary [prepared]: first frame median 11 ms, worst 12 ms; jank median 47 ms, worst 73 ms
+- summary [tab]: first frame median 47 ms, worst 99 ms; jank median 77 ms, worst 656 ms
+- summary [scroll]: first frame median 12 ms, worst 171 ms; jank median 18 ms, worst 183 ms
+- summary [page]: first frame median 39 ms, worst 125 ms; jank median 78 ms, worst 185 ms
+- memory: 864 MB private, 891 MB working set, 8 game pages alive
+- verdict: FAIL (2 of 30 over budget)
+- gate vs 2.1.0-rc.8 - 2026-11-14 04:47: no regression
+- Over budget:
+  - [tab] tab opti: first frame 93 ms (busy 46), 103 missed, worst gap 183 ms, jank 656 ms, settled 731 ms  (budget 150 / 200)
+  - [scroll] scroll library: first frame 171 ms (busy 0), 33 missed, worst gap 171 ms, jank 183 ms, settled 309 ms  (budget 34 / 60)
+
+- note: a second run without -Report gave `scroll library` 69 ms (same machine, a build had just finished), and the other
+  scroll rows 0-33 ms. The snappy scroll moves no real pointer, so the covers taking the pointer again in rc.9 plays no part;
+  the row is the bimodal noise already seen on rc.3, rc.1 and 2.0.0.
+
+## 2.1.0-rc.8 - 2026-11-14 04:47
+
+- summary [first]: first frame median 108 ms, worst 174 ms; jank median 337 ms, worst 448 ms
+- summary [return]: first frame median 6 ms, worst 10 ms; jank median 23 ms, worst 38 ms
+- summary [prepared]: first frame median 28 ms, worst 28 ms; jank median 105 ms, worst 105 ms
+- summary [tab]: first frame median 45 ms, worst 108 ms; jank median 85 ms, worst 647 ms
+- summary [scroll]: first frame median 7 ms, worst 10 ms; jank median 0 ms, worst 12 ms
+- summary [page]: first frame median 47 ms, worst 136 ms; jank median 93 ms, worst 200 ms
+- memory: 872 MB private, 899 MB working set, 7 game pages alive
+- verdict: FAIL (2 of 29 over budget)
+- gate vs 2.1.0-rc.3 - 2026-11-14 01:35: REGRESSION (1)
+  - [prepared] first frame median 28 ms, was 10 ms
+- Over budget:
+  - [prepared] open (prepared) Marvel's Spider-Man 2: first frame 28 ms (busy 4), 14 missed, worst gap 63 ms, jank 105 ms, settled 122 ms  (budget 50 / 80)
+  - [tab] tab opti: first frame 108 ms (busy 60), 99 missed, worst gap 163 ms, jank 647 ms, settled 872 ms  (budget 150 / 200)
+
+## 2.1.0-rc.3 - 2026-11-14 01:35
+
+- summary [first]: first frame median 96 ms, worst 151 ms; jank median 359 ms, worst 492 ms
+- summary [return]: first frame median 6 ms, worst 12 ms; jank median 25 ms, worst 48 ms
+- summary [prepared]: first frame median 10 ms, worst 10 ms; jank median 85 ms, worst 85 ms
+- summary [tab]: first frame median 47 ms, worst 114 ms; jank median 78 ms, worst 662 ms
+- summary [scroll]: first frame median 13 ms, worst 180 ms; jank median 14 ms, worst 191 ms
+- summary [page]: first frame median 40 ms, worst 121 ms; jank median 97 ms, worst 195 ms
+- memory: 831 MB private, 845 MB working set, 7 game pages alive
+- verdict: FAIL (5 of 29 over budget)
+- gate vs 2.1.0-rc.1 - 2026-11-13 20:49: REGRESSION (3)
+  - [tab] first frame median 47 ms, was 19 ms
+  - [tab] jank median 78 ms, was 18 ms
+  - [prepared] jank median 85 ms, was 29 ms
+- note: not a code regression. 2.1.0-rc.1's own exe measured right after on the same data gives the same rows (tab median
+  45 ms / jank 80, prepared jank 80, tab opti jank 448, tab mods 353): the user's data changed since the rc.1 row
+  (OptiScaler installed in Marvel's Spider-Man 2 on 2026-11-14, so the opti and mods tabs now read and lay out a real ini).
+  The 180 ms "scroll library" was noise: 7 ms on the next run (-Trace), bimodal like "scroll settings" in rc.1. This row
+  is the new baseline.
+- Over budget:
+  - [first] open Apex Legends: first frame 95 ms (busy 56), 74 missed, worst gap 103 ms, jank 492 ms, settled 657 ms  (budget 300 / 450)
+  - [prepared] open (prepared) Marvel's Spider-Man 2: first frame 10 ms (busy 4), 15 missed, worst gap 65 ms, jank 85 ms, settled 101 ms  (budget 50 / 80)
+  - [tab] tab opti: first frame 114 ms (busy 67), 100 missed, worst gap 148 ms, jank 662 ms, settled 747 ms  (budget 150 / 200)
+  - [tab] tab pcgw: first frame 57 ms (busy 18), 35 missed, worst gap 67 ms, jank 247 ms, settled 288 ms  (budget 150 / 200)
+  - [scroll] scroll library: first frame 180 ms (busy 0), 34 missed, worst gap 180 ms, jank 191 ms, settled 487 ms  (budget 34 / 60)
+
+## 2.1.0-rc.1 - 2026-11-13 20:49
+
+- summary [first]: first frame median 92 ms, worst 152 ms; jank median 307 ms, worst 421 ms
+- summary [return]: first frame median 4 ms, worst 10 ms; jank median 18 ms, worst 57 ms
+- summary [prepared]: first frame median 20 ms, worst 27 ms; jank median 29 ms, worst 38 ms
+- summary [tab]: first frame median 19 ms, worst 111 ms; jank median 18 ms, worst 217 ms
+- summary [scroll]: first frame median 0 ms, worst 204 ms; jank median 0 ms, worst 198 ms
+- summary [page]: first frame median 37 ms, worst 127 ms; jank median 69 ms, worst 186 ms
+- memory: 954 MB private, 920 MB working set, 8 game pages alive
+- verdict: FAIL (2 of 29 over budget)
+- gate vs 2.0.0 - 2026-11-13 12:51: no regression
+- Over budget:
+  - [tab] tab opti: first frame 47 ms (busy 7), 32 missed, worst gap 69 ms, jank 217 ms, settled 270 ms  (budget 150 / 200)
+  - [scroll] scroll settings: first frame 204 ms (busy 0), 36 missed, worst gap 204 ms, jank 198 ms, settled 321 ms  (budget 34 / 60)
+
 ## 2.0.0 - 2026-11-13 12:51
 
 - summary [first]: first frame median 90 ms, worst 127 ms; jank median 315 ms, worst 448 ms

@@ -46,7 +46,7 @@ static class UninstallFlow
                 CloseButtonText = L.T("Cancel"),
                 DefaultButton = ContentDialogButton.Close,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
             var error = await Task.Run(() => Uninstaller.Start(game));
             if (error is not null)
             {

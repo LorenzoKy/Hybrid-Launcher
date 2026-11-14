@@ -147,7 +147,7 @@ static class InstallDialog
         });
         Refresh();
 
-        var result = await dialog.ShowAsync();
+        var result = await dialog.ShowOnceAsync();
         cts.Cancel();
         if (result != ContentDialogResult.Primary) return false;
         var target = Current().Root;

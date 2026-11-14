@@ -134,7 +134,7 @@ public static class GitHubSignInView
         }), TaskScheduler.Default);
         try
         {
-            await dialog.ShowAsync();
+            await dialog.ShowOnceAsync();
         }
         finally
         {

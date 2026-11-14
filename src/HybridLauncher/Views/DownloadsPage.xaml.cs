@@ -24,7 +24,14 @@ public static class OwnedLibrary
 
     public static IReadOnlyDictionary<GameStore, OwnedList> All => Lists;
 
-    public static bool IsLoaded => Lists.Count > 0;
+    /// <summary>
+    /// The linked launchers' lists were read (true also when none is linked, or none answered). "Some list in" was the test
+    /// before: with every launcher unlinked it never became true and the Library asked again on each redraw, in a loop
+    /// (2.1-rc.3 audit). Linking or unlinking a launcher makes it false again, so the next look reads the lists anew.
+    /// </summary>
+    public static bool IsLoaded => _loaded;
+
+    static bool _loaded;
 
     // Only the launchers Hybrid Launcher downloads from itself (1.4.0-rc.20): Xbox, Ubisoft Connect, EA app and Rockstar can only
     // install through their own app, and listed here they showed just the games already installed.
@@ -44,6 +51,7 @@ public static class OwnedLibrary
     public static void SetLinked(GameStore store, bool on)
     {
         var a = AppState.Settings.Accounts;
+        if (Linked(store) != on) _loaded = false;
         switch (store)
         {
             case GameStore.Steam: a.Steam = on; break;
@@ -90,6 +98,7 @@ public static class OwnedLibrary
             if (OwnedGames.InstalledOnly(results[i].Store)) results[i] = await InstalledOnlyAsync(results[i]);
         Lists.Clear();
         foreach (var r in results) Lists[r.Store] = r;
+        _loaded = true;
         Loaded?.Invoke();
     }
 
@@ -107,7 +116,7 @@ public static class OwnedLibrary
     }
 
     public static HashSet<string> InstalledIds() =>
-        AppState.Games.Where(g => !g.Installing).Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        AppState.Games.Where(g => !g.Installing && !g.NotInstalled).Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The page-only game of an owned one: Download in place of Play, store art and overview, no folder.</summary>
     public static Game AsGame(OwnedGame g) => new()
@@ -117,6 +126,9 @@ public static class OwnedLibrary
         Store = g.Store,
         InstallDir = "",
         SteamAppId = g.Store == GameStore.Steam && g.Id.StartsWith("steam:", StringComparison.OrdinalIgnoreCase) ? g.Id[6..] : null,
+        // The Epic link carries the game's namespace, where its achievements live (EpicStats.NamespaceOf).
+        EpicLaunchUri = g is { Store: GameStore.Epic, Namespace: { } ns, CatalogItemId: { } cat } && g.Id.StartsWith("epic:", StringComparison.Ordinal)
+            ? $"com.epicgames.launcher://apps/{Uri.EscapeDataString(ns)}%3A{Uri.EscapeDataString(cat)}%3A{Uri.EscapeDataString(g.Id[5..])}?action=launch&silent=true" : null,
         NotInstalled = true,
     };
 
@@ -165,53 +177,135 @@ public static class OwnedLibrary
     public static bool IsDrawn(FrameworkElement tile) =>
         tile is Panel { Children.Count: > 0 } p && p.Children[0] is FrameworkElement art && Drawn.TryGetValue(art, out _);
 
-    public static FrameworkElement Tile(OwnedGame game, double width, Action? started = null)
+    // The parts of a cover that follow its width (the library's zoom).
+    sealed class TileParts(Grid stage, Grid art, CoverFx fx)
     {
-        var installedGame = AppState.Find(game.Id) is { Installing: false } g ? g : null;
-        var art = new Grid { Width = width, Height = Math.Round(width * 1.5), CornerRadius = new CornerRadius(10), Background = (Brush)HybridLauncher.Helpers.ThemeRes.Current["ControlFillColorSecondaryBrush"] };
-        art.Children.Add(new TextBlock { Text = game.Name, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12), Opacity = 0.7, FontWeight = FontWeights.SemiBold });
-        if (game.Cover is { } url && Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        public Grid Stage { get; } = stage;
+        public Grid Art { get; } = art;
+        public CoverFx Fx { get; } = fx;
+        // Install / Play at the cover's size: made again on a zoom (never scaled, so it stays sharp), as the library's.
+        public Grid? Launch;
+        public FrameworkElement? Chip;
+        public double ChipHeight;
+        public Func<double, FrameworkElement>? MakeChip;
+    }
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FrameworkElement, TileParts> Parts = new();
+
+    /// <summary>A cover made by <see cref="Tile"/> at another width (the library's zoom): resized in place.</summary>
+    public static void ResizeTile(FrameworkElement tile, double width)
+    {
+        if (tile is not StackPanel root || !Parts.TryGetValue(root, out var parts)) return;
+        root.Width = width;
+        parts.Art.Width = width;
+        parts.Art.Height = Math.Round(width * 1.5);
+        parts.Fx.Resize(parts.Art.Width, parts.Art.Height);
+        if (parts.Stage.Children[0] is Border contact) contact.Margin = new Thickness(Math.Round(width * 0.08), 0, Math.Round(width * 0.08), -14);
+        if (parts is { Launch: { } launch, Chip: { } old, MakeChip: { } make } && Math.Clamp(Math.Round(width * 0.19), 36, 46) is var h && h != parts.ChipHeight)
         {
-            var bmp = new BitmapImage { DecodePixelWidth = (int)Math.Min(440, width * 1.6), DecodePixelType = DecodePixelType.Logical };
-            // A missing vertical cover (old Steam games) falls back to the wide header.
-            bmp.ImageFailed += (_, _) => { if (game.Wide is { } w && Uri.TryCreate(w, UriKind.Absolute, out var wu) && bmp.UriSource != wu) bmp.UriSource = wu; };
-            bmp.UriSource = uri;
-            art.Children.Add(Smooth.Art(bmp, art.CornerRadius, fadeMs: 200, opened: () => Drawn.AddOrUpdate(art, Done)));
+            parts.ChipHeight = h;
+            launch.Children.Remove(old);
+            parts.Chip = make(h);
+            launch.Children.Add(parts.Chip);
+            if (launch.Children[0] is Ellipse halo) halo.Margin = new Thickness(-h * 1.1, -h * 0.9, -h * 1.1, -h * 0.9);
         }
-        else Drawn.AddOrUpdate(art, Done);
-        var logo = StoreLogos.Tile(game.Store, size: 22);
-        logo.HorizontalAlignment = HorizontalAlignment.Left;
-        logo.VerticalAlignment = VerticalAlignment.Top;
-        logo.Margin = new Thickness(8);
-        art.Children.Add(logo);
+    }
+
+    static SolidColorBrush? _chipFill;
+    // The library covers' chip (LibraryPage.CoverTile): near-black, no glass, soft corners.
+    static SolidColorBrush ChipFill => _chipFill ??= new(Color.FromArgb(0xE0, 0x0E, 0x0E, 0x12));
+
+    static RadialGradientBrush? _halo;
+    static RadialGradientBrush HaloBrush
+    {
+        get
+        {
+            if (_halo is not null) return _halo;
+            _halo = new RadialGradientBrush();
+            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x8C, 0, 0, 0), Offset = 0 });
+            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x55, 0, 0, 0), Offset = 0.45 });
+            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 1 });
+            return _halo;
+        }
+    }
+
+    /// <summary>A chip on the cover as the library draws its tags: a small white mark (and a word) on the dark fill.</summary>
+    static Border CoverChip(FrameworkElement mark, string? text = null)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(mark);
+        if (text is not null)
+            row.Children.Add(new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), VerticalAlignment = VerticalAlignment.Center });
+        return new Border { Background = ChipFill, CornerRadius = new CornerRadius(5), Padding = new Thickness(5, 3, 5, 3), Child = row, IsHitTestVisible = false };
+    }
+
+    /// <param name="withMenu">False when the caller gives the cover its own right-click menu (the library's): one menu, not two.</param>
+    public static FrameworkElement Tile(OwnedGame game, double width, Action? started = null, bool withMenu = true)
+    {
+        var installedGame = AppState.Find(game.Id) is { Installing: false, NotInstalled: false } g ? g : null;
+        // 2.1: the library's cover (LibraryPage.CoverTile) for games owned but not installed too: the picture with its light
+        // from above and deeper foot, the launcher's mark and Installed as the library's dark chips, the pop under the pointer
+        // with Install (or Play) as the library's pill in the middle, in place of the grey veil and the coloured launcher tile.
+        var art = new Grid { Width = width, Height = Math.Round(width * 1.5), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        var pic = new Grid();
+        art.Children.Add(pic);
+        pic.Children.Add(new Border { CornerRadius = new CornerRadius(10), Background = (Brush)HybridLauncher.Helpers.ThemeRes.Current["ControlFillColorSecondaryBrush"], IsHitTestVisible = false });
+        pic.Children.Add(new TextBlock { Text = game.Name, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12), Opacity = 0.7, FontWeight = FontWeights.SemiBold, IsHitTestVisible = false });
+        var stage = new Grid();
+        // The user's own cover first (Edit artwork, 2.1-rc.10 audit: the cache knew it, the cover did not), else the launcher's
+        // cover from the disk (2.1: OwnedCovers downloads it once, with fallbacks; straight from the web, one failed request
+        // left the cover empty).
+        var own = HybridLauncher.Core.Media.ArtOverrides.Get(game.Id, HybridLauncher.Core.Media.ArtKind.Cover)
+            ?? HybridLauncher.Core.Media.OwnedCovers.KnownPath(game.Id);
+        var bmp = new BitmapImage { DecodePixelWidth = (int)Math.Min(440, width * 1.6), DecodePixelType = DecodePixelType.Logical };
+        if (own is not null) bmp.UriSource = new Uri(own);
+        else
+        {
+            var ui = art.DispatcherQueue;
+            _ = HybridLauncher.Core.Media.OwnedCovers.GetAsync(game).ContinueWith(t =>
+            {
+                // No picture anywhere: the name stays on the cover, and the cover is kept as it is (not made again and again).
+                var file = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
+                ui.TryEnqueue(() => { if (file is not null) bmp.UriSource = new Uri(file); else Drawn.AddOrUpdate(stage, Done); });
+            }, TaskScheduler.Default);
+        }
+        pic.Children.Add(Smooth.Art(bmp, new CornerRadius(10), fadeMs: 200,
+            opened: () => Drawn.AddOrUpdate(stage, Done),
+            failed: () => Drawn.AddOrUpdate(stage, Done)));
+        pic.Children.Add(new Border { Background = CoverFx.Gloss, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
+        pic.Children.Add(new Border { Background = CoverFx.Floor, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
+        var fxHost = new Border();
+        pic.Children.Add(fxHost);
+
+        // The launcher's mark top left and Installed top right, as the library's tags.
+        var top = new Grid { Margin = new Thickness(6), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+        var mark = StoreLogos.Create(game.Store, 12);
+        if (mark is Viewbox { Child: PathIcon pi }) pi.Foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+        var storeChip = CoverChip(mark);
+        storeChip.HorizontalAlignment = HorizontalAlignment.Left;
+        top.Children.Add(storeChip);
+        if (installedGame is not null)
+        {
+            var check = CoverChip(new FontIcon { Glyph = "\uE73E", FontSize = 10, Foreground = new SolidColorBrush(Ui.ToneColor(Ui.Tone.Good)) }, L.T("Installed"));
+            check.HorizontalAlignment = HorizontalAlignment.Right;
+            top.Children.Add(check);
+        }
+        art.Children.Add(top);
 
         var job = Downloads.Find(game.Id);
         bool active = job is { State: DownloadState.Downloading or DownloadState.Waiting or DownloadState.Paused };
-        if (installedGame is not null)
-        {
-            var check = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(0xD8, 0x14, 0x14, 0x18)),
-                CornerRadius = new CornerRadius(11),
-                Padding = new Thickness(8, 3, 9, 4),
-                Margin = new Thickness(8),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Child = Inline("", L.T("Installed"), Ui.ToneColor(Ui.Tone.Good)),
-            };
-            art.Children.Add(check);
-        }
-        else if (active)
+        var corners = new List<(FrameworkElement, int, int)> { (top, 0, -1) };
+        if (active)
         {
             // The download's bar along the bottom of the cover.
             var shade = new Border { Height = 70, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false, Background = BottomShade(), CornerRadius = new CornerRadius(0, 0, 10, 10) };
-            var bottom = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(10, 0, 10, 10), Spacing = 6 };
+            var bottom = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(10, 0, 10, 10), Spacing = 6, IsHitTestVisible = false };
             var label = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), TextTrimming = TextTrimming.CharacterEllipsis };
             var bar = new ProgressBar { Maximum = 1 };
             bottom.Children.Add(label);
             bottom.Children.Add(bar);
-            art.Children.Add(shade);
+            pic.Children.Add(shade);
             art.Children.Add(bottom);
+            corners.Add((bottom, 0, 1));
             // The bar follows the download while the cover is on screen (the cover itself is not made again).
             void Follow()
             {
@@ -227,54 +321,90 @@ public static class OwnedLibrary
             art.Unloaded += (_, _) => Downloads.Changed -= Follow;
         }
 
-        // Hover: a veil and one clear action.
+        // The pop of the library's covers: a contact shadow under it, the spring, the light and the accent glow (CoverFx).
+        var glowHost = new Border();
+        var contact = new Border { Height = 26, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(Math.Round(width * 0.08), 0, Math.Round(width * 0.08), -14), Background = CoverFx.ContactShadow, IsHitTestVisible = false };
+        stage.Children.Add(contact);
+        stage.Children.Add(glowHost);
+        stage.Children.Add(art);
+        var fx = new CoverFx(art, pic, fxHost, glowHost, [.. corners]);
+        fx.Resize(art.Width, art.Height);
+
+        // Install (or Play, installed) in the middle as the library's pill, on its dark halo; it comes up under the pointer.
+        Grid? launch = null;
+        FrameworkElement? chip = null;
+        double h = Math.Clamp(Math.Round(width * 0.19), 36, 46);
+        FrameworkElement MakeChip(double size)
+        {
+            var c = installedGame is not null
+                ? new Controls.LaunchChip(installedGame, withLabel: true, size: size)
+                : new Controls.LaunchChip(AsGame(game), withLabel: true, size: size, install: () => Install(game, started));
+            c.HorizontalAlignment = HorizontalAlignment.Center;
+            c.VerticalAlignment = VerticalAlignment.Center;
+            // Keyboard: the pill stays reachable with Tab and shows while it has focus.
+            c.GotFocus += (_, _) => Show(true);
+            c.LostFocus += (_, _) => Show(false);
+            return c;
+        }
         if (!active)
         {
-            var action = new Button
+            chip = MakeChip(h);
+            var halo = new Ellipse { IsHitTestVisible = false, Fill = HaloBrush, Margin = new Thickness(-h * 1.1, -h * 0.9, -h * 1.1, -h * 0.9) };
+            launch = new Grid
             {
-                Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["AccentButtonStyle"],
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Padding = new Thickness(18, 8, 20, 9),
-                CornerRadius = new CornerRadius(18),
-                Content = Inline(installedGame is null ? "" : "", installedGame is null ? L.T("Install") : L.T("Open"), null, 14),
-            };
-            action.Click += (_, _) =>
-            {
-                if (installedGame is not null) App.Window?.OpenGame(installedGame.Id);
-                else Install(game, started);
-            };
-            var veil = new Grid
-            {
-                CornerRadius = art.CornerRadius,
-                Background = new SolidColorBrush(Color.FromArgb(0x99, 0x08, 0x08, 0x0C)),
-                Opacity = 0,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Opacity = 0, IsHitTestVisible = false,
                 OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) },
             };
-            veil.Children.Add(action);
-            art.Children.Add(veil);
-            art.PointerEntered += (_, _) => veil.Opacity = 1;
-            art.PointerExited += (_, _) => veil.Opacity = 0;
-            art.PointerCanceled += (_, _) => veil.Opacity = 0;
-            // Keyboard: the button stays reachable with Tab and shows while it has focus.
-            action.GotFocus += (_, _) => veil.Opacity = 1;
-            action.LostFocus += (_, _) => veil.Opacity = 0;
+            launch.Children.Add(halo);
+            launch.Children.Add(chip);
+            art.Children.Add(launch);
         }
+        bool over = false;
+        void Show(bool on)
+        {
+            if (launch is null) return;
+            launch.Opacity = on ? 1 : 0;
+            // Hidden, it takes no click (2.1-rc.10 audit: a hidden button caught clicks on the middle of the cover).
+            launch.IsHitTestVisible = on;
+        }
+        void Pop(bool on)
+        {
+            if (on == over) return;
+            over = on;
+            Show(on);
+            try
+            {
+                // Over the next covers while it is grown: the repeater's element is the one the layout orders.
+                DependencyObject? up = stage;
+                while (up is not null && VisualTreeHelper.GetParent(up) is { } parent && parent is not ItemsRepeater) up = parent;
+                if (up is UIElement item && VisualTreeHelper.GetParent(up) is ItemsRepeater) Canvas.SetZIndex(item, on ? 10 : 0);
+                fx.Hover(on);
+            }
+            catch (Exception ex) { Log.Warn($"Cover pop: {ex.Message}"); }
+        }
+        art.PointerEntered += (_, _) => Pop(true);
+        art.PointerExited += (_, _) => Pop(false);
+        art.PointerCanceled += (_, _) => Pop(false);
+        art.PointerCaptureLost += (_, _) => Pop(false);
+        stage.Unloaded += (_, _) => { if (over) Pop(false); };
 
         var root = new StackPanel { Width = width, Tag = game.Id };
-        root.Children.Add(art);
+        root.Children.Add(stage);
+        Parts.AddOrUpdate(root, new TileParts(stage, art, fx) { Launch = launch, Chip = chip, ChipHeight = h, MakeChip = launch is null ? null : MakeChip });
         // A click on the cover (not on its button) opens the game's page, like the library.
         art.Tapped += (_, e) =>
         {
             for (var el = e.OriginalSource as DependencyObject; el is not null && el != art; el = VisualTreeHelper.GetParent(el))
                 if (el is ButtonBase) return;
+            if (over) Pop(false);
             Open(game);
         };
         root.Children.Add(new TextBlock { Text = game.Name, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap, Margin = new Thickness(2, 8, 2, 0), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["BodyStrongTextBlockStyle"] });
         root.Children.Add(new TextBlock { Text = StoreLogos.Label(game.Store), Margin = new Thickness(2, 0, 2, 2), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowDescription"] });
 
         // The menu is made on the first right-click: hundreds of covers do not each carry one they may never show.
-        root.ContextRequested += (_, e) =>
+        if (withMenu) root.ContextRequested += (_, e) =>
         {
             var menu = new MenuFlyout();
             if (installedGame is null && !active)
@@ -295,6 +425,9 @@ public static class OwnedLibrary
                 AppState.Settings.HiddenGames.Add(game.Id);
                 SettingsStore.Save();
                 Loaded?.Invoke();
+                // Gone from the side list and the library too, not only from here.
+                App.Window?.RefreshList();
+                App.Window?.RefreshLibrary();
             };
             menu.Items.Add(hide);
             if (e.TryGetPosition(root, out var at)) menu.ShowAt(root, at); else menu.ShowAt(root);
@@ -306,15 +439,19 @@ public static class OwnedLibrary
     /// <summary>A download's state in a few words, the same on the covers, the Downloads tab and the game's page.</summary>
     public static string StateText(DownloadJob j) => j.CancelRequested && j.State != DownloadState.Failed ? L.T("Cancelling…") : j.State switch
     {
+        DownloadState.Downloading when j.Checking => L.F("Checking files ({0} of {1})", j.Checked, j.CheckTotal),
+        DownloadState.Downloading when j.IsVerify => L.T("Repairing"),
         DownloadState.Downloading when j.IsUpdate => L.T("Updating"),
         DownloadState.Downloading => L.T("Downloading"),
         DownloadState.Waiting when j.Queued => L.T("Queued"),
         DownloadState.Waiting when j.Direct && j.Error is not null => L.T("Reconnecting"),
+        DownloadState.Waiting when j.Direct && j.IsVerify => L.T("Reading the file list"),
         DownloadState.Waiting when j.Direct && j.IsUpdate => L.T("Preparing the update"),
         DownloadState.Waiting when j.Direct => L.T("Preparing"),
         DownloadState.Waiting => L.T("Waiting for the launcher"),
         DownloadState.Paused when j.Direct => j.Error is null ? L.T("Paused") : L.T("Stopped by an error"),
         DownloadState.Paused => L.T("Paused or queued"),
+        DownloadState.Done when j.IsVerify => j.Repaired > 0 ? L.N(j.Repaired, "Verified: {0} file repaired", "Verified: {0} files repaired") : L.T("Verified: every file is fine"),
         DownloadState.Done when j.IsUpdate => L.T("Updated"),
         DownloadState.Done => L.T("Installed"),
         _ => j.CancelRequested ? L.T("Cancelled") : L.T("Stopped"),
@@ -349,6 +486,9 @@ public static class OwnedLibrary
 /// </summary>
 public sealed partial class DownloadsPage : Page
 {
+    // A sign-in or sign-out of a launcher is running (one at a time).
+    bool _signingIn;
+
     const double MinTile = 150, MaxTile = 230, Gap = 16;
 
     readonly StackPanel _root = new() { Spacing = 22, Padding = new Thickness(0, 8, 0, 40), HorizontalAlignment = HorizontalAlignment.Center };
@@ -603,10 +743,27 @@ public sealed partial class DownloadsPage : Page
                     : L.F("Sign in to {0} in Hybrid Launcher: every game you own is listed, and Hybrid Launcher downloads and uninstalls them itself, without the launcher.", StoreLogos.Label(store)));
                 sign.Click += async (_, _) =>
                 {
-                    _accountsFlyout?.Hide();
-                    if (signedIn) AccountSignIn.SignOut(store);
-                    else if (await AccountSignIn.RunAsync(store, XamlRoot, ActualTheme) is null) return;
-                    await ReloadAsync(true);
+                    // One sign-in at a time (2.1-rc.10 audit: a second click opened a second dialog).
+                    if (_signingIn) return;
+                    _signingIn = true;
+                    sign.IsEnabled = false;
+                    try
+                    {
+                        _accountsFlyout?.Hide();
+                        if (signedIn)
+                        {
+                            AccountSignIn.SignOut(store);
+                            App.Window?.RefreshList();
+                            App.Window?.RefreshLibrary();
+                        }
+                        else if (await AccountSignIn.RunAsync(store, XamlRoot, ActualTheme) is null) return;
+                        await ReloadAsync(true);
+                    }
+                    finally
+                    {
+                        _signingIn = false;
+                        sign.IsEnabled = true;
+                    }
                 };
                 links.Children.Add(sign);
                 if (signedIn) text.Children.Insert(1, new TextBlock { Text = L.T("Signed in: Hybrid Launcher downloads and uninstalls these games itself."), Style = Ui.Style("RowDescription"), Foreground = Ui.Brush("SystemFillColorSuccessBrush") });
@@ -966,7 +1123,7 @@ public sealed partial class DownloadsPage : Page
                         CloseButtonText = L.T("Keep downloading"),
                         DefaultButton = ContentDialogButton.Close,
                     };
-                    if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+                    if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
                 }
                 var message = await Downloads.CancelAsync(job);
                 if (message is null) App.Window?.ShowInfo(L.F("The download of {0} was cancelled.", job.Name));
@@ -1288,7 +1445,8 @@ public sealed partial class DownloadsPage : Page
     /// <summary>The game's cover from the cache when its state and size are the same, else made (and kept) now.</summary>
     FrameworkElement CachedTile(OwnedGame g)
     {
-        var key = $"{_tile:0}|{TileState(g.Id)}|{Downloads.Find(g.Id)?.State}";
+        // The game's own cover is part of the key: a cover changed with Edit artwork shows (2.1-rc.3 audit).
+        var key = $"{_tile:0}|{TileState(g.Id)}|{Downloads.Find(g.Id)?.State}|{HybridLauncher.Core.Media.ArtOverrides.Get(g.Id, HybridLauncher.Core.Media.ArtKind.Cover)}";
         if (_tileCache.TryGetValue(g.Id, out var hit) && hit.Key == key && hit.Tile.Parent is null && OwnedLibrary.IsDrawn(hit.Tile))
         {
             _tileOrder.Remove(g.Id);

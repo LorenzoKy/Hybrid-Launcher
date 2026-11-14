@@ -46,8 +46,38 @@ public static class AchievementExtrasView
                     ? L.T("From your GOG account, checked while a GOG game runs.")
                     : L.T("Needs your GOG account: sign in under Downloads → Accounts."),
                 s.ReadGogAchievements, on => { s.ReadGogAchievements = on; Changed(); }),
+            Tile(GameStore.Epic, L.T("Epic Games"), HybridLauncher.Core.Accounts.EpicAccount.SignedIn
+                    ? EpicStats.Refused
+                        ? L.T("Epic asks you to confirm on its store page first: Confirm on Epic, below.")
+                        : L.T("From your Epic Games account, also for games not installed.")
+                    : L.T("Needs your Epic Games account: sign in under Downloads → Accounts."),
+                s.ReadEpicAchievements, on =>
+                {
+                    s.ReadEpicAchievements = on;
+                    Changed();
+                    // Turned on: the counts come in now, not at the next start.
+                    if (on && EpicAccount.SignedIn) Library.RefreshAfterEpicChange(host.DispatcherQueue);
+                }),
         };
         host.Children.Add(TileGrid(tiles));
+        // Epic's check (2.1-rc.11): its store page in a window, where the user answers it; then the reads start again.
+        if (s.ReadEpicAchievements && EpicAccount.SignedIn)
+        {
+            var confirm = new Button { Content = L.T("Confirm on Epic"), VerticalAlignment = VerticalAlignment.Center };
+            confirm.Click += async (_, _) =>
+            {
+                confirm.IsEnabled = false;
+                try { await EpicWeb.ShowCheckAsync(host.ActualTheme); }
+                finally
+                {
+                    // Closed with the app: nothing to save or draw again.
+                    if (!App.ShuttingDown) { confirm.IsEnabled = true; Changed(); }
+                }
+            };
+            host.Children.Add(Row(Text(L.T("Epic Games check"), EpicStats.Refused
+                ? L.T("Epic stopped answering until you confirm on its store page. Open it, answer what Epic asks, then close the window.")
+                : L.T("If Epic achievements stop showing, Epic may want you to confirm on its store page: open it here and answer what it asks.")), confirm));
+        }
 
         // The folders local achievement files are read from: the known places on this PC and the user's own, folded to one line.
         var roots = LocalAchievements.Roots();
@@ -210,7 +240,7 @@ public static class AchievementExtrasView
                 Content = L.F("{0} unlocks are removed from Hybrid Launcher's history. Your achievements and screenshots stay.", entries.Count),
                 PrimaryButtonText = L.T("Clear"), CloseButtonText = L.T("Cancel"), DefaultButton = ContentDialogButton.Close,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return;
             AchievementHistory.Clear();
             Fill(host);
         };
@@ -255,7 +285,7 @@ public static class AchievementExtrasView
             Content = new ScrollViewer { Content = list, MaxHeight = 560, Padding = new Thickness(0, 0, 12, 0) },
             CloseButtonText = L.T("Close"),
         };
-        await dialog.ShowAsync();
+        await dialog.ShowOnceAsync();
     }
 
     /// <summary>A source's tile: its launcher's logo (the trophy for local files), name, one line of where it reads from, its switch.</summary>

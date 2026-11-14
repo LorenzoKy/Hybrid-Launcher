@@ -95,6 +95,17 @@ public sealed partial class LibraryPage
         veil.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x99, 0x0C, 0x0C, 0x10), Offset = 0.45 });
         veil.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x00, 0x0C, 0x0C, 0x10), Offset = 0.85 });
         root.Children.Add(new Border { CornerRadius = new CornerRadius(12), Background = veil, IsHitTestVisible = false });
+        // 2.1: the foot deeper too, and the theme's accent glowing in from the lower left, so the text sits on depth and colour.
+        var foot = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(0, 1) };
+        foot.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x00, 0, 0, 0), Offset = 0.45 });
+        foot.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x9A, 0, 0, 0), Offset = 1 });
+        root.Children.Add(new Border { CornerRadius = new CornerRadius(12), Background = foot, IsHitTestVisible = false });
+        var tone = Palettes.Current?.Accent ?? Microsoft.UI.Colors.White;
+        var wash = new RadialGradientBrush { Center = new Windows.Foundation.Point(0.05, 1.1), GradientOrigin = new Windows.Foundation.Point(0.05, 1.1), RadiusX = 0.6, RadiusY = 1.1 };
+        wash.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x55, tone.R, tone.G, tone.B), Offset = 0 });
+        wash.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0x00, tone.R, tone.G, tone.B), Offset = 1 });
+        root.Children.Add(new Border { CornerRadius = new CornerRadius(12), Background = wash, IsHitTestVisible = false });
+        root.Children.Add(new Border { CornerRadius = new CornerRadius(12), Background = Helpers.CoverFx.Gloss, IsHitTestVisible = false });
 
         // What the banner is, in its corner: no heading above it takes a line of the page.
         var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, Margin = new Thickness(28, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
@@ -102,7 +113,7 @@ public sealed partial class LibraryPage
         label.Children.Add(new TextBlock { Text = L.T("LAST PLAYED"), Style = Ui.Style("GroupHeader"), Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF)), VerticalAlignment = VerticalAlignment.Center });
         root.Children.Add(label);
 
-        var text = new StackPanel { Spacing = 10, Margin = new Thickness(28, 24, 28, 24), VerticalAlignment = VerticalAlignment.Bottom, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left, RequestedTheme = ElementTheme.Dark };
+        var text = new StackPanel { Spacing = 8, Margin = new Thickness(28, 52, 28, 22), VerticalAlignment = VerticalAlignment.Bottom, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left, RequestedTheme = ElementTheme.Dark };
         var logoHost = new Grid { MinHeight = 0 };
         var title = new TextBlock { Text = game.Title, FontSize = 28, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.WrapWholeWords, MaxLines = 2, TextTrimming = TextTrimming.WordEllipsis, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         logoHost.Children.Add(title);
@@ -141,10 +152,24 @@ public sealed partial class LibraryPage
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(card, L.F("Open {0}", game.Title));
         card.Click += (_, _) => App.Window?.OpenGame(game.Id);
         art.ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(420) };
+        // One timer for the card (2.1 audit, as CoverFx.Sharp): every pointer-out used to make a new one.
+        Microsoft.UI.Dispatching.DispatcherQueueTimer? rest = null;
         void Near(bool on)
         {
             art.CenterPoint = new System.Numerics.Vector3((float)art.ActualWidth * 0.7f, (float)art.ActualHeight / 2, 0);
             float s = on ? 1.03f : 1f;
+            rest?.Stop();
+            // Drawn at the near size from the start, so the picture is never stretched blurred while it moves (2.1-rc.4);
+            // back at its own size once it has settled.
+            if (on && art.XamlRoot is { } r) art.RasterizationScale = r.RasterizationScale * 1.03;
+            else if (!on)
+            {
+                rest ??= WeakTimer.Create(art.DispatcherQueue, art, TimeSpan.FromMilliseconds(480), static a =>
+                {
+                    if (a.Scale.X <= 1.0001f && a.XamlRoot is { } root) a.RasterizationScale = root.RasterizationScale;
+                }, repeating: false);
+                rest.Start();
+            }
             art.Scale = new System.Numerics.Vector3(s, s, 1);
         }
         card.PointerEntered += (_, _) => Near(true);
@@ -172,8 +197,11 @@ public sealed partial class LibraryPage
             }
             if (a.LogoImage is { } logo && File.Exists(logo))
             {
-                var img = new Image { Source = new BitmapImage { UriSource = new Uri(logo) }, MaxHeight = 96, MaxWidth = 360, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
-                img.ImageOpened += (_, _) => title.Visibility = Visibility.Collapsed;
+                // The logo replaces the title at once (2.1-rc.3: a logo decoded before raised no ImageOpened, and the title
+                // stayed written over it); the title comes back only if the picture cannot be read.
+                var img = new Image { Source = new BitmapImage { UriSource = new Uri(logo), DecodePixelHeight = 160 }, MaxHeight = 80, MaxWidth = 340, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
+                img.ImageFailed += (_, _) => { title.Visibility = Visibility.Visible; img.Visibility = Visibility.Collapsed; };
+                title.Visibility = Visibility.Collapsed;
                 logoHost.Children.Add(img);
             }
         }
@@ -213,7 +241,8 @@ public sealed partial class LibraryPage
         else
         {
             // How many this week over every game, on the heading's right (counted from all of them, not only those shown).
-            int week = Library.UnlocksThisWeek;
+            // The owned games' unlocks are in the list above: the week's count takes them too (as the profile does).
+            int week = Library.UnlocksThisWeek + Library.OwnedUnlocksThisWeek;
             if (week > 0)
             {
                 var pill = new Border
@@ -293,7 +322,7 @@ public sealed partial class LibraryPage
                 thumb.Child = Smooth.Art(new BitmapImage { DecodePixelWidth = 36, UriSource = new Uri(path) }, thumb.CornerRadius);
                 return;
             }
-            foreach (var source in new[] { game.IconPath, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var source in new[] { ArtOverrides.Get(game.Id, ArtKind.Icon), game.IconPath, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
                 if (await IconCache.GetAsync(source!) is { } icon)
                 {
                     if (thumb.Child is null) thumb.Child = new Image { Source = icon, Stretch = Stretch.Uniform };
@@ -330,10 +359,20 @@ public sealed partial class LibraryPage
         FrameworkElement trophy = Icons.TierTrophy(20, tier);
         trophy.HorizontalAlignment = HorizontalAlignment.Center;
         trophy.VerticalAlignment = VerticalAlignment.Center;
-        icon.Child = trophy;
+        // The tier's trophy under the achievement's picture: a picture that never arrives (or never says so) leaves the
+        // trophy, not an empty box (2.1-rc.3).
+        var layers = new Grid();
+        layers.Children.Add(trophy);
+        icon.Child = layers;
         if (a.IconUrl is { } url && Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            try { icon.Child = Smooth.Art(new BitmapImage { DecodePixelWidth = 72, UriSource = uri }, new CornerRadius(5), fadeMs: 150, failed: () => icon.Child = trophy); }
+            try
+            {
+                var pic = new Image { Source = new BitmapImage { DecodePixelWidth = 72, UriSource = uri }, Stretch = Stretch.UniformToFill };
+                pic.ImageOpened += (_, _) => trophy.Visibility = Visibility.Collapsed;
+                pic.ImageFailed += (_, _) => pic.Visibility = Visibility.Collapsed;
+                layers.Children.Add(new Border { CornerRadius = new CornerRadius(5), Child = pic });
+            }
             catch (Exception ex) { Log.Warn($"Library unlock picture: {ex.Message}"); }
         }
         grid.Children.Add(icon);

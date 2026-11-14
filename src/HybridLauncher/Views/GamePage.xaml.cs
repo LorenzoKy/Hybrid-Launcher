@@ -1,4 +1,4 @@
-﻿using HybridLauncher.Core;
+using HybridLauncher.Core;
 using HybridLauncher.Core.Accounts;
 using HybridLauncher.Core.Detection;
 using HybridLauncher.Core.Ini;
@@ -433,15 +433,15 @@ public partial class GamePage : Page, IAutoHost
     /// Runs <paramref name="steps"/> one per turn of the UI thread (each after the frames queued before it), while the same game
     /// and the Mods tab stay open; a step that fails is logged and the next still runs.
     /// </summary>
-    void BuildInTurns(List<Action> steps, Game? game)
+    void BuildInTurns(List<(string Name, Action Run)> steps, Game? game)
     {
         int i = 0;
         void Next()
         {
             if (i >= steps.Count || _game is null || !ReferenceEquals(_game, game) || _tab != "mods") return;
-            using (UiPerf.Scope("GamePage.ModsSection"))
+            using (UiPerf.Scope("GamePage.ModsSection " + steps[i].Name))
             {
-                try { steps[i++](); }
+                try { steps[i++].Run(); }
                 catch (Exception ex) { Log.Warn($"Mods tab section: {ex.Message}"); }
             }
             DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Next);
@@ -501,7 +501,11 @@ public partial class GamePage : Page, IAutoHost
         var parent = (view as FrameworkElement)?.Parent ?? Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(view);
         switch (parent)
         {
-            case Border b when ReferenceEquals(b.Child, view): b.Child = null; break;
+            case Border b when ReferenceEquals(b.Child, view):
+                b.Child = null;
+                // Only the warm-up layer's own wrapper goes with it; a page's host (OverviewHost…) stays where it is.
+                if (ReferenceEquals(b.Tag, WarmWrapper) && b.Parent is Panel warm) warm.Children.Remove(b);
+                break;
             case Panel p: p.Children.Remove(view); break;
             case ContentControl c when ReferenceEquals(c.Content, view): c.Content = null; break;
             case ContentPresenter cp when ReferenceEquals(cp.Content, view): cp.Content = null; break;
@@ -510,6 +514,7 @@ public partial class GamePage : Page, IAutoHost
     }
 
     Canvas? _warmLayer;
+    static readonly object WarmWrapper = new();
     Microsoft.UI.Dispatching.DispatcherQueueTimer? _warmTimer;
 
     /// <summary>
@@ -558,7 +563,7 @@ public partial class GamePage : Page, IAutoHost
         if (view is FrameworkElement { Parent: null } fe && _warmLayer is not null)
         {
             double width = Math.Max(320, Root.ActualWidth - 40);
-            _warmLayer.Children.Add(new Border { Width = width, Child = fe });
+            _warmLayer.Children.Add(new Border { Width = width, Child = fe, Tag = WarmWrapper });
         }
     }
 
@@ -658,10 +663,23 @@ public partial class GamePage : Page, IAutoHost
     static int _lookVersion;
     static int _keptLook;
 
+    static void DetachKept(Kept k)
+    {
+        if (k.Dashboard is { } d) Detach(d);
+        if (k.Overview is { } o) Detach(o);
+        if (k.OptiWiki is { } ow) Detach(ow);
+        if (k.Pcgw is { } p) Detach(p);
+        if (k.Links is { } l) Detach(l);
+    }
+
     /// <summary>The kept views of games without a page go (the window went to the notification area: their memory is freed).</summary>
     internal static void DropKept()
     {
-        foreach (var k in _kept.Values) k.Cts.Cancel();
+        foreach (var k in _kept.Values)
+        {
+            k.Cts.Cancel();
+            DetachKept(k);
+        }
         _kept.Clear();
     }
 
@@ -675,7 +693,11 @@ public partial class GamePage : Page, IAutoHost
         if (_pcgwView is not null) { _pcgwView.ScrollRequested = null; _pcgwView.TocLayoutChanged = null; }
         if (_game is null || _data is null || _dataCts is null) return;
         _overview?.Hide();
-        if (_kept.Remove(_game.Id, out var old) && old.Cts != _dataCts) old.Cts.Cancel();
+        if (_kept.Remove(_game.Id, out var old) && old.Cts != _dataCts)
+        {
+            old.Cts.Cancel();
+            DetachKept(old);
+        }
         _kept[_game.Id] = new Kept
         {
             Data = _data, Cts = _dataCts, Overview = _overview, Dashboard = _dashboard, OptiWiki = _optiWikiView, Pcgw = _pcgwView, Links = _linksView,
@@ -686,16 +708,37 @@ public partial class GamePage : Page, IAutoHost
         {
             var oldest = _kept.MinBy(k => k.Value.Used);
             oldest.Value.Cts.Cancel();
+            DetachKept(oldest.Value);
             _kept.Remove(oldest.Key);
         }
+    }
+
+    // Games whose own banner or logo changed (2.1-rc.9): their kept data still holds the old pictures, so it is read again.
+    static readonly HashSet<string> StaleArt = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The game's banner or logo changed: its next page is made from fresh data, not from the kept views.</summary>
+    public static void ArtChanged(string id)
+    {
+        StaleArt.Add(id);
+        RequestFresh(id);
     }
 
     /// <summary>The kept views of <paramref name="game"/>, put back in their places (still hidden unless their tab is open).</summary>
     Kept? TakeKept(Game game)
     {
+        if (StaleArt.Remove(game.Id) && _kept.Remove(game.Id, out var stale))
+        {
+            stale.Cts.Cancel();
+            DetachKept(stale);
+            return null;
+        }
         if (_keptLook != _lookVersion)
         {
-            foreach (var k in _kept.Values) k.Cts.Cancel();
+            foreach (var k in _kept.Values)
+            {
+                k.Cts.Cancel();
+                DetachKept(k);
+            }
             _kept.Clear();
             _keptLook = _lookVersion;
             return null;
@@ -705,6 +748,7 @@ public partial class GamePage : Page, IAutoHost
         if (!ReferenceEquals(kept.Data.Game, game) || kept.Cts.IsCancellationRequested)
         {
             kept.Cts.Cancel();
+            DetachKept(kept);
             return null;
         }
         try
@@ -941,9 +985,37 @@ public partial class GamePage : Page, IAutoHost
                 ExeLine.Text = L.F("Not installed. Download installs it through {0}; Hybrid Launcher follows the download here.", _game.StoreLabel);
                 UpdateHdrToggle();
                 UpdateRunState();
-                return;
+                // Not "return" here (until 2.1-rc.6 it was): a return inside the try skipped everything after the finally, so a
+                // game not installed never read its achievements, and its hours came only from the page's minute timer.
             }
+            else FillInstalled();
+        }
+        finally
+        {
+            _loading = false;
+        }
+        ApplyPageParts();
+        if (_game.NotInstalled)
+        {
+            // Not on this PC, but played: its hours (Steam, the Epic account, GOG Galaxy, Hybrid Launcher's record) and its
+            // achievements (Steam's files on this PC, the account's community page, GOG, Epic) show as for an installed game.
+            _ = UpdatePlayStatsAsync();
+            _ = LoadAchievementsAsync(_pageCts.Token);
+            return;
+        }
+        // A game already running (started from its launcher) gets Stop too.
+        if (GameScanner.EffectiveExe(_game, _settings) is { } runExe) GameSessions.Observe(_game, _settings, Path.GetDirectoryName(runExe));
+        _ = UpdateOptiPatcherHintAsync(_pageCts.Token);
+        _ = UpdateFootprintAsync();
+        _ = UpdatePlayStatsAsync();
+        _ = LoadAchievementsAsync(_pageCts.Token);
+    }
 
+    /// <summary>The parts of the page only an installed game has: its exe line, OptiScaler, pin, size, cloud.</summary>
+    void FillInstalled()
+    {
+        if (_game is null) return;
+        {
             var exe = GameScanner.EffectiveExe(_game, _settings);
             _exeLineAlert = _game.Installing || exe is null;
             ExeLine.Text = _game.Installing
@@ -963,22 +1035,6 @@ public partial class GamePage : Page, IAutoHost
             _ = UpdateCloudButtonAsync();
             UpdateRunState();
         }
-        finally
-        {
-            _loading = false;
-        }
-        ApplyPageParts();
-        if (_game.NotInstalled)
-        {
-            _ = LoadAchievementsAsync(_pageCts.Token);
-            return;
-        }
-        // A game already running (started from its launcher) gets Stop too.
-        if (GameScanner.EffectiveExe(_game, _settings) is { } runExe) GameSessions.Observe(_game, _settings, Path.GetDirectoryName(runExe));
-        _ = UpdateOptiPatcherHintAsync(_pageCts.Token);
-        _ = UpdateFootprintAsync();
-        _ = UpdatePlayStatsAsync();
-        _ = LoadAchievementsAsync(_pageCts.Token);
     }
 
     bool _optiPending;
@@ -1336,13 +1392,13 @@ public partial class GamePage : Page, IAutoHost
                 // the click. Asked for one of them by name (a link, a search hit), all at once so the jump finds it.
                 // Built at once, each is refreshed below with the others; built later, by its own step.
                 bool now = section is not null || App.SelfTesting;
-                var steps = new List<Action>();
-                if (_renoDxView is null) steps.Add(() => { RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext()); if (!now) Ui.Safe(_renoDxView.Refresh); });
-                if (_lumaView is null) steps.Add(() => { LumaHost.Child = _lumaView = new LumaView(ModContext()); if (!now) Ui.Safe(_lumaView.Refresh); });
-                if (_dlss5View is null) steps.Add(() => Dlss5Host.Child = Dlss5Section());
-                if (_dxvkView is null) steps.Add(() => { DxvkHost.Child = _dxvkView = new DxvkView(ModContext()); if (!now) Ui.Safe(_dxvkView.Refresh); });
-                if (_vkd3dView is null) steps.Add(() => { Vkd3dHost.Child = _vkd3dView = new DxvkView(ModContext(), vkd3d: true); if (!now) Ui.Safe(_vkd3dView.Refresh); });
-                if (now) foreach (var step in steps) step();
+                var steps = new List<(string, Action)>();
+                if (_renoDxView is null) steps.Add(("renodx", () => { RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext()); if (!now) Ui.Safe(_renoDxView.Refresh); }));
+                if (_lumaView is null) steps.Add(("luma", () => { LumaHost.Child = _lumaView = new LumaView(ModContext()); if (!now) Ui.Safe(_lumaView.Refresh); }));
+                if (_dlss5View is null) steps.Add(("dlss5", () => Dlss5Host.Child = Dlss5Section()));
+                if (_dxvkView is null) steps.Add(("dxvk", () => { DxvkHost.Child = _dxvkView = new DxvkView(ModContext()); if (!now) Ui.Safe(_dxvkView.Refresh); }));
+                if (_vkd3dView is null) steps.Add(("vkd3d", () => { Vkd3dHost.Child = _vkd3dView = new DxvkView(ModContext(), vkd3d: true); if (!now) Ui.Safe(_vkd3dView.Refresh); }));
+                if (now) foreach (var (_, run) in steps) run();
                 else BuildInTurns(steps, _game);
             }
             if (tab == "ultra" && _ultra is null)
@@ -2313,6 +2369,7 @@ public partial class GamePage : Page, IAutoHost
             _configDir = config;
             _saveDir = saves;
             ApplyPageParts();
+            FilesPropsChanged();
             ToolTipService.SetToolTip(ConfigFolderButton, L.T("Open the game's configuration folder (from PCGamingWiki)") + "\n" + config);
             ToolTipService.SetToolTip(SaveFolderButton, L.T("Open the game's saves folder (from PCGamingWiki)") + "\n" + saves);
 
@@ -2324,6 +2381,7 @@ public partial class GamePage : Page, IAutoHost
                 var bytes = await Task.Run(() => DiskUsage.FolderSize(dir, ct), ct);
                 if (ct.IsCancellationRequested || game != _game) return;
                 text.Text = DiskUsage.Format(bytes);
+                FilesPropsChanged();
             }
         }
         catch (OperationCanceledException) { }
@@ -2471,7 +2529,8 @@ public partial class GamePage : Page, IAutoHost
     /// <summary>The download bar beside the button, like Steam's library: state, speed, bytes and time left.</summary>
     void UpdateDownloadPanel(DownloadJob? job)
     {
-        bool show = job is not null && (_game?.NotInstalled == true || _game?.Installing == true);
+        // An update of an installed game shows its bar too: the game cannot start until it is done (2.1-rc.3 audit).
+        bool show = job is not null && (_game?.NotInstalled == true || _game?.Installing == true || job.IsUpdate);
         DownloadPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (show) PlayStatsPanel.Visibility = Visibility.Collapsed;
         else PlayStatsPanel.Visibility = _laidOutWidth < 980 && !_narrowBar || _laidOutWidth < 520 || !Part(PageParts.PlayStats) ? Visibility.Collapsed : Visibility.Visible;
@@ -2541,6 +2600,13 @@ public partial class GamePage : Page, IAutoHost
             // Not on this PC, or still downloading in its launcher: Download, then its progress; no Play yet.
             PlayButton.SetMode(job is not null || _game.Installing ? Controls.PlayButton.Mode.Downloading : Controls.PlayButton.Mode.Install);
             HdrToggle.IsEnabled = _hdrCapable != false;
+            return;
+        }
+        if (state == GameRunState.Stopped && job is { IsUpdate: true })
+        {
+            // Updating (or an update paused halfway): no Play until it is done, as on Steam.
+            PlayButton.SetMode(Controls.PlayButton.Mode.Downloading);
+            HdrToggle.IsEnabled = false;
             return;
         }
         PlayButton.SetMode(state switch
@@ -2683,12 +2749,23 @@ public partial class GamePage : Page, IAutoHost
         var settings = _settings;
         try
         {
-            var stats = await Task.Run(() => Playtime.Get(game, settings));
+            var stats = await Task.Run(async () =>
+            {
+                // Epic counts on its servers only: its numbers are asked for first (kept ten minutes), so the page has them.
+                if (game.Store == GameStore.Epic)
+                    try
+                    {
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await HybridLauncher.Core.Accounts.EpicStats.RefreshPlaytimeAsync(cts.Token);
+                    }
+                    catch { }
+                return Playtime.Get(game, settings);
+            });
             if (game != _game) return;
             LastPlayedText.Text = Playtime.FormatLast(stats.LastPlayed);
             PlayTimeText.Text = Playtime.FormatTime(stats.Minutes);
-            ToolTipService.SetToolTip(PlayStatsPanel, stats.Source == "Steam"
-                ? L.F("From Steam: {0:0.#} hours", stats.Minutes / 60.0) + (stats.LastPlayed is { } t ? ", " + L.F("last played {0:d MMM yyyy, HH:mm}", t) : "")
+            ToolTipService.SetToolTip(PlayStatsPanel, stats.Source is "Steam" or "Epic Games" or "GOG Galaxy"
+                ? L.F("From {0}: {1:0.#} hours", stats.Source, stats.Minutes / 60.0) + (stats.LastPlayed is { } t ? ", " + L.F("last played {0:d MMM yyyy, HH:mm}", t) : "")
                 : L.T("Counted by Hybrid Launcher while the game runs, when you start it with Play here.") + "\n" + L.T("Kept by Hybrid Launcher even if you uninstall the game, move it or add it again.") + (stats.LastPlayed is { } l ? "\n" + L.F("Last played {0:d MMM yyyy, HH:mm}", l) : ""));
         }
         catch (Exception ex) { Log.Warn($"Play stats for {game.Name}: {ex.Message}"); }
@@ -2719,9 +2796,13 @@ public partial class GamePage : Page, IAutoHost
     void UpdatePin()
     {
         if (_game is null) return;
+        // A heart (2.1, was a pin): filled and red while the game is a favorite.
         bool pinned = AppState.IsPinned(_game.Id);
-        PinIcon.Glyph = pinned ? "" : "";
-        ToolTipService.SetToolTip(PinButton, pinned ? L.T("Unpin from quick access") : L.T("Pin to quick access (top of the game list)"));
+        PinIcon.Glyph = pinned ? "\uEB52" : "\uEB51";
+        if (pinned) PinIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x5A, 0x6E));
+        else PinIcon.ClearValue(FontIcon.ForegroundProperty);
+        ToolTipService.SetToolTip(PinButton, pinned ? L.T("Remove from favorites") : L.T("Add to favorites (top of the game list)"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PinButton, pinned ? L.T("Remove from favorites") : L.T("Add to favorites"));
     }
 
     void ShowGameSize()
@@ -2746,7 +2827,7 @@ public partial class GamePage : Page, IAutoHost
             settings.SizeBytes = bytes;
             settings.SizeMeasuredAt = DateTime.Now;
             SettingsStore.Save();
-            if (game == _game) ShowGameSize();
+            if (game == _game) { ShowGameSize(); FilesPropsChanged(); }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -2901,17 +2982,18 @@ public partial class GamePage : Page, IAutoHost
             };
             _ = SearchAsync();
 
+            var (root, theme) = PropsRoot();
             var dialog = new ContentDialog
             {
-                XamlRoot = XamlRoot,
+                XamlRoot = root,
                 Title = L.T("Choose the game's page"),
                 Content = panel,
                 PrimaryButtonText = L.T("Save"),
                 CloseButtonText = L.T("Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
-                RequestedTheme = ActualTheme,
+                RequestedTheme = theme,
             };
-            var result = await dialog.ShowAsync();
+            var result = await dialog.ShowOnceAsync();
             timer.Stop();
             // The timer holds its handler outside the GC's view, and the handler the timer: let go, or the dialog stays in memory.
             timer.Tick -= tick;
@@ -3202,7 +3284,10 @@ public partial class GamePage : Page, IAutoHost
     {
         AppState.Settings.HiddenGames.Add(_game!.Id);
         SettingsStore.Save();
-        App.Window?.SelectGame("");
+        // From the game's own page the list moves off it; from Properties over the library the search stays as it is
+        // (2.1-rc.10 audit: it was emptied) and the list and the library only drop the game.
+        if (ReferenceEquals(App.Window?.ShownGamePage, this)) App.Window?.SelectGame("");
+        else { App.Window?.RefreshList(); App.Window?.RefreshLibrary(); }
         App.Window?.ShowInfo(L.F("{0} is hidden. Show it again from Settings.", _game.Title));
     }
 
@@ -4503,11 +4588,14 @@ public partial class GamePage : Page, IAutoHost
         LogScroller.ChangeView(null, LogScroller.ScrollableHeight + 1000, null, disableAnimation: true);
     }
 
-    async void Uninstall_Click(object sender, RoutedEventArgs e)
+    async void Uninstall_Click(object sender, RoutedEventArgs e) => await UninstallOptiAsync();
+
+    /// <summary>OptiScaler out of the game, its backed-up files back (asked first, unless "Uninstall all" asked for every mod).</summary>
+    async Task UninstallOptiAsync()
     {
         var m = _settings.Install;
         if (m is null || _busy) return;
-        if (!await ConfirmAsync(L.T("Uninstall OptiScaler?"),
+        if (!global::HybridLauncher.Views.ModContext.UninstallingAll && !await ConfirmAsync(L.T("Uninstall OptiScaler?"),
                 L.F("Removes the {0} files Hybrid Launcher installed in\n{1}\nand restores the {2} original file(s) it backed up. Your setup answers and ini choices stay saved.", m.Files.Count, m.TargetDir, m.Backups.Count),
                 L.T("Uninstall")))
             return;
@@ -4652,7 +4740,7 @@ public partial class GamePage : Page, IAutoHost
                 DefaultButton = ContentDialogButton.Primary,
                 RequestedTheme = ActualTheme,
             };
-            var answer = await dialog.ShowAsync();
+            var answer = await dialog.ShowOnceAsync();
             if (answer == ContentDialogResult.None) return (false, null);
             if (answer == ContentDialogResult.Secondary)
             {
@@ -4679,7 +4767,7 @@ public partial class GamePage : Page, IAutoHost
         // Demo walk only (HL_DEMO): the question stays on screen a moment, then is answered yes.
         bool demoYes = false;
         if (MainWindow.DemoAnswerAfter is { } after && App.Window is { } window) _ = window.DemoAnswerAsync(dialog, after, () => demoYes = true);
-        return await dialog.ShowAsync() == ContentDialogResult.Primary || demoYes;
+        return await dialog.ShowOnceAsync() == ContentDialogResult.Primary || demoYes;
     }
 
     // ---------- ASI plugins ----------
@@ -4989,7 +5077,7 @@ public partial class GamePage : Page, IAutoHost
         };
         box.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = box.Text.Trim().Length > 0;
         dialog.Opened += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? box.Text.Trim() : null;
+        return await dialog.ShowOnceAsync() == ContentDialogResult.Primary ? box.Text.Trim() : null;
     }
 
     // ---------- Steam achievements ----------
@@ -5001,35 +5089,49 @@ public partial class GamePage : Page, IAutoHost
     string? AchAppId => _game is { Store: GameStore.Steam, SteamAppId: { } id } ? id
         : _game is not null && HybridLauncher.Core.Achievements.XboxAchievements.Applies(_game) ? HybridLauncher.Core.Achievements.XboxAchievements.Key(_game)
         : _game?.EmulatorAppId is { } emu && AppState.Settings.ReadSteamEmulator ? emu
-        : _game is not null && AppState.Settings.ReadGogAchievements && HybridLauncher.Core.Accounts.GogAccount.SignedIn && HybridLauncher.Core.Accounts.GogAchievements.ProductId(_game) is { } gog ? "gog:" + gog : null;
+        : _game is not null && AppState.Settings.ReadGogAchievements && HybridLauncher.Core.Accounts.GogAccount.SignedIn && HybridLauncher.Core.Accounts.GogAchievements.ProductId(_game) is { } gog ? "gog:" + gog
+        : _game is { Store: GameStore.Epic } && AppState.Settings.ReadEpicAchievements && HybridLauncher.Core.Accounts.EpicStats.NamespaceOf(_game) is { } ns
+            && (HybridLauncher.Core.Accounts.EpicAccount.SignedIn || HybridLauncher.Core.Accounts.EpicStats.ReadCached(_game) is not null) ? "epic:" + ns : null;
 
     async Task LoadAchievementsAsync(CancellationToken ct)
     {
         var appId = AchAppId;
-        if (appId is null || _loadingAch)
+        if (appId is null)
         {
-            if (appId is null) ShowAchievements(null);
+            ShowAchievements(null);
             return;
         }
+        // One load per game at a time; a load for another game (a quick switch) runs at once and the older one's answer is
+        // dropped. Before 2.1-rc.5 a load still running for the previous game (Steam's community page takes seconds) made
+        // this game's load return at once, and its achievements never showed (the user's not-installed games).
+        if (_loadingAch && _achLoadingFor == appId) return;
         var game = _game;
+        int run = ++_achRun;
         _loadingAch = true;
+        _achLoadingFor = appId;
         try
         {
             var set = await SteamAchievements.LoadForAsync(game!, ct);
-            if (ct.IsCancellationRequested || game != _game) return;
+            if (ct.IsCancellationRequested || game != _game || run != _achRun) return;
             ShowAchievements(set);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             Log.Warn($"Achievements for {game?.Name}: {ex.Message}");
-            ShowAchievements(null);
+            if (run == _achRun && game == _game) ShowAchievements(null);
         }
         finally
         {
-            _loadingAch = false;
+            if (run == _achRun) { _loadingAch = false; _achLoadingFor = null; }
         }
     }
+
+    int _achRun;
+    string? _achLoadingFor;
+
+    /// <summary>Self-test: the achievements the page shows ("unlocked / total", null when none) and its play time.</summary>
+    internal (string? Ach, string Hours) SelfTestOwnedStats() => (_ach is { } a ? $"{a.UnlockedCount} / {a.Total}" : null, PlayTimeText.Text);
 
     // Raised from the Steam stats watcher on the UI thread.
     void OnAchievementsChanged(string appId)
@@ -5129,16 +5231,12 @@ public partial class GamePage : Page, IAutoHost
         if (Application.Current.Resources.TryGetValue("AccentFillColorDefaultBrush", out var accent)) tile.BorderBrush = accent as Brush;
         tile.BorderThickness = new Thickness(2);
         tile.Opacity = 1;
-        var timer = DispatcherQueue.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(3000);
-        timer.IsRepeating = false;
-        timer.Tick += (_, _) =>
+        Later.Run(DispatcherQueue, TimeSpan.FromMilliseconds(3000), () =>
         {
             Restore(tile, Border.BorderBrushProperty, brush);
             Restore(tile, Border.BorderThicknessProperty, thickness);
             tile.Opacity = opacity;
-        };
-        timer.Start();
+        });
         static void Restore(DependencyObject o, DependencyProperty p, object local)
         {
             if (local == DependencyProperty.UnsetValue) o.ClearValue(p);

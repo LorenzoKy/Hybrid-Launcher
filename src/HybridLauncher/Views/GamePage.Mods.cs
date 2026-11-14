@@ -1,4 +1,4 @@
-﻿using HybridLauncher.Core;
+using HybridLauncher.Core;
 using HybridLauncher.Core.Mods;
 using HybridLauncher.Core.Opti;
 using HybridLauncher.Helpers;
@@ -104,17 +104,8 @@ public partial class GamePage
     {
         if (_game is not { } game || TargetDir is not { } dir) return (false, null);
         if (GameJobs.InTheWay(game.Id, game.Title)) return (false, null);
-        if (!game.NotInstalled)
-        {
-            if (_reshadeView is null) ReShadeHost.Child = _reshadeView = new ReShadeView(ModContext());
-            if (_renoDxView is null) { RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext()); Ui.Safe(_renoDxView.Refresh); }
-            if (_lumaView is null) { LumaHost.Child = _lumaView = new LumaView(ModContext()); Ui.Safe(_lumaView.Refresh); }
-            if (_dxvkView is null) { DxvkHost.Child = _dxvkView = new DxvkView(ModContext()); Ui.Safe(_dxvkView.Refresh); }
-            if (_vkd3dView is null) { Vkd3dHost.Child = _vkd3dView = new DxvkView(ModContext(), vkd3d: true); Ui.Safe(_vkd3dView.Refresh); }
-        }
-        var settings = _settings;
-        var read = await Task.Run(() => new ModsRead(dir, ModFiles.Map(settings, dir), ModCheck.Run(settings, dir), OptiDetector.Detect(dir),
-            Core.Mods.ReShade.Detect(dir), RenoDx.Installed(dir), Core.Mods.Luma.Installed(dir), Core.Mods.Dxvk.Detect(dir)));
+        MakeModSections(game);
+        var read = await ReadModsAsync(dir);
         if (_game != game) return (false, null);
         var row = ModRows(read).FirstOrDefault(r => r.Key.Equals(id, StringComparison.OrdinalIgnoreCase) || (id == "dxvk" && r.Key == "vkd3d"));
         if (row is null) return (false, L.T("It is not in the game folder any more."));
@@ -123,6 +114,101 @@ public partial class GamePage
         _ = UpdateModBadgesAsync();
         _ = RefreshModsOverviewAsync();
         return (true, null);
+    }
+
+    /// <summary>The Mods tab's sections, made when the tab was never opened: each mod's uninstall lives in its section.</summary>
+    void MakeModSections(Game game)
+    {
+        if (game.NotInstalled) return;
+        if (_reshadeView is null) ReShadeHost.Child = _reshadeView = new ReShadeView(ModContext());
+        if (_renoDxView is null) { RenoDxHost.Child = _renoDxView = new RenoDxView(ModContext()); Ui.Safe(_renoDxView.Refresh); }
+        if (_lumaView is null) { LumaHost.Child = _lumaView = new LumaView(ModContext()); Ui.Safe(_lumaView.Refresh); }
+        if (_dxvkView is null) { DxvkHost.Child = _dxvkView = new DxvkView(ModContext()); Ui.Safe(_dxvkView.Refresh); }
+        if (_vkd3dView is null) { Vkd3dHost.Child = _vkd3dView = new DxvkView(ModContext(), vkd3d: true); Ui.Safe(_vkd3dView.Refresh); }
+    }
+
+    Task<ModsRead> ReadModsAsync(string dir)
+    {
+        var settings = _settings;
+        return Task.Run(() => new ModsRead(dir, ModFiles.Map(settings, dir), ModCheck.Run(settings, dir), OptiDetector.Detect(dir),
+            Core.Mods.ReShade.Detect(dir), RenoDx.Installed(dir), Core.Mods.Luma.Installed(dir), Core.Mods.Dxvk.Detect(dir)));
+    }
+
+    /// <summary>The order mods come out in: what loads through another mod first (plugins, add-ons), OptiScaler last.</summary>
+    static readonly string[] RemovalOrder = ["dlss5", "renodx", "luma", "reshade", "ultra", "dxvk", "vkd3d", "opti"];
+
+    /// <summary>
+    /// "Uninstall all" (2.1-rc.6, the Auto tab's bar and the Mods table's heading): every mod Hybrid Launcher installed and
+    /// manages in this game comes out, after one question, each as its own section's uninstall does (backed-up files back).
+    /// Mods it did not install (put in by hand or by another tool) are left as they are, and the question says so.
+    /// </summary>
+    // Uninstall all is running (2.1 audit): a second click (the table's button and the Auto tab's) opens no second dialog.
+    bool _uninstallingAll;
+
+    public async Task UninstallAllModsAsync()
+    {
+        if (_uninstallingAll) return;
+        if (_busy || _dlss5Busy is not null) { App.Window?.ShowInfo(L.T("Wait for the mod being installed or removed to finish.")); return; }
+        _uninstallingAll = true;
+        try { await UninstallAllCoreAsync(); }
+        catch (Exception ex) { Log.Warn($"Uninstall all: {ex.Message}"); App.Window?.ShowError(L.T("Uninstall all"), ex.Message, ex); }
+        finally { _uninstallingAll = false; }
+    }
+
+    async Task UninstallAllCoreAsync()
+    {
+        if (_game is not { } game || TargetDir is not { } dir) return;
+        if (GameJobs.InTheWay(game.Id, game.Title)) return;
+        if (GameSessions.IsActive(game.Id)) { App.Window?.ShowInfo(L.F("Close {0} first: its files are in use.", game.Title)); return; }
+        MakeModSections(game);
+        var read = await ReadModsAsync(dir);
+        if (_game != game) return;
+        var all = ModRows(read);
+        var mine = all.Where(r => r.ByHybrid && r.Uninstall is not null)
+            .OrderBy(r => Array.IndexOf(RemovalOrder, r.Key) is var i and >= 0 ? i : RemovalOrder.Length).ToList();
+        var others = all.Where(r => !mine.Contains(r)).Select(r => r.Name).Distinct().ToList();
+        if (mine.Count == 0)
+        {
+            App.Window?.ShowInfo(others.Count > 0
+                ? L.T("No mod here was installed by Hybrid Launcher: the ones in the folder were put in another way, so they stay.")
+                : L.T("No mods in this game: it runs as it shipped."));
+            return;
+        }
+        var names = string.Join(", ", mine.Select(r => r.Name).Distinct());
+        var message = L.F("Takes out {0} and puts back every game file they replaced.", names)
+            + (others.Count > 0 ? "\n\n" + L.F("Left as they are (not installed by Hybrid Launcher): {0}.", string.Join(", ", others)) : "");
+        if (!await ConfirmAsync(mine.Count == 1 ? L.T("Uninstall 1 mod?") : L.F("Uninstall {0} mods?", mine.Count), message, L.T("Uninstall all"))) return;
+
+        var failed = new List<string>();
+        global::HybridLauncher.Views.ModContext.UninstallingAll = true;
+        try
+        {
+            foreach (var row in mine)
+            {
+                if (_game != game) break;
+                try
+                {
+                    Log.Info($"Uninstall all in {game.Name}: {row.Name}");
+                    await row.Uninstall!();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"Uninstall all, {row.Name}: {ex.Message}");
+                    failed.Add(row.Name);
+                }
+            }
+        }
+        finally { global::HybridLauncher.Views.ModContext.UninstallingAll = false; }
+        if (_game != game) return;
+        // What is still there: a mod whose own uninstall stopped (busy, a file in use) is named.
+        var after = ModRows(await ReadModsAsync(dir)).Where(r => r.ByHybrid && r.Uninstall is not null).Select(r => r.Name).ToList();
+        foreach (var n in after) if (!failed.Contains(n)) failed.Add(n);
+        _ = UpdateModBadgesAsync();
+        _ = RefreshModsOverviewAsync();
+        _autoView?.Refresh();
+        Refresh();
+        if (failed.Count == 0) App.Window?.ShowSuccess(L.T("Every mod Hybrid Launcher installed is out, and the game's files are back."));
+        else App.Window?.ShowError(L.T("Uninstall all"), L.F("Still in the game: {0}. Uninstall it from its section.", string.Join(", ", failed)));
     }
 
     void StopWatchingModsFolder()
@@ -205,7 +291,7 @@ public partial class GamePage
             rows.Add(new ModRow("opti", "OptiScaler", Color.FromArgb(0xFF, 0xB3, 0x8B, 0xFF), "opti/install", version,
                 L.F("as {0}, loaded by Windows", opti.FileName), m is not null,
                 FilesOf(f => In(f, "opti/")), ProblemsOf("opti/"),
-                m is null ? null : () => { Uninstall_Click(this, new RoutedEventArgs()); return Task.CompletedTask; },
+                m is null ? null : UninstallOptiAsync,
                 L.T("Not installed by Hybrid Launcher: its files have no record to be taken out by. Install OptiScaler here to manage it.")));
         }
         if (r.ReShade is { } rs)
@@ -292,12 +378,18 @@ public partial class GamePage
 
     async Task UninstallUltraAsync()
     {
-        if (_game is not { } game || !await ConfirmAsync(L.T("Uninstall Ultra+?"), L.T("Removes Ultra+ from this game and puts back the files it replaced."), L.T("Uninstall"))) return;
-        if (await UltraPlusLibrary.UninstallAsync(game))
+        if (_game is not { } game) return;
+        if (!global::HybridLauncher.Views.ModContext.UninstallingAll && !await ConfirmAsync(L.T("Uninstall Ultra+?"), L.T("Removes Ultra+ from this game and puts back the files it replaced."), L.T("Uninstall"))) return;
+        UltraPlusLibrary.Unattended = global::HybridLauncher.Views.ModContext.UninstallingAll;
+        try
         {
-            _ultra?.Refresh();
-            _ = UpdateModBadgesAsync();
+            if (await UltraPlusLibrary.UninstallAsync(game))
+            {
+                _ultra?.Refresh();
+                _ = UpdateModBadgesAsync();
+            }
         }
+        finally { if (global::HybridLauncher.Views.ModContext.UninstallingAll) UltraPlusLibrary.Unattended = false; }
         _ = RefreshModsOverviewAsync();
     }
 
@@ -322,6 +414,12 @@ public partial class GamePage
             ToolTipService.SetToolTip(check, L.T("Reads the game folder again: mods in each other's way, files a game update put back, add-ons nothing loads"));
             right.Children.Add(check);
             right.Children.Add(ModUi.Action(L.T("Open folder"), "\uE838", () => Shell.Open(read.Dir)));
+            if (rows!.Any(r => r.ByHybrid && r.Uninstall is not null))
+            {
+                var all = ModUi.Action(L.T("Uninstall all"), "\uE74D", () => _ = UninstallAllModsAsync());
+                ToolTipService.SetToolTip(all, L.T("Takes out every mod Hybrid Launcher installed here; mods put in another way stay"));
+                right.Children.Add(all);
+            }
         }
         return Ui.Heading("\uE8FD", L.T("Installed mods"), right, subtitle, Palettes.Adapt(Color.FromArgb(0xFF, 0xF0, 0x7F, 0x2A)));
     }

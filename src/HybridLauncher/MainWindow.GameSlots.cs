@@ -65,6 +65,63 @@ public sealed partial class MainWindow
         WatchMemory();
     }
 
+    Microsoft.UI.Xaml.Controls.Grid? _propsLayer;
+    // The page whose Properties are open over the window (null when none).
+    GamePage? _propsOwner;
+
+    /// <summary>
+    /// A game's Properties, over the page on screen (2.1-rc.9): from the library or the list it opens right there, without going
+    /// to the game's page. The game's page (kept, or made unseen) holds the window; it is left again once the window closes.
+    /// </summary>
+    public void ShowProperties(string id)
+    {
+        if (AppState.FindAny(id) is null) return;
+        if (Shown is GamePage { GameId: var shown } here && string.Equals(shown, id, StringComparison.OrdinalIgnoreCase))
+        {
+            here.ShowProperties();
+            return;
+        }
+        using var __perf = Helpers.UiPerf.Scope("MainWindow.ShowProperties");
+        // Another game's Properties still open over the window: closed first, so its page lets go of the layer and is left.
+        _propsOwner?.CloseProperties();
+        bool prepared = _gamePages.TryGetValue(id, out var entry) && ReferenceEquals(entry.Page, _preparing);
+        if (prepared)
+        {
+            _prepTimer?.Stop();
+            EndPreparing(show: false);
+        }
+        GamePage page;
+        if (entry.Page is { } kept) page = kept;
+        else
+        {
+            // Made unseen, like a page prepared ahead (see PrepareStep): it stays in the window's pages for a later visit.
+            page = new GamePage { Visibility = Visibility.Collapsed };
+            GameHost.Children.Add(page);
+            DropOldestPages(GamePagesMax - 1);
+        }
+        _gamePages[id] = (page, System.Diagnostics.Stopwatch.GetTimestamp());
+        page.Enter(id);
+        if (_propsLayer is null)
+        {
+            _propsLayer = new Microsoft.UI.Xaml.Controls.Grid
+            {
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x99, 0, 0, 0)),
+                IsTabStop = true, Visibility = Visibility.Collapsed,
+            };
+            // Under the title bar: its buttons stay usable.
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(_propsLayer, 1);
+            Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(_propsLayer, 50);
+            RootGrid.Children.Add(_propsLayer);
+        }
+        _propsOwner = page;
+        page.ShowPropertiesIn(_propsLayer, () =>
+        {
+            _propsOwner = null;
+            // Not on screen: the page stops its work again (unless it became the page shown meanwhile, or is being prepared).
+            if (!ReferenceEquals(page, _shownGame) && !ReferenceEquals(page, _preparing)) page.Leave();
+        });
+    }
+
     /// <summary>Self-test (snappy): the games whose page is ready (prepared or shown before).</summary>
     internal IEnumerable<string> ReadyGamePages => _gamePages.Where(kv => !ReferenceEquals(kv.Value.Page, _preparing)).Select(kv => kv.Key);
 
@@ -172,7 +229,8 @@ public sealed partial class MainWindow
     {
         while (_gamePages.Count > keep)
         {
-            var oldest = _gamePages.Where(kv => !ReferenceEquals(kv.Value.Page, _shownGame) && !ReferenceEquals(kv.Value.Page, _preparing)).MinBy(kv => kv.Value.Used);
+            // Never the page shown, the one being prepared, or the one holding Properties over the window.
+            var oldest = _gamePages.Where(kv => !ReferenceEquals(kv.Value.Page, _shownGame) && !ReferenceEquals(kv.Value.Page, _preparing) && !ReferenceEquals(kv.Value.Page, _propsOwner)).MinBy(kv => kv.Value.Used);
             if (oldest.Value.Page is null) return;
             _gamePages.Remove(oldest.Key);
             oldest.Value.Page.Retire();
@@ -303,8 +361,8 @@ public sealed partial class MainWindow
     internal void ForgetGamePage(string id)
     {
         if (!_gamePages.TryGetValue(id, out var entry)) return;
-        // The page on screen stays where it is (else it stayed in GameHost for good beside its replacement): built again next time.
-        if (ReferenceEquals(entry.Page, _shownGame)) { GamePage.RequestFresh(id); return; }
+        // The page on screen (or holding Properties over the window) stays where it is (else it stayed in GameHost for good beside its replacement): built again next time.
+        if (ReferenceEquals(entry.Page, _shownGame) || ReferenceEquals(entry.Page, _propsOwner)) { GamePage.RequestFresh(id); return; }
         _gamePages.Remove(id);
         if (ReferenceEquals(entry.Page, _preparing)) EndPreparing(show: false);
         entry.Page.Retire();

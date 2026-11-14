@@ -120,7 +120,7 @@ public static class TabsDialog
             e.Cancel = true;
             Fill(true);
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
+        if (await dialog.ShowOnceAsync() != ContentDialogResult.Primary) return false;
 
         var order = list.Items.OfType<Grid>().Select(g => (string)g.Tag).ToList();
         GameTabs.SaveOrder(order);

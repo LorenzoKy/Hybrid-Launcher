@@ -36,7 +36,11 @@ public sealed class DownloadPlan
     /// <summary>An update of a game already in <see cref="InstallDir"/>: files already as the new build has them are not downloaded again.</summary>
     public bool Update { get; set; }
     /// <summary>Run after the files are in place (reads the store's launch info that came with the files, writes extra files).</summary>
-    public Action<DownloadPlan>? Finish { get; init; }
+    public Action<DownloadPlan>? Finish { get; set; }
+    /// <summary>An update's check of the files on disk (a verify, 2.1-rc.3): called with how many were checked of how many.</summary>
+    public Action<int, int>? Checked { get; set; }
+    /// <summary>After an update: how many files did not match and were downloaded again.</summary>
+    public int Fetched { get; set; }
     public long TotalBytes => Files.Where(f => !f.Directory && f.Slice is null).Sum(f => f.Size);
 }
 
@@ -124,12 +128,22 @@ public static class DirectDownloader
 
         // An update, like Steam's: a file already as the new build has it (same size, same checksum) is kept; only the files
         // that changed are downloaded. Files the build does not list (mods, settings, saves) are never touched.
+        // GOG packs small files into containers that never stay on disk: each of their files is checked where it lies, and a
+        // container is downloaded only when one of its files is missing or different (2.1-rc.3 audit: every update fetched
+        // every container and wrote every small file again).
+        var slices = plan.Files.Where(f => f.Slice is not null).ToList();
+        var keptSlices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skipped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (plan.Update)
         {
-            int kept = 0;
+            int kept = 0, seen = 0, all = files.Count + slices.Count;
+            plan.Checked?.Invoke(0, all);
             foreach (var f in files)
             {
                 ct.ThrowIfCancellationRequested();
+                seen++;
+                if (seen % 16 == 0) plan.Checked?.Invoke(seen, all);
+                if (f.Temporary) continue;
                 if (done.Contains(f.Path) || f.Chunks.Any(c => partial.Contains(ChunkKey(f, c)))) continue;
                 if (!Same(Full(root, f.Path), f)) continue;
                 done.Add(f.Path);
@@ -137,8 +151,24 @@ public static class DirectDownloader
                 kept++;
                 progress(bytes);
             }
+            foreach (var s in slices)
+            {
+                ct.ThrowIfCancellationRequested();
+                seen++;
+                if (seen % 16 == 0) plan.Checked?.Invoke(seen, all);
+                if (Same(Full(root, s.Path), s)) { keptSlices.Add(s.Path); kept++; }
+            }
+            foreach (var container in files.Where(f => f.Temporary))
+            {
+                if (slices.Any(s => s.Slice!.Value.Container == container.Path && !keptSlices.Contains(s.Path))) continue;
+                skipped.Add(container.Path);
+                bytes += container.Size;
+            }
+            plan.Checked?.Invoke(all, all);
+            plan.Fetched = files.Count(f => !done.Contains(f.Path) && !f.Temporary) + slices.Count(s => !keptSlices.Contains(s.Path));
             lock (stateLock) WriteState(statePath, done);
-            Log.Info($"Update of {root}: {kept} of {files.Count} files already up to date");
+            progress(bytes);
+            Log.Info($"Update of {root}: {kept} of {files.Count - skipped.Count + slices.Count} files already up to date");
         }
         var tasks = new List<Task>();
         var handles = new List<SafeFileHandle>();
@@ -146,7 +176,7 @@ public static class DirectDownloader
         {
         foreach (var file in files)
         {
-            if (done.Contains(file.Path) && File.Exists(Full(root, file.Path))) continue;
+            if (done.Contains(file.Path) && File.Exists(Full(root, file.Path)) || skipped.Contains(file.Path)) continue;
             ct.ThrowIfCancellationRequested();
             var path = Full(root, file.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -210,10 +240,11 @@ public static class DirectDownloader
             foreach (var h in handles) h.Dispose();
         }
 
-        foreach (var slice in plan.Files.Where(f => f.Slice is not null))
+        foreach (var slice in slices)
         {
             ct.ThrowIfCancellationRequested();
             var (container, offset) = slice.Slice!.Value;
+            if (keptSlices.Contains(slice.Path) || skipped.Contains(container)) continue;
             var target = Full(root, slice.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             await using var src = new FileStream(Full(root, container), FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -236,6 +267,9 @@ public static class DirectDownloader
         {
             var info = new FileInfo(path);
             if (!info.Exists || info.Length != f.Size) return false;
+            // An empty file is what it should be once its size matches (it has no checksum to compare, and writing it again
+            // every update changed nothing).
+            if (f.Size == 0) return true;
             if (f.Sha1 is null && f.Md5 is null) return false; // nothing to compare with: download it
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20, FileOptions.SequentialScan);
             var hash = f.Sha1 is not null ? System.Security.Cryptography.SHA1.HashData(stream) : System.Security.Cryptography.MD5.HashData(stream);
