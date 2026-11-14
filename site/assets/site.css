@@ -112,6 +112,7 @@ h1 .glow.red { background-image: linear-gradient(92deg, #ff8fa6 0%, var(--red-so
 .logos li { transition: color .2s ease; }
 .logos li:hover { color: var(--text); }
 .logos .sep { width: 1px; height: 18px; background: var(--line); }
+.logos-note { margin: 14px 0 0; text-align: center; color: var(--faint); font-size: 12px; letter-spacing: .02em; opacity: .8; }
 
 /* Sections */
 .band { padding: 120px 0; }
