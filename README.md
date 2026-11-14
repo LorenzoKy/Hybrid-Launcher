@@ -39,7 +39,7 @@ mods that make them run and look better: **OptiScaler** first of all, then **ReS
 in early and experimental form, **DLSS 5**. A launcher and a mod tool in one window, for several stores at once.
 
 <p align="center">
-  <img src="docs/images/readme-game-page.webp" width="100%" alt="A game's page in Hybrid Launcher: the tabs across the top, the game's videos and pictures, its news and updates, and cards for activity, mods, controllers, how long to beat and scores" />
+  <img src="docs/images/readme-game-page.webp" width="100%" alt="A game's page in Hybrid Launcher: the library sidebar, the banner with its upscalers, the Play button with last played, play time, HDR and cloud status, the tabs, the trailer and the Achievements card with the latest and rarest unlocks" />
 </p>
 
 > [!IMPORTANT]
