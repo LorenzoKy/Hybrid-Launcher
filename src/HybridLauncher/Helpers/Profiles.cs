@@ -134,19 +134,28 @@ public static class Profiles
         var name = new TextBox { Header = L.T("Name"), Text = edit?.Name ?? "", PlaceholderText = L.T("Your name or nickname"), MaxLength = 32 };
         var previewHost = new Border { HorizontalAlignment = HorizontalAlignment.Center };
         var hint = new TextBlock { Style = (Style)ThemeRes.Current["RowDescription"], TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center };
+        // A picture is framed in the cropper (2.1.4): dragged and zoomed under the circle, saved as what the circle shows.
+        Controls.AvatarCropper? cropper = null;
         void Preview()
         {
+            if (picked is not null)
+            {
+                if (cropper is null || pickedNew && previewHost.Child != cropper) previewHost.Child = cropper = new Controls.AvatarCropper(picked);
+                hint.Text = L.T("Drag the picture to move it; scroll or use the slider to zoom.");
+                return;
+            }
             var p = new UserProfile { Name = name.Text.Trim().Length > 0 ? name.Text.Trim() : "?", Picture = picked };
             previewHost.Child = Avatar(p, 112, ring: true);
-            hint.Text = picked is null ? L.T("Pick a picture for your profile: a photo, an avatar, your favourite character.") : L.T("Looking good. Pick another to change it.");
+            hint.Text = L.T("Pick a picture for your profile: a photo, an avatar, your favourite character.");
         }
-        name.TextChanged += (_, _) => Preview();
+        name.TextChanged += (_, _) => { if (picked is null) Preview(); };
         var pick = new Button { Content = L.T("Choose a picture…"), HorizontalAlignment = HorizontalAlignment.Center, Style = (Style)ThemeRes.Current["AccentButtonStyle"] };
         pick.Click += async (_, _) =>
         {
             if (App.Window is not { } w || await Pickers.PickFileAsync(w, ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif") is not { } file) return;
             picked = file;
             pickedNew = true;
+            cropper = null;
             Preview();
         };
         var panel = new StackPanel { Spacing = 14, Width = 380 };
@@ -170,13 +179,15 @@ public static class Profiles
 
         var profile = edit ?? new UserProfile();
         profile.Name = name.Text.Trim();
-        if (pickedNew && picked is not null)
+        if (picked is not null && (pickedNew || cropper?.Changed == true))
         {
             try
             {
-                // A copy in the data folder (a new name each time, the old picture may still be decoded in memory).
-                var target = System.IO.Path.Combine(AppInfo.ProfilesDir, $"{profile.Id}-{DateTime.UtcNow:yyyyMMddHHmmssfff}{System.IO.Path.GetExtension(picked).ToLowerInvariant()}");
-                File.Copy(picked, target, overwrite: true);
+                // A copy in the data folder (a new name each time, the old picture may still be decoded in memory): the framed
+                // square as a PNG, or the file itself when the cropper could not read it.
+                var target = System.IO.Path.Combine(AppInfo.ProfilesDir, $"{profile.Id}-{DateTime.UtcNow:yyyyMMddHHmmssfff}.png");
+                if (cropper is not null) await cropper.SaveAsync(target);
+                else File.Copy(picked, target = System.IO.Path.ChangeExtension(target, System.IO.Path.GetExtension(picked).ToLowerInvariant()), overwrite: true);
                 var old = profile.Picture;
                 profile.Picture = target;
                 if (old is not null && !old.Equals(target, StringComparison.OrdinalIgnoreCase)) DeletePicture(old);

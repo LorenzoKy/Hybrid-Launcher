@@ -223,7 +223,35 @@
                             </Grid.RowDefinitions>
 
                             <!-- Play, then Stop while the game runs (drawn by the control itself: gradient, glow, spring). -->
-                            <controls:PlayButton x:Name="PlayButton" VerticalAlignment="Stretch" />
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <controls:PlayButton x:Name="PlayButton" VerticalAlignment="Stretch" />
+                                <!-- 2.1.4: an update of the game found and not started (checked when the page opens); a click starts it. -->
+                                <Button x:Name="GameUpdateButton" Visibility="Collapsed" VerticalAlignment="Stretch" Padding="14,0,18,0" CornerRadius="9" BorderThickness="0" Click="GameUpdate_Click">
+                                    <Button.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#3C97F5" Offset="0" />
+                                            <GradientStop Color="#1F6FD6" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Button.Background>
+                                    <Button.Resources>
+                                        <LinearGradientBrush x:Key="ButtonBackgroundPointerOver" StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#55A6FA" Offset="0" />
+                                            <GradientStop Color="#2A7CE3" Offset="1" />
+                                        </LinearGradientBrush>
+                                        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#1A5FB8" />
+                                    </Button.Resources>
+                                    <StackPanel Orientation="Horizontal" Spacing="11">
+                                        <Grid Width="28" Height="28" VerticalAlignment="Center">
+                                            <Ellipse Fill="#33FFFFFF" />
+                                            <FontIcon Glyph="&#xE74A;" FontSize="13" Foreground="White" />
+                                        </Grid>
+                                        <StackPanel VerticalAlignment="Center" Spacing="1">
+                                            <TextBlock x:Name="GameUpdateTitle" Text="Update" FontSize="15" FontWeight="SemiBold" Foreground="White" />
+                                            <TextBlock x:Name="GameUpdateText" Text="New version ready" FontSize="11" Foreground="#D9FFFFFF" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
 
                             <!-- Steam library style: last session and time played. -->
                             <StackPanel x:Name="PlayStatsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="24" Margin="14,0,10,0" VerticalAlignment="Center" Background="Transparent">
@@ -244,7 +272,7 @@
                             </StackPanel>
 
                             <!-- Not on this PC yet: the download's progress, Steam style (filled from code, in place of the play stats). -->
-                            <Grid x:Name="DownloadPanel" Grid.Column="1" Width="380" Margin="6,0,6,0" VerticalAlignment="Center" RowSpacing="5" Visibility="Collapsed" Background="Transparent">
+                            <Grid x:Name="DownloadPanel" Grid.Column="1" Width="220" Margin="14,0,10,0" VerticalAlignment="Center" RowSpacing="6" Visibility="Collapsed" Background="Transparent">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -255,21 +283,21 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="DownloadStateText" FontSize="10" FontWeight="SemiBold" CharacterSpacing="60" Opacity="0.75" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock x:Name="DownloadSpeedText" Grid.Column="1" FontSize="12" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="DownloadStateText" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="DownloadSpeedText" Grid.Column="1" FontSize="12" Opacity="0.7" />
                                 </Grid>
                                 <Grid Grid.Row="1" ColumnSpacing="8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <ProgressBar x:Name="DownloadBar" Maximum="1" MinHeight="6" VerticalAlignment="Center" />
+                                    <ProgressBar x:Name="DownloadBar" Maximum="1" MinHeight="4" VerticalAlignment="Center" />
                                     <!-- Hybrid Launcher's own downloads: pause and resume here, as in Steam's library. -->
-                                    <Button x:Name="DownloadPauseButton" Grid.Column="1" Style="{StaticResource IconButton}" Width="28" Height="28" Padding="0" Visibility="Collapsed" Click="DownloadPause_Click">
-                                        <FontIcon x:Name="DownloadPauseGlyph" FontSize="12" />
+                                    <Button x:Name="DownloadPauseButton" Grid.Column="1" Style="{StaticResource IconButton}" Width="24" Height="24" Padding="0" Visibility="Collapsed" Click="DownloadPause_Click">
+                                        <FontIcon x:Name="DownloadPauseGlyph" FontSize="11" />
                                     </Button>
                                 </Grid>
-                                <TextBlock x:Name="DownloadDetailText" Grid.Row="2" FontSize="12" Opacity="0.75" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="DownloadDetailText" Grid.Row="2" FontSize="11" Opacity="0.7" TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
                             </Grid>
 
                             <!-- Smart HDR for this game: Windows HDR on while it runs, off again when it closes. -->

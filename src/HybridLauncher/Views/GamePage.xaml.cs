@@ -278,6 +278,14 @@ public partial class GamePage : Page, IAutoHost
         CloudSync.Changed += OnCloudChanged;
         Downloads.Changed += OnDownloadsChanged;
         AppState.GamesChanged += OnDownloadsChanged;
+        GameUpdater.Changed += ShowGameUpdate;
+        // 2.1.4: this game's update is checked once the page is on screen (in the background, never in the way of opening it).
+        ShowGameUpdate();
+        if (_game is { NotInstalled: false, Installing: false } shown)
+        {
+            var id = shown.Id;
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (_game?.Id == id) _ = GameUpdater.CheckGameAsync(id); });
+        }
         MediaPolicy.Changed += UpdateFloor;
         UltraPlusLibrary.Changed += OnUltraChanged;
         GameJobs.Changed += OnJobsChanged;
@@ -928,6 +936,7 @@ public partial class GamePage : Page, IAutoHost
         CloudSync.Changed -= OnCloudChanged;
         Downloads.Changed -= OnDownloadsChanged;
         AppState.GamesChanged -= OnDownloadsChanged;
+        GameUpdater.Changed -= ShowGameUpdate;
         MediaPolicy.Changed -= UpdateFloor;
         UltraPlusLibrary.Changed -= OnUltraChanged;
         GameJobs.Changed -= OnJobsChanged;
@@ -2514,6 +2523,7 @@ public partial class GamePage : Page, IAutoHost
     void OnDownloadsChanged()
     {
         if (_game is null) return;
+        ShowGameUpdate();
         // Installed meanwhile: the page becomes the installed game's (Play, mods, folders). The download ends before the rescan
         // that lists the game, so this runs again on GamesChanged; without it the page kept showing Download until clicked.
         if ((_game.NotInstalled || _game.Installing) && AppState.Find(_game.Id) is { Installing: false, NotInstalled: false } real)
@@ -2523,6 +2533,29 @@ public partial class GamePage : Page, IAutoHost
             App.Window?.DropLastBack();
             return;
         }
+        UpdateRunState();
+    }
+
+    /// <summary>Update in the launch bar (2.1.4): this game has an update found and not started.</summary>
+    void ShowGameUpdate()
+    {
+        if (_game is null) return;
+        var pending = GameUpdater.AvailableFor(_game.Id);
+        GameUpdateButton.Visibility = pending is not null && Downloads.Active(_game.Id) is null ? Visibility.Visible : Visibility.Collapsed;
+        if (pending is not null)
+            ToolTipService.SetToolTip(GameUpdateButton, L.F("A new version of {0} is out. Click to update it: only the files that changed are downloaded, in Downloads.", _game.Title));
+    }
+
+    /// <summary>Self-test: whether Update shows in the launch bar, and a click on it.</summary>
+    internal bool SelfTestUpdateShown => GameUpdateButton.Visibility == Visibility.Visible;
+    internal void SelfTestClickUpdate() => GameUpdate_Click(GameUpdateButton, new RoutedEventArgs());
+
+    void GameUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_game is null) return;
+        if (GameSessions.IsActive(_game.Id)) { App.Window?.ShowError(L.F("{0} is running", _game.Title), L.T("Close the game first: it updates once it is closed.")); return; }
+        GameUpdater.StartAvailable(_game.Id);
+        ShowGameUpdate();
         UpdateRunState();
     }
 
@@ -2536,8 +2569,10 @@ public partial class GamePage : Page, IAutoHost
         else PlayStatsPanel.Visibility = _laidOutWidth < 980 && !_narrowBar || _laidOutWidth < 520 || !Part(PageParts.PlayStats) ? Visibility.Collapsed : Visibility.Visible;
         if (!show) return;
         var j = job!;
-        DownloadStateText.Text = OwnedLibrary.StateText(j).ToUpper(System.Globalization.CultureInfo.CurrentCulture) + (j.Total > 0 ? $"  ·  {j.Fraction:P0}" : "");
-        DownloadSpeedText.Text = j.State == DownloadState.Downloading && j.Speed > 0 ? $"{DiskUsage.Format((long)j.Speed)}/s" : "";
+        // Two lines (2.1.4): what it is doing and how far, the time left on the right; the bar under them. Bytes and speed are
+        // in the tooltip; the third line only says something out of the ordinary (queued, reading the list, an error).
+        DownloadStateText.Text = OwnedLibrary.StateText(j) + (j.Total > 0 ? $"  {j.Fraction:P0}" : "");
+        DownloadSpeedText.Text = j.Remaining is { } rest ? L.F("{0} left", rest.TotalHours >= 1 ? $"{(int)rest.TotalHours} h {rest.Minutes} min" : rest.TotalMinutes >= 1 ? $"{rest.Minutes} min" : $"{rest.Seconds} s") : "";
         DownloadBar.Value = j.Fraction;
         DownloadBar.IsIndeterminate = j.State == DownloadState.Waiting && !j.Queued || (j.State == DownloadState.Downloading && j.Total <= 0);
         DownloadBar.ShowPaused = j.State == DownloadState.Paused && j.Error is null || j.Queued;
@@ -2547,9 +2582,11 @@ public partial class GamePage : Page, IAutoHost
         bool resume = j.State == DownloadState.Paused || j.Queued;
         DownloadPauseGlyph.Glyph = j.Error is not null && j.State == DownloadState.Paused ? "" : resume ? "" : "";
         ToolTipService.SetToolTip(DownloadPauseButton, j.Error is not null && j.State == DownloadState.Paused ? L.T("Retry") : j.Queued ? L.T("Start now") : resume ? L.T("Resume") : L.T("Pause"));
+        var figures = new List<string>();
+        if (j.Total > 0) figures.Add(L.F("{0} of {1}", DiskUsage.Format(j.Done), DiskUsage.Format(j.Total)));
+        if (j.State == DownloadState.Downloading && j.Speed > 0) figures.Add($"{DiskUsage.Format((long)j.Speed)}/s");
+        ToolTipService.SetToolTip(DownloadPanel, figures.Count > 0 ? string.Join("  ·  ", figures) : null);
         var parts = new List<string>();
-        if (j.Total > 0) parts.Add(L.F("{0} of {1}", DiskUsage.Format(j.Done), DiskUsage.Format(j.Total)));
-        if (j.Remaining is { } left) parts.Add(L.F("{0} left", left.TotalHours >= 1 ? $"{(int)left.TotalHours} h {left.Minutes} min" : left.TotalMinutes >= 1 ? $"{left.Minutes} min" : $"{left.Seconds} s"));
         if (j.Direct)
         {
             if (j.Queued) parts.Add(L.T("starts when the download before it finishes"));
@@ -2559,6 +2596,7 @@ public partial class GamePage : Page, IAutoHost
         else if (j.State == DownloadState.Waiting) parts.Add(L.T("confirm the install in the launcher"));
         ToolTipService.SetToolTip(DownloadDetailText, j.Error);
         DownloadDetailText.Text = string.Join("  ·  ", parts);
+        DownloadDetailText.Visibility = parts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     async void Play()
@@ -2605,7 +2643,7 @@ public partial class GamePage : Page, IAutoHost
         if (state == GameRunState.Stopped && job is { IsUpdate: true })
         {
             // Updating (or an update paused halfway): no Play until it is done, as on Steam.
-            PlayButton.SetMode(Controls.PlayButton.Mode.Downloading);
+            PlayButton.SetMode(Controls.PlayButton.Mode.Updating);
             HdrToggle.IsEnabled = false;
             return;
         }
@@ -4562,11 +4600,13 @@ public partial class GamePage : Page, IAutoHost
         {
             PlayButton.SetMode(mode);
             PlayButton.UpdateLayout();
-            // Between the narrowest face and the one its word needs (a longer word widens the button, never shrinks the word).
-            if (PlayButton.ActualWidth > PlayButton.MaxWidth + 1 || PlayButton.ActualWidth < 191) throw new InvalidOperationException($"{mode}: {PlayButton.ActualWidth:F0} px (max {PlayButton.MaxWidth:F0})");
-            // Every word at Play's size, all of it showing: never smaller, squeezed or cut.
+            // 2.1.4-rc.3: Install, Downloading and Updating are a status, a smaller word on a face just around it (never wider
+            // than Play); the others between the narrowest face and the one their word needs.
+            bool compact = mode is Controls.PlayButton.Mode.Install or Controls.PlayButton.Mode.Downloading or Controls.PlayButton.Mode.Updating;
+            if (PlayButton.ActualWidth > PlayButton.MaxWidth + 1 || PlayButton.ActualWidth < (compact ? 80 : 191)) throw new InvalidOperationException($"{mode}: {PlayButton.ActualWidth:F0} px (max {PlayButton.MaxWidth:F0})");
+            // Every word at its size, all of it showing: never smaller, squeezed or cut.
             var (size, whole, detail) = PlayButton.SelfTestLabel();
-            if (size != 24) throw new InvalidOperationException($"{mode}: the word is {size} px, Play's is 24");
+            if (size != (compact ? 16 : 24)) throw new InvalidOperationException($"{mode}: the word is {size} px, should be {(compact ? 16 : 24)}");
             if (!whole) throw new InvalidOperationException($"{mode}: the word does not fit in the button: {detail}");
             // Icon and word centred together on the face (2.0.0-rc.5), no blank beside them.
             if (PlayButton.SelfTestWordOffCentre() is var off && Math.Abs(off) > 1.5) throw new InvalidOperationException($"{mode}: the word is {off:F1} px off the button's centre");

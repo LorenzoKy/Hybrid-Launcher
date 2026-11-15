@@ -387,7 +387,7 @@ public static class SteamAccount
     /// The game's public build for Windows: its depots in English (or for every language), 64-bit when there is a choice,
     /// each as the files of its manifest, chunk by chunk from Steam's CDN.
     /// </summary>
-    public static async Task<DownloadPlan> PlanAsync(OwnedGame game, string root, CancellationToken ct)
+    public static async Task<DownloadPlan> PlanAsync(OwnedGame game, string root, CancellationToken ct, IReadOnlyDictionary<uint, ulong>? onlyDepots = null)
     {
         var s = await SessionAsync(ct);
         var appId = uint.Parse(game.Id["steam:".Length..]);
@@ -414,11 +414,19 @@ public static class SteamAccount
         {
             if (!uint.TryParse(d.Name, out var depotId)) continue;
             var c = d["config"];
-            if (c["oslist"].Value is { Length: > 0 } os && !os.Contains("windows", StringComparison.OrdinalIgnoreCase)) continue;
-            if (c["language"].Value is { Length: > 0 } lang && lang != "english") continue;
-            if (any64 && c["osarch"].Value == "32") continue;
             if (d["depotfromapp"].Value is { Length: > 0 } || d["sharedinstall"].Value == "1") continue;
-            if (d["dlcappid"].Value is { Length: > 0 }) continue;
+            if (onlyDepots is not null)
+            {
+                // An update of a game Steam installed (2.1.4): exactly the depots Steam put in (its language, its DLC).
+                if (!onlyDepots.ContainsKey(depotId)) continue;
+            }
+            else
+            {
+                if (c["oslist"].Value is { Length: > 0 } os && !os.Contains("windows", StringComparison.OrdinalIgnoreCase)) continue;
+                if (c["language"].Value is { Length: > 0 } lang && lang != "english") continue;
+                if (any64 && c["osarch"].Value == "32") continue;
+                if (d["dlcappid"].Value is { Length: > 0 }) continue;
+            }
             var gid = d["manifests"]["public"]["gid"].Value ?? d["manifests"]["public"].Value;
             if (!ulong.TryParse(gid, out var manifestId)) continue;
             depots.Add((depotId, manifestId));
@@ -446,6 +454,23 @@ public static class SteamAccount
             if (manifest is null) throw new IOException(L.F("Steam did not send the file list of depot {0}.", depotId));
             if (manifest.FilenamesEncrypted) manifest.DecryptFilenames(key.DepotKey);
             var depotKey = key.DepotKey;
+            // An update of Steam's own install (2.1.4): the file list of the build installed tells which files did not change, so
+            // they are kept without reading them all (Steam's own way). Without it every file is compared by its checksum.
+            Dictionary<string, (ulong Size, string? Sha1)>? before = null;
+            if (onlyDepots is not null && onlyDepots.TryGetValue(depotId, out var oldId) && oldId != 0)
+                before = oldId == manifestId ? null : await OldFilesAsync(depotId, oldId);
+            bool sameDepot = onlyDepots is not null && onlyDepots.TryGetValue(depotId, out var same) && same == manifestId;
+            async Task<Dictionary<string, (ulong, string?)>?> OldFilesAsync(uint depot, ulong old)
+            {
+                try
+                {
+                    var oldCode = await s.Content.GetManifestRequestCode(depot, appId, old, "public");
+                    var m = await cdn.DownloadManifestAsync(depot, old, oldCode, PickServer(), key.DepotKey);
+                    if (m.FilenamesEncrypted) m.DecryptFilenames(key.DepotKey);
+                    return (m.Files ?? []).ToDictionary(f => f.FileName.Replace('/', '\\'), f => (f.TotalSize, f.FileHash is { Length: 20 } h ? (string?)Convert.ToHexString(h) : null), StringComparer.OrdinalIgnoreCase);
+                }
+                catch (Exception ex) { Log.Warn($"Steam depot {depot}: the installed build's file list ({old}) did not load, every file is checked: {ex.Message}"); return null; }
+            }
             foreach (var f in manifest.Files ?? [])
             {
                 var path = f.FileName.Replace('/', '\\');
@@ -456,7 +481,9 @@ public static class SteamAccount
                     int written = await cdn.DownloadDepotChunkAsync(depotId, c, PickServer(), buffer, depotKey);
                     return written == buffer.Length ? buffer : buffer[..written];
                 })).ToList();
-                plan.Files.Add(new PlanFile { Path = path, Size = (long)f.TotalSize, Chunks = chunks, Sha1 = f.FileHash is { Length: 20 } h ? Convert.ToHexString(h) : null });
+                var sha = f.FileHash is { Length: 20 } h ? Convert.ToHexString(h) : null;
+                bool unchanged = sameDepot || before is not null && before.TryGetValue(path, out var was) && was.Size == f.TotalSize && sha is not null && sha.Equals(was.Sha1, StringComparison.OrdinalIgnoreCase);
+                plan.Files.Add(new PlanFile { Path = path, Size = (long)f.TotalSize, Chunks = chunks, Sha1 = sha, Unchanged = unchanged });
             }
         }
         // Steamworks games look for their app id next to the exe when they are not started by Steam itself.
@@ -469,6 +496,14 @@ public static class SteamAccount
             InstallDir = plan.InstallDir, Files = plan.Files, Exe = plan.Exe, Args = plan.Args, WorkingDir = plan.WorkingDir, Version = plan.Version,
             Finish = p =>
             {
+                if (p.LauncherOwned)
+                {
+                    // Steam's own install: its app manifest says the new build, so Steam counts the game up to date.
+                    if (PatchAppManifest(p.InstallDir, appText, p.Version, depots) && Detection.SteamScanner.ClientRunning() && !Detection.SteamScanner.ClientBusy())
+                        // Steam reads app manifests only when it starts: reopen it (minimized), else it would fetch the update again.
+                        _ = Detection.SteamScanner.RestartClientAsync("-silent");
+                    return;
+                }
                 try
                 {
                     var dirOfExe = finishExe is null ? p.InstallDir : Path.GetDirectoryName(DirectDownloader.Full(p.InstallDir, finishExe))!;
@@ -482,6 +517,39 @@ public static class SteamAccount
                     _ = Detection.SteamScanner.RestartClientAsync("-silent");
             },
         };
+    }
+
+    /// <summary>
+    /// The app manifest of a game Steam installed, brought up to the build Hybrid Launcher just downloaded (2.1.4): build id and
+    /// target build, fully installed, and each depot's manifest. The rest of Steam's record is kept as it is.
+    /// </summary>
+    internal static bool PatchAppManifest(string installDir, string appId, string? buildId, List<(uint Id, ulong Manifest)> depots)
+    {
+        try
+        {
+            if (buildId is not { Length: > 0 }) return false;
+            var steamapps = Path.GetDirectoryName(Path.GetDirectoryName(installDir));
+            if (steamapps is null) return false;
+            var file = Path.Combine(steamapps, $"appmanifest_{appId}.acf");
+            if (!File.Exists(file)) return false;
+            var text = File.ReadAllText(file);
+            string Set(string t, string key, string value) =>
+                System.Text.RegularExpressions.Regex.Replace(t, $$"""("{{key}}"\s+")[^"]*(")""", m => m.Groups[1].Value + value + m.Groups[2].Value,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            text = Set(text, "buildid", buildId);
+            text = Set(text, "TargetBuildID", buildId);
+            text = Set(text, "StateFlags", "4");
+            text = Set(text, "UpdateResult", "0");
+            text = Set(text, "LastUpdated", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+            foreach (var (id, manifest) in depots)
+                text = System.Text.RegularExpressions.Regex.Replace(text, $$"""("{{id}}"\s*\{[^}]*?"manifest"\s+")\d+(")""", m => m.Groups[1].Value + manifest + m.Groups[2].Value);
+            var temp = file + ".hl-tmp";
+            File.WriteAllText(temp, text);
+            File.Move(temp, file, overwrite: true);
+            Log.Info($"Steam app manifest brought to build {buildId}: {file}");
+            return true;
+        }
+        catch (Exception ex) { Log.Warn($"Steam app manifest update for {appId}: {ex.Message}"); return false; }
     }
 
     /// <summary>

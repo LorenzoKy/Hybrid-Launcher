@@ -635,7 +635,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Keep games up to date" Style="{StaticResource RowHeader}" />
-                        <TextBlock Text="Games Hybrid Launcher downloaded (Steam, Epic Games, GOG) are checked when Hybrid Launcher starts and every six hours, and update in Downloads by themselves, like on Steam: only the files that changed are downloaded, mods and settings stay. A game does not start while it updates." Style="{StaticResource RowDescription}" />
+                        <TextBlock Text="Steam, Epic Games and GOG games are checked when Hybrid Launcher starts and every six hours, and update in Downloads by themselves: the ones Hybrid Launcher downloaded, and the ones their launcher installed when you are signed in to that store in Downloads → Accounts. Only the files that changed are downloaded, mods and settings stay, and the launcher sees the game as up to date. A game does not start while it updates." Style="{StaticResource RowDescription}" />
                         <TextBlock x:Name="UpdateCheckText" Style="{StaticResource RowDescription}" Visibility="Collapsed" />
                     </StackPanel>
                     <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Click="CheckUpdates_Click" VerticalAlignment="Center" />

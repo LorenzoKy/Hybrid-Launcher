@@ -11,11 +11,14 @@ public sealed record GameUpdate(DirectInstall Install, OwnedGame Game, string La
 public static class GameUpdates
 {
     /// <summary>The games with a newer build; one store not answering leaves only its games out.</summary>
-    public static async Task<List<GameUpdate>> CheckAsync(Func<string, OwnedGame?> owned, CancellationToken ct)
+    public static async Task<List<GameUpdate>> CheckAsync(Func<string, OwnedGame?> owned, CancellationToken ct, string? onlyId = null)
     {
         var found = new List<GameUpdate>();
-        foreach (var install in SettingsStore.Current.DirectInstalls.ToList())
+        List<DirectInstall> installs;
+        lock (SettingsStore.Current) installs = SettingsStore.Current.DirectInstalls.ToList();
+        foreach (var install in installs)
         {
+            if (onlyId is not null && !install.Id.Equals(onlyId, StringComparison.OrdinalIgnoreCase)) continue;
             ct.ThrowIfCancellationRequested();
             if (!Directory.Exists(install.InstallDir) || owned(install.Id) is not { } game) continue;
             if (!OwnedGames.Direct(install.Store)) continue; // signed out: Hybrid Launcher cannot download it
@@ -35,7 +38,7 @@ public static class GameUpdates
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log.Warn($"Update check of {install.Name}: {ex.Message}"); }
         }
-        Log.Info(found.Count == 0 ? "Update check: every game Hybrid Launcher downloaded is up to date"
+        if (onlyId is null || found.Count > 0) Log.Info(found.Count == 0 ? "Update check: every game Hybrid Launcher downloaded is up to date"
             : "Update check: " + string.Join(", ", found.Select(u => $"{u.Install.Name} {u.Install.Version ?? "?"} → {u.Latest}")));
         return found;
     }

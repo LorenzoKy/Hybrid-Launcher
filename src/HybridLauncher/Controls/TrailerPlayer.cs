@@ -127,6 +127,20 @@ public sealed partial class TrailerPlayer : UserControl
 
         _tick.Tick += (_, _) => UpdateTime();
         _hide.Tick += (_, _) => { _hide.Stop(); HideControls(); };
+        // 2.1.4: a trailer scrolled more than half out of view pauses, and plays on when it is back. A playing video keeps
+        // Windows' compositor out of step with the scroll for the whole page: scrolling the game home stuttered (a frame
+        // without motion, then a jump, ~100 times in 8 s on a 180 Hz display) even far below the trailer.
+        _host.EffectiveViewportChanged += (_, e) =>
+        {
+            var vp = e.EffectiveViewport;
+            double h = _host.ActualHeight;
+            double shown = vp.Width > 0 && vp.Height > 0 ? Math.Min(vp.Bottom, h) - Math.Max(vp.Top, 0) : 0;
+            bool offscreen = h > 0 && shown < h / 2;
+            if (offscreen == _offscreen) return;
+            _offscreen = offscreen;
+            // Never change the player during layout: once it is over.
+            DispatcherQueue.TryEnqueue(OnViewChanged);
+        };
         Loaded += (_, _) => Helpers.MediaPolicy.Changed += OnPolicyChanged;
         Unloaded += (_, _) =>
         {
@@ -140,6 +154,29 @@ public sealed partial class TrailerPlayer : UserControl
 
     /// <summary>A muted trailer is only moving pictures: it rests while the window is behind another app (background saver).</summary>
     static bool Resting => Helpers.MediaPolicy.InBackground && !_sound;
+
+    /// <summary>The trailer is mostly out of view (scrolled away): paused by Hybrid Launcher until it is back.</summary>
+    bool _offscreen, _offscreenPaused;
+
+    void OnViewChanged()
+    {
+        if (_player is null) return;
+        if (_offscreen)
+        {
+            if (_player.PlaybackSession.PlaybackState is MediaPlaybackState.Playing or MediaPlaybackState.Buffering or MediaPlaybackState.Opening)
+            {
+                _player.Pause();
+                _offscreenPaused = true;
+                _tick.Stop();
+            }
+        }
+        else if (_offscreenPaused)
+        {
+            _offscreenPaused = false;
+            _tick.Start();
+            if (!_autoPaused && !Helpers.MediaPolicy.UserPaused) _player.Play();
+        }
+    }
 
     void OnPolicyChanged()
     {
@@ -155,7 +192,8 @@ public sealed partial class TrailerPlayer : UserControl
         else if (_autoPaused && Helpers.MediaPolicy.MayAutoplay && !Resting)
         {
             _autoPaused = false;
-            _player.Play();
+            if (_offscreen) _offscreenPaused = true;
+            else _player.Play();
         }
     }
 
@@ -245,6 +283,8 @@ public sealed partial class TrailerPlayer : UserControl
         });
         player.PlaybackSession.PlaybackStateChanged += (s, _) => DispatcherQueue.TryEnqueue(UpdatePlayState);
         _player = player;
+        _offscreenPaused = false;
+        if (_offscreen) DispatcherQueue.TryEnqueue(OnViewChanged);
         _video.SetMediaPlayer(player);
         _video.Visibility = Visibility.Visible;
         _controls.Visibility = Visibility.Visible;
@@ -257,6 +297,7 @@ public sealed partial class TrailerPlayer : UserControl
     public void Stop()
     {
         _gen++;
+        _offscreenPaused = false;
         _tick.Stop();
         _hide.Stop();
         if (_full_) SetFull(false);
@@ -282,6 +323,7 @@ public sealed partial class TrailerPlayer : UserControl
     void TogglePlay()
     {
         if (_player is null) return;
+        _offscreenPaused = false;
         // The user's choice holds for every video of the session, like the trailer's sound.
         _autoPaused = false;
         if (_player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)

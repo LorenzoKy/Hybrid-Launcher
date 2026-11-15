@@ -346,6 +346,7 @@ public sealed partial class MainWindow : Window
         HybridLauncher.Core.Accounts.Downloads.Finished = () => _ = AppState.RescanAsync();
         HybridLauncher.Core.Accounts.Downloads.Installed += id => _ = ShortcutAfterInstallAsync(id);
         HybridLauncher.Core.Accounts.Downloads.Changed += UpdateDownloadsBadge;
+        Helpers.GameUpdater.Changed += UpdateDownloadsBadge;
         HybridLauncher.Core.Accounts.Downloads.Watch();
         await AppState.RescanAsync();
         // The taskbar button's right-click list: the games played last, each started through Hybrid Launcher.
@@ -1183,7 +1184,10 @@ public sealed partial class MainWindow : Window
         if (!ui.HasThreadAccess) { ui.TryEnqueue(UpdateDownloadsBadge); return; }
         if (_downloadsItem is null) return;
         int active = HybridLauncher.Core.Accounts.Downloads.ActiveCount;
-        _downloadsItem.InfoBadge = active > 0 ? new InfoBadge { Value = active } : null;
+        // 2.1.4: no download but an update waiting: a small blue dot.
+        _downloadsItem.InfoBadge = active > 0 ? new InfoBadge { Value = active }
+            : Helpers.GameUpdater.Available.Count > 0 ? new InfoBadge { Width = 9, Height = 9, MinWidth = 9, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x2F, 0x8C, 0xF0)) }
+            : null;
     }
 
     /// <summary>Redraws the side pane (after the library's groups, order or filters changed).</summary>
@@ -1785,6 +1789,15 @@ public sealed partial class MainWindow : Window
         item.Resources["NavigationViewItemOnLeftMinHeight"] = 44.0;
     }
 
+    /// <summary>The game's icon as the side list shows it (2.1.4: also the Updates available rows in Downloads); null when it has none.</summary>
+    internal static async Task<Microsoft.UI.Xaml.Media.ImageSource?> GameIconAsync(Game game)
+    {
+        var steamIcon = game.SteamAppId is { } app ? await Task.Run(() => SteamScanner.ClientIcon(app)) : null;
+        foreach (var source in new[] { HybridLauncher.Core.Media.ArtOverrides.Get(game.Id, HybridLauncher.Core.Media.ArtKind.Icon), game.IconPath, steamIcon, game.MainExe, game.StoreExe }.Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (await IconCache.GetAsync(source!) is { } icon) return icon;
+        return null;
+    }
+
     static async Task LoadIconAsync(NavigationViewItem item, Game game)
     {
         // Game Pass exes carry no icon: their package logo comes first. Steam games then take Steam's own small icon from its
@@ -2143,6 +2156,9 @@ public sealed partial class MainWindow : Window
         // How quick the app feels, with budgets (MainWindow.Snappy): no input, the same numbers run after run.
         if (only.Any(o => o.StartsWith("snappy", StringComparison.OrdinalIgnoreCase)))
             failures += await SelfTestSnappyAsync();
+        // How heavy each page is to scroll for the GPU (MainWindow.ScrollLoad), timed for an outside GPU sampler.
+        if (only.Any(o => o.StartsWith("scrollload", StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestScrollLoadAsync();
         // Many game switches in a row, past the live pages' limit, with idle warm-ups between (2.0.0-rc.4 showed "Value does
         // not fall within the expected range" and an empty page after a while).
         if (only.Length == 0 || only.Any(o => "pages".StartsWith(o, StringComparison.OrdinalIgnoreCase)))
@@ -2247,6 +2263,13 @@ public sealed partial class MainWindow : Window
             if (Shown is not LibraryPage) throw new InvalidOperationException("Properties left the library");
             if (_propsLayer is not { Visibility: Visibility.Visible, Children.Count: > 0 }) throw new InvalidOperationException("Properties did not open over the library");
         }, 1200);
+        // 2.1.4: the pictures can be changed from Customization too, not only from Library.
+        await Step("library properties: artwork in Customization", () =>
+        {
+            if (_propsOwner is not { } owner) throw new InvalidOperationException("no Properties");
+            if (!owner.SelfTestPropsPageHasArtwork("custom")) throw new InvalidOperationException("no Artwork row in Customization");
+            if (!owner.SelfTestPropsPageHasArtwork("library")) throw new InvalidOperationException("no Artwork row in Library");
+        }, 600);
         await Step("library properties closed", () =>
         {
             _propsOwner?.CloseProperties();
@@ -2257,6 +2280,11 @@ public sealed partial class MainWindow : Window
             var first = AppState.VisibleGames.First(g => !g.NotInstalled);
             if (Content?.XamlRoot is { } root) _ = Controls.ArtworkDialog.ShowAsync(root, ((FrameworkElement)Content).ActualTheme, first, HybridLauncher.Core.Media.ArtKind.Banner);
         }, 1500);
+        // 2.1.4: the picture grid ends inside the dialog (its last row could not be scrolled to).
+        await Step("library artwork: grid fits", () =>
+        {
+            if (Controls.ArtworkDialog.GridFits?.Invoke() != true) throw new InvalidOperationException("the picture grid runs past the dialog: " + Controls.ArtworkDialog.GridFitsDetail);
+        }, 300);
         await Step("library artwork closed", () =>
         {
             if (Content?.XamlRoot is { } root)
@@ -2506,6 +2534,55 @@ public sealed partial class MainWindow : Window
             }
         }
         if (!wasMaximized && AppWindow.Presenter is OverlappedPresenter wp2) wp2.Restore();
+        // 2.1.4: the states of a game update, pretend (no store asked, nothing downloaded): found, updating, done, on Downloads and
+        // on the game's page. With HL_SHOTS, a picture of each.
+        if (only.Any(o => o.StartsWith("updates", StringComparison.OrdinalIgnoreCase)) && AppState.VisibleGames.FirstOrDefault(g => !g.NotInstalled) is { } upGame)
+        {
+            DownloadJob? upJob = null;
+            Helpers.GameUpdater.TestInject(new Helpers.PendingUpdate(upGame.Id, upGame.Name, "21734512", "21988470",
+                () => upJob = Downloads.AddSampleUpdate(upGame.Store, upGame.Id, upGame.Name, upGame.SteamAppId is { } sid ? $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{sid}/library_600x900.jpg" : "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1091500/library_600x900.jpg")));
+            await Step("updates 1 available: Downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
+            await Step("updates 2 available: game page", () => OpenGame(upGame.Id), 2500);
+            await Step("updates 2 available: Update shown", () =>
+            {
+                if ((Shown as GamePage)?.SelfTestUpdateShown != true) throw new InvalidOperationException("no Update in the launch bar");
+            }, 50);
+            await Step("updates 3 updating: game page", () => (Shown as GamePage)?.SelfTestClickUpdate(), 2500);
+            await Step("updates 4 updating: Downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
+            await Step("updates 5 done: Downloads", () => { if (upJob is not null) Downloads.FinishSample(upJob); }, 1500);
+            await Step("updates 6 done: game page", () => OpenGame(upGame.Id), 2500);
+            await Step("updates 6 done: Update gone", () =>
+            {
+                if ((Shown as GamePage)?.SelfTestUpdateShown != false) throw new InvalidOperationException("Update still in the launch bar");
+            }, 50);
+        }
+        // 2.1.4: the same states for a game not installed yet (pretend: an owned game, a download that only moves on screen).
+        if (only.Any(o => o.StartsWith("installs", StringComparison.OrdinalIgnoreCase)))
+        {
+            const string app = "1245620";
+            var art = $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app}/library_600x900.jpg";
+            var owned = new HybridLauncher.Core.Accounts.OwnedGame(HybridLauncher.Core.GameStore.Steam, "steam:" + app, "ELDEN RING", art,
+                $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app}/library_hero.jpg", "steam://install/" + app, "https://store.steampowered.com/app/" + app);
+            AppState.AddOwned(OwnedLibrary.AsGame(owned));
+            DownloadJob? inJob = null;
+            await Step("installs 1 not installed: game page", () => OpenGame(owned.Id), 3000);
+            await Step("installs 2 downloading: game page", () => inJob = Downloads.AddSampleUpdate(owned.Store, owned.Id, owned.Name, art, update: false), 2500);
+            await Step("installs 3 downloading: Downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
+            await Step("installs 4 paused: game page", () => { if (inJob is not null) { inJob.State = DownloadState.Paused; inJob.Speed = 0; } OpenGame(owned.Id); }, 2500);
+            await Step("installs 5 done: Downloads", () => { if (inJob is not null) Downloads.FinishSample(inJob); ContentFrame.Navigate(typeof(DownloadsPage)); }, 2500);
+            // 2.2: your games closed by default, then opened as the bar's click opens them, then closed again.
+            await Step("installs 6 games closed: Downloads", () =>
+            {
+                if ((Shown as DownloadsPage)?.SelfTestGames(false) != true) throw new InvalidOperationException("your games did not close");
+            }, 1500);
+            await Step("installs 7 games open: Downloads", () =>
+            {
+                if ((Shown as DownloadsPage)?.SelfTestGames(true) != true) throw new InvalidOperationException("your games did not open");
+            }, 2500);
+            await Step("installs 8 games closed again", () => (Shown as DownloadsPage)?.SelfTestGames(false), 500);
+            // 2.2: nothing left in the list: the "Nothing is downloading" card.
+            await Step("installs 9 idle: Downloads", () => Downloads.ClearFinished(), 1500);
+        }
         if (Environment.GetEnvironmentVariable("HL_SAMPLE_DOWNLOADS") == "1") Downloads.AddSamples();
         await Step("downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
         // The focused list item thrown away by a redraw: WinUI used to hand the focus to the search box.

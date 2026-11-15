@@ -467,6 +467,13 @@ public sealed class LinkedAccounts
 }
 
 /// <summary>A game Hybrid Launcher downloaded from a launcher account: where it is and how it starts (from the store's own data).</summary>
+/// <summary>See <see cref="AppSettings.LauncherUpdates"/>.</summary>
+public sealed class LauncherUpdateMark
+{
+    public string? Before { get; set; }
+    public string Applied { get; set; } = "";
+}
+
 public sealed class DirectInstall
 {
     /// <summary>The same id the launcher's install would have ("steam:1091500", "epic:Ginger", "gog:1207658924").</summary>
@@ -1025,8 +1032,18 @@ public sealed class AppSettings
     /// <summary>Games Hybrid Launcher downloaded itself from a signed-in launcher account (no launcher installed them).</summary>
     public List<DirectInstall> DirectInstalls { get; set; } = [];
 
-    /// <summary>Games Hybrid Launcher downloaded are checked for updates at start and every few hours, and updated by themselves.</summary>
+    /// <summary>
+    /// Games are checked for updates at start and every few hours, and updated by themselves: the ones Hybrid Launcher downloaded
+    /// and, since 2.1.4, the ones Steam, the Epic Games Launcher or GOG Galaxy installed, when that store's account is signed in.
+    /// </summary>
     public bool AutoUpdateGames { get; set; } = true;
+
+    /// <summary>
+    /// Games a launcher installed that Hybrid Launcher updated (2.1.4), by id: the version the launcher's record showed before and
+    /// the one Hybrid Launcher put in. A launcher whose record Hybrid Launcher cannot write (GOG Galaxy keeps it in its own
+    /// database) still shows the old one: the game counts as the new version until its launcher's record changes.
+    /// </summary>
+    public Dictionary<string, LauncherUpdateMark> LauncherUpdates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A game the app downloads gets a desktop shortcut once it is installed.</summary>
     public bool ShortcutOnInstall { get; set; } = true;

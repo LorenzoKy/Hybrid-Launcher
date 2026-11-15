@@ -522,7 +522,9 @@ public sealed partial class DownloadsPage : Page
 
     const double MinTile = 150, MaxTile = 230, Gap = 16;
 
-    readonly StackPanel _root = new() { Spacing = 22, Padding = new Thickness(0, 8, 0, 40), HorizontalAlignment = HorizontalAlignment.Center };
+    // Left-aligned with a margin worked out in Layout (2.2): centred, the ScrollView placed the column at half a pixel on some
+    // window widths, and every text, icon and cover on the page was drawn soft.
+    readonly StackPanel _root = new() { Spacing = 22, Padding = new Thickness(0, 8, 0, 40), HorizontalAlignment = HorizontalAlignment.Left };
     readonly ScrollView _scroller;
     readonly TextBlock _count = Ui.Muted("");
     readonly StackPanel _active = new() { Spacing = 10 };
@@ -559,6 +561,31 @@ public sealed partial class DownloadsPage : Page
     string _store = "all";
     double _tile = 180;
 
+    // 2.2: your games are closed by default. CollapsedCards holds the cards people closed; this key in it means the opposite,
+    // that the games were opened (a new key, so the 2.1.4 "downloads.games" of people who never closed them reads as closed).
+    const string GamesOpenKey = "downloads.games.open";
+    bool _gamesOpen;
+    bool _gamesFilled;
+    readonly StackPanel _gamesBody = new() { Spacing = 14 };
+    readonly TextBlock _gamesSummary = new() { FontSize = 12, Opacity = 0.7, TextTrimming = TextTrimming.CharacterEllipsis };
+    readonly StackPanel _gamesLogos = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+    readonly TextBlock _gamesToggle = new() { FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+    FrameworkElement? _gamesChevron;
+    Border? _gamesPill;
+    // The library's figures, counted when the lists change (not at every step of a download: 15,000 games each time).
+    (int Owned, int Installed, int Launchers) _stats;
+    bool _accountsDirty = true;
+    // The line of the "nothing downloading" card that says when updates were last checked (made again with the card).
+    TextBlock? _idleStatus;
+    // Completed: the last few, all of them after Show all.
+    bool _showAllDone;
+    const int DoneShown = 3;
+    // Check for updates: its label and the ring that takes the icon's place while a check runs.
+    readonly Button _check = new() { Padding = new Thickness(12, 6, 14, 7), VerticalAlignment = VerticalAlignment.Center };
+    readonly TextBlock _checkText = new() { VerticalAlignment = VerticalAlignment.Center };
+    readonly FontIcon _checkIcon = new() { Glyph = "", FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+    readonly ProgressRing _checkRing = new() { IsActive = false, Width = 14, Height = 14, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
+
     public DownloadsPage()
     {
         InitializeComponent();
@@ -585,6 +612,21 @@ public sealed partial class DownloadsPage : Page
         ToolTipService.SetToolTip(refresh, L.T("Read the launcher libraries again"));
         refresh.Click += (_, _) => _ = ReloadAsync(true);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        // 2.2: the accounts' rows are made when the menu opens, not on every visit and every launcher re-read.
+        _accountsFlyout.Opening += (_, _) => { if (_accountsDirty) FillAccountsPanel(); };
+        // 2.2: Check for updates in the header, a ring in its place while a check runs (also the automatic ones).
+        var checkContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        checkContent.Children.Add(_checkIcon);
+        checkContent.Children.Add(_checkRing);
+        checkContent.Children.Add(_checkText);
+        _check.Content = checkContent;
+        _check.Click += async (_, _) =>
+        {
+            await GameUpdater.CheckNowAsync(evenIfOff: true, start: AppState.Settings.AutoUpdateGames);
+            UpdateCheck();
+        };
+        ToolTipService.SetToolTip(_check, L.T("Look for new versions of your installed games"));
+        actions.Children.Add(_check);
         actions.Children.Add(accounts);
         actions.Children.Add(refresh);
         var head = new Grid { ColumnSpacing = 12 };
@@ -635,14 +677,17 @@ public sealed partial class DownloadsPage : Page
         foreach (var f in filters.Children.OfType<FrameworkElement>()) f.VerticalAlignment = VerticalAlignment.Center;
         var toolbar = new Border { Style = Ui.Style("RowStyle"), MinHeight = 0, Padding = new Thickness(12, 10, 12, 10), Child = filters };
 
+        // 2.2: your games sit behind one wide bar, closed by default: Downloads opens on what is downloading, and the covers
+        // (thousands for a big Steam library) are listed and made only once the bar is opened. Opened, it stays open.
         var library = new StackPanel { Spacing = 14 };
-        var gamesHead = SectionLabel("", L.T("YOUR GAMES"));
-        gamesHead.Children.Add(_gamesCount);
-        library.Children.Add(gamesHead);
-        library.Children.Add(toolbar);
-        library.Children.Add(_ring);
-        library.Children.Add(_empty);
-        library.Children.Add(_grid);
+        _gamesOpen = AppState.Settings.CollapsedCards.Contains(GamesOpenKey);
+        _gamesBody.Children.Add(toolbar);
+        _gamesBody.Children.Add(_ring);
+        _gamesBody.Children.Add(_empty);
+        _gamesBody.Children.Add(_grid);
+        _gamesBody.Visibility = _gamesOpen ? Visibility.Visible : Visibility.Collapsed;
+        library.Children.Add(GamesBar());
+        library.Children.Add(_gamesBody);
 
         _root.Children.Add(head);
         _root.Children.Add(_active);
@@ -658,17 +703,21 @@ public sealed partial class DownloadsPage : Page
         using var __perf = UiPerf.Scope("DownloadsPage.NavigatedTo");
         base.OnNavigatedTo(e);
         Downloads.Changed += OnJobsChanged;
+        GameUpdater.Changed += OnJobsChanged;
         OwnedLibrary.Loaded += OnLoaded;
         AppState.GamesChanged += OnLoaded;
         Downloads.Watch();
         FillJobs();
         _ = ReloadAsync(false);
+        // 2.1.4: updates checked when Downloads opens (if the last check is a few minutes old), in the background.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _ = GameUpdater.CheckIfStaleAsync());
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         Downloads.Changed -= OnJobsChanged;
+        GameUpdater.Changed -= OnJobsChanged;
         OwnedLibrary.Loaded -= OnLoaded;
         AppState.GamesChanged -= OnLoaded;
     }
@@ -681,6 +730,10 @@ public sealed partial class DownloadsPage : Page
         int cols = Math.Max(1, (int)((avail + Gap) / (MinTile + Gap)));
         double tile = Math.Floor(Math.Min(MaxTile, (avail - Gap * (cols - 1)) / cols));
         _root.Width = cols * (tile + Gap) - Gap;
+        // Centred by hand, on a whole screen pixel (display scale and Interface size included).
+        double scale = (XamlRoot?.RasterizationScale is > 0 and var r ? r : 1) * UiScale.Factor;
+        double left = Math.Floor(Math.Max(0, width - _root.Width) / 2 * scale) / scale;
+        if (Math.Abs(_root.Margin.Left - left) > 0.01) _root.Margin = new Thickness(left, 0, 0, 0);
         if (Math.Abs(tile - _tile) < 0.5) return;
         _tile = tile;
         SizeTiles();
@@ -689,20 +742,30 @@ public sealed partial class DownloadsPage : Page
     void OnJobsChanged()
     {
         FillJobs();
+        UpdateCheck();
         App.Window?.UpdateDownloadsBadge();
     }
 
     void OnLoaded()
     {
         FillAccounts();
+        CountLibrary();
         // A finished download's game is in the list now: its line gets its Play button.
         FillJobs();
-        FillChips();
-        Fill();
+        // Closed, the games are not listed at all (2.2): opening the bar lists them.
+        if (_gamesOpen)
+        {
+            FillChips();
+            Fill();
+            _gamesFilled = true;
+        }
+        else _gamesFilled = false;
+        UpdateGamesBar();
         UpdateCount();
+        UpdateCheck();
     }
 
-    void Restart() => Fill();
+    void Restart() { if (_gamesOpen) Fill(); }
 
     async Task ReloadAsync(bool force)
     {
@@ -710,6 +773,7 @@ public sealed partial class DownloadsPage : Page
         FillAccounts();
         // A finished download's game is in the list now: its line gets its Play button.
         FillJobs();
+        UpdateCheck();
         try { await OwnedLibrary.LoadAsync(force); }
         catch (Exception ex) { App.Window?.ShowError(L.T("Could not read the launcher libraries"), ex.Message, ex); }
         _ring.Visibility = Visibility.Collapsed;
@@ -725,22 +789,207 @@ public sealed partial class DownloadsPage : Page
         return head;
     }
 
+    /// <summary>The library's figures, counted once per change of the lists or of the installed games.</summary>
+    void CountLibrary()
+    {
+        if (!OwnedLibrary.IsLoaded) { _stats = default; return; }
+        var installedIds = OwnedLibrary.InstalledIds();
+        int owned = 0, installed = 0;
+        foreach (var g in OwnedLibrary.Owned())
+        {
+            owned++;
+            if (installedIds.Contains(g.Id)) installed++;
+        }
+        int launchers = OwnedLibrary.All.Keys.Count(s => OwnedLibrary.Linked(s) && (!OwnedGames.InstalledOnly(s) || OwnedLibrary.All[s].Games.Count > 0));
+        _stats = (owned, installed, launchers);
+    }
+
     void UpdateCount()
     {
-        var owned = OwnedLibrary.Owned().ToList();
-        var installedIds = OwnedLibrary.InstalledIds();
-        int installed = owned.Count(g => installedIds.Contains(g.Id));
-        int launchers = OwnedLibrary.All.Keys.Count(s => OwnedLibrary.Linked(s) && (!OwnedGames.InstalledOnly(s) || OwnedLibrary.All[s].Games.Count > 0));
-        int active = Downloads.ActiveCount;
-        _count.Text = !OwnedLibrary.IsLoaded ? L.T("Reading your launchers…")
-            : L.F("{0} games on {1} launchers", owned.Count, launchers) + "  ·  " + L.F("{0} installed", installed)
-              + (active > 0 ? "  ·  " + L.N(active, "{0} download", "{0} downloads") : "");
+        // 2.2: what is going on first (the games' own figures are on the Your games bar).
+        int active = Downloads.ActiveCount, updates = GameUpdater.Available.Count;
+        var parts = new List<string>();
+        if (active > 0) parts.Add(L.N(active, "{0} download", "{0} downloads"));
+        if (updates > 0) parts.Add(L.N(updates, "{0} update available", "{0} updates available"));
+        if (parts.Count == 0) parts.Add(!OwnedLibrary.IsLoaded ? L.T("Reading your launchers…") : L.F("{0} games on {1} launchers", _stats.Owned, _stats.Launchers));
+        var text = string.Join("  ·  ", parts);
+        if (_count.Text != text) _count.Text = text;
+    }
+
+    /// <summary>Check for updates in the header: shown when something can be checked, a ring while a check runs.</summary>
+    void UpdateCheck()
+    {
+        _check.Visibility = GameUpdater.CanCheck ? Visibility.Visible : Visibility.Collapsed;
+        bool busy = GameUpdater.Checking;
+        _check.IsEnabled = !busy;
+        _checkRing.IsActive = busy;
+        _checkRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        _checkIcon.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        _checkText.Text = busy ? L.T("Checking…") : L.T("Check for updates");
+        if (_idleStatus is not null) _idleStatus.Text = IdleText();
+    }
+
+    static string IdleText()
+    {
+        if (GameUpdater.Checking) return L.T("Checking your games for updates…");
+        if (!GameUpdater.CanCheck) return L.T("Games you install show up here while they download.");
+        if (GameUpdater.LastChecked is { } at) return L.F("Your games are up to date. Last checked at {0}.", at.ToLocalTime().ToString("t"));
+        return L.T("Games you install or update show up here while they download.");
+    }
+
+    // ---------- your games: the bar that opens them ----------
+
+    /// <summary>
+    /// The wide bar in front of your games: an icon, the title, how many there are and on which launchers, and a clear
+    /// Show / Hide with its arrow. The whole bar is the button.
+    /// </summary>
+    FrameworkElement GamesBar()
+    {
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var accent = Ui.ToneColor(Ui.Tone.Accent);
+        var icon = new Border
+        {
+            Width = 44, Height = 44, CornerRadius = new CornerRadius(12),
+            Background = new SolidColorBrush(Color.FromArgb(0x33, accent.R, accent.G, accent.B)),
+            Child = new FontIcon { Glyph = "", FontSize = 20, Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush") },
+        };
+        grid.Children.Add(icon);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = L.T("Your games"), FontSize = 16, FontWeight = FontWeights.SemiBold });
+        text.Children.Add(_gamesSummary);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        Grid.SetColumn(_gamesLogos, 2);
+        grid.Children.Add(_gamesLogos);
+        var chevron = new FontIcon { Glyph = "", FontSize = 11, VerticalAlignment = VerticalAlignment.Center, RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5), RenderTransform = new RotateTransform() };
+        _gamesChevron = chevron;
+        var toggleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        toggleRow.Children.Add(_gamesToggle);
+        toggleRow.Children.Add(chevron);
+        var pill = new Border { CornerRadius = new CornerRadius(15), Padding = new Thickness(14, 6, 12, 7), Child = toggleRow, VerticalAlignment = VerticalAlignment.Center };
+        _gamesPill = pill;
+        Grid.SetColumn(pill, 3);
+        grid.Children.Add(pill);
+        var bar = new Button
+        {
+            Content = grid, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(14, 12, 14, 12), CornerRadius = new CornerRadius(12),
+            Background = Ui.Brush("CardBackgroundFillColorDefaultBrush"), BorderBrush = Ui.Brush("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(bar, L.T("Your games"));
+        bar.Click += (_, _) =>
+        {
+            SetGamesOpen(!_gamesOpen);
+            // Opened, the bar goes to the top so the covers fill the screen under it.
+            // On a whole screen pixel: a fractional offset drew the page soft.
+            if (_gamesOpen && XamlRoot is { } xr)
+            {
+                double scale = xr.RasterizationScale * UiScale.Factor;
+                double y = bar.TransformToVisual(_root).TransformPoint(new Windows.Foundation.Point(0, 0)).Y - 12;
+                y = Math.Round(Math.Max(0, y) * scale) / scale;
+                _scroller.ScrollTo(0, y, new ScrollingScrollOptions(ScrollingAnimationMode.Enabled));
+            }
+        };
+        _gamesBody.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(180) };
+        UpdateGamesBar();
+        return bar;
+    }
+
+    /// <summary>Self-test: opens or closes your games as the bar's click does, and says whether covers are listed when open.</summary>
+    internal bool SelfTestGames(bool open)
+    {
+        if (_gamesOpen != open) SetGamesOpen(open);
+        // The column sits on whole screen pixels (2.2: half a pixel drew the whole page soft).
+        double scale = (XamlRoot?.RasterizationScale ?? 1) * UiScale.Factor;
+        var at = _root.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+        if (Math.Abs(at.X * scale - Math.Round(at.X * scale)) > 0.02)
+            throw new InvalidOperationException($"Downloads column at x {at.X * scale:0.00} px, not on a whole pixel");
+        return open ? _gamesBody.Visibility == Visibility.Visible : _gamesBody.Visibility == Visibility.Collapsed;
+    }
+
+    void SetGamesOpen(bool open)
+    {
+        using var __perf = UiPerf.Scope("DownloadsPage.Games");
+        _gamesOpen = open;
+        if (open) AppState.Settings.CollapsedCards.Add(GamesOpenKey); else AppState.Settings.CollapsedCards.Remove(GamesOpenKey);
+        SettingsStore.Save();
+        if (open && !_gamesFilled && OwnedLibrary.IsLoaded)
+        {
+            FillChips();
+            Fill();
+            _gamesFilled = true;
+        }
+        if (open)
+        {
+            _gamesBody.Opacity = 0;
+            _gamesBody.Visibility = Visibility.Visible;
+            DispatcherQueue.TryEnqueue(() => _gamesBody.Opacity = 1);
+        }
+        else _gamesBody.Visibility = Visibility.Collapsed;
+        UpdateGamesBar();
+    }
+
+    void UpdateGamesBar()
+    {
+        // Closed, the pill is in the accent colour and says what it does; open, it goes quiet.
+        _gamesToggle.Text = _gamesOpen ? L.T("Hide games") : L.T("Show games");
+        if (_gamesPill is not null)
+        {
+            var accent = Ui.ToneColor(Ui.Tone.Accent);
+            _gamesPill.Background = _gamesOpen ? Ui.Brush("ControlFillColorSecondaryBrush") : new SolidColorBrush(Color.FromArgb(0x40, accent.R, accent.G, accent.B));
+        }
+        if (_gamesChevron?.RenderTransform is RotateTransform r) r.Angle = _gamesOpen ? 180 : 0;
+        string summary;
+        if (!OwnedLibrary.IsLoaded) summary = L.T("Reading your launchers…");
+        else if (!OwnedLibrary.Stores.Any(OwnedLibrary.Linked)) summary = L.T("No launcher is linked yet: open Accounts at the top right.");
+        else
+        {
+            int notInstalled = _stats.Owned - _stats.Installed;
+            summary = L.N(_stats.Owned, "{0} game you own", "{0} games you own") + "  ·  " + L.F("{0} installed", _stats.Installed)
+                + "  ·  " + L.F("{0} ready to install", notInstalled);
+        }
+        if (_gamesSummary.Text != summary) _gamesSummary.Text = summary;
+        _gamesLogos.Children.Clear();
+        foreach (var s in OwnedLibrary.All.Keys.Where(OwnedLibrary.Linked).OrderBy(s => s))
+        {
+            var logo = StoreLogos.Create(s, 16);
+            logo.Opacity = 0.8;
+            ToolTipService.SetToolTip(logo, StoreLogos.Label(s));
+            _gamesLogos.Children.Add(logo);
+        }
     }
 
     // ---------- accounts (the header's menu) ----------
 
+    /// <summary>The header's launcher marks now; the menu's rows when it opens (or now, if it is open).</summary>
     void FillAccounts()
     {
+        if (_accountsFlyout?.IsOpen == true) { FillAccountsPanel(); return; }
+        _accountsDirty = true;
+        var key = string.Join(",", OwnedLibrary.Stores.Where(OwnedLibrary.Linked));
+        if (key == _logosKey && _accountLogos.Children.Count > 0) return;
+        _logosKey = key;
+        _accountLogos.Children.Clear();
+        foreach (var store in OwnedLibrary.Stores.Where(OwnedLibrary.Linked))
+        {
+            var mini = StoreLogos.Tile(store, size: 20);
+            mini.BorderBrush = Ui.Brush("SolidBackgroundFillColorBaseBrush");
+            mini.BorderThickness = new Thickness(1.5);
+            _accountLogos.Children.Add(mini);
+        }
+        if (_accountLogos.Children.Count == 0) _accountLogos.Children.Add(new FontIcon { Glyph = "", FontSize = 14 });
+    }
+
+    string _logosKey = "";
+
+    void FillAccountsPanel()
+    {
+        _accountsDirty = false;
+        _logosKey = string.Join(",", OwnedLibrary.Stores.Where(OwnedLibrary.Linked));
         _accountsPanel.Children.Clear();
         _accountLogos.Children.Clear();
         var a = AppState.Settings.Accounts;
@@ -902,7 +1151,8 @@ public sealed partial class DownloadsPage : Page
             .OrderBy(j => j.State == DownloadState.Downloading ? 0 : j.State == DownloadState.Waiting && !j.Queued ? 1 : j.Queued ? 2 : 3).ToList();
         var done = jobs.Where(j => j.State is DownloadState.Done or DownloadState.Failed).ToList();
         // Rebuilt only when downloads come, go or change places; their state, figures and buttons update in place.
-        var key = string.Join("|", live.Select(j => j.Id)) + "#" + string.Join("|", done.Select(j => j.Id + j.State));
+        var pending = GameUpdater.Available;
+        var key = string.Join("|", live.Select(j => j.Id)) + "#" + string.Join("|", done.Select(j => j.Id + j.State)) + "#" + string.Join("|", pending.Select(p => p.Id + p.Latest)) + (_showAllDone ? "#all" : "");
         RefreshChangedTiles(jobs);
         if (key != _jobsKey)
         {
@@ -926,28 +1176,118 @@ public sealed partial class DownloadsPage : Page
                     _active.Children.Add(v.Root);
                 }
             }
+            // 2.1.4: updates found and not started (automatic updates off, or the game was running).
+            if (pending.Count > 0)
+            {
+                var head = new Grid { Margin = new Thickness(0, live.Count > 0 ? 10 : 0, 0, 0) };
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                head.Children.Add(SectionLabel("", L.T("UPDATES AVAILABLE"), pending.Count.ToString()));
+                if (pending.Count > 1)
+                {
+                    var all = new HyperlinkButton { Content = L.T("Update all"), Padding = new Thickness(8, 2, 8, 2) };
+                    all.Click += (_, _) => GameUpdater.StartAll();
+                    Grid.SetColumn(all, 1);
+                    head.Children.Add(all);
+                }
+                _active.Children.Add(head);
+                foreach (var p in pending) _active.Children.Add(PendingRow(p));
+            }
             if (done.Count > 0)
             {
-                var row = new Grid { Margin = new Thickness(0, live.Count > 0 ? 10 : 0, 0, 0) };
+                var row = new Grid { Margin = new Thickness(0, live.Count > 0 || pending.Count > 0 ? 10 : 0, 0, 0) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.Children.Add(SectionLabel("", L.T("COMPLETED"), done.Count.ToString()));
+                var links = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+                // 2.2: the newest few; the rest behind Show all (a long list pushed your games far down).
+                if (done.Count > DoneShown)
+                {
+                    var more = new HyperlinkButton { Content = _showAllDone ? L.T("Show fewer") : L.F("Show all {0}", done.Count), Padding = new Thickness(8, 2, 8, 2) };
+                    more.Click += (_, _) => { _showAllDone = !_showAllDone; FillJobs(); };
+                    links.Children.Add(more);
+                }
                 var clear = new HyperlinkButton { Content = L.T("Clear all"), Padding = new Thickness(8, 2, 8, 2) };
                 clear.Click += (_, _) => Downloads.ClearFinished();
-                Grid.SetColumn(clear, 1);
-                row.Children.Add(clear);
+                links.Children.Add(clear);
+                Grid.SetColumn(links, 1);
+                row.Children.Add(links);
                 _active.Children.Add(row);
-                foreach (var j in done)
+                var newest = Enumerable.Reverse(done);
+                foreach (var j in _showAllDone ? newest : newest.Take(DoneShown))
                 {
                     var v = new JobView(j, hero: false);
                     _views[j.Id] = v;
                     _active.Children.Add(v.Root);
                 }
             }
-            _active.Visibility = _active.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            // 2.2: nothing downloading, queued, to update or finished: one calm card in place of an empty page top, saying
+            // when your games were last checked (Check for updates is in the header).
+            _idleStatus = null;
+            if (_active.Children.Count == 0) _active.Children.Add(IdleCard());
+            _active.Visibility = Visibility.Visible;
         }
         foreach (var v in _views.Values) v.Update();
         UpdateCount();
+    }
+
+    /// <summary>Nothing to show above your games: a quiet card with the download mark, a title and the last update check.</summary>
+    FrameworkElement IdleCard()
+    {
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var accent = Ui.ToneColor(Ui.Tone.Accent);
+        grid.Children.Add(new Border
+        {
+            Width = 44, Height = 44, CornerRadius = new CornerRadius(22),
+            Background = new SolidColorBrush(Color.FromArgb(0x26, accent.R, accent.G, accent.B)),
+            Child = new FontIcon { Glyph = "", FontSize = 18, Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush") },
+        });
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = L.T("Nothing is downloading"), FontSize = 16, FontWeight = FontWeights.SemiBold });
+        _idleStatus = new TextBlock { Text = IdleText(), FontSize = 12, Opacity = 0.7, TextWrapping = TextWrapping.Wrap };
+        text.Children.Add(_idleStatus);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        return new Border
+        {
+            Padding = new Thickness(14, 12, 14, 12), CornerRadius = new CornerRadius(12), Child = grid,
+            Background = Ui.Brush("CardBackgroundFillColorDefaultBrush"), BorderBrush = Ui.Brush("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
+        };
+    }
+
+    /// <summary>A game with an update found and not started: its icon, its name, and Update (the store's build numbers mean nothing to people).</summary>
+    static FrameworkElement PendingRow(PendingUpdate p)
+    {
+        var grid = new Grid { ColumnSpacing = 16, Padding = new Thickness(14, 12, 14, 12), CornerRadius = new CornerRadius(10), Background = Ui.Brush("CardBackgroundFillColorDefaultBrush") };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = new Border { Width = 56, Height = 56, CornerRadius = new CornerRadius(12), Background = Ui.Brush("SubtleFillColorSecondaryBrush") };
+        if (AppState.Find(p.Id) is { } game)
+        {
+            async void Load() { if (await MainWindow.GameIconAsync(game) is { } src) icon.Child = new Image { Source = src, Stretch = Stretch.UniformToFill }; }
+            Load();
+        }
+        grid.Children.Add(icon);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 3 };
+        text.Children.Add(new TextBlock { Text = p.Name, FontSize = 17, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        line.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center, Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x2F, 0x8C, 0xF0)) });
+        line.Children.Add(new TextBlock { Text = L.T("A new version is ready to download"), FontSize = 12, Opacity = 0.75, TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(line);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        var update = new Button { Content = L.T("Update"), Style = Ui.Style("AccentButtonStyle"), VerticalAlignment = VerticalAlignment.Center };
+        update.Click += (_, _) =>
+        {
+            if (GameSessions.IsActive(p.Id)) { App.Window?.ShowError(L.F("{0} is running", p.Name), L.T("Close the game first: it updates once it is closed.")); return; }
+            GameUpdater.StartAvailable(p.Id);
+        };
+        Grid.SetColumn(update, 2);
+        grid.Children.Add(update);
+        return grid;
     }
 
     // What each game's cover last showed: nothing, a download's bar, or installed. Only the covers that changed are made again
@@ -1010,8 +1350,12 @@ public sealed partial class DownloadsPage : Page
             return cover;
         }
 
+        // 2.1.4: Steam's own library hero (3840 x 1240, what Steam's downloads page shows) before the account's wide picture,
+        // which for Steam is the 460 px store header: stretched over the card it was blurry and grainy.
         static string? Wide(DownloadJob j) =>
-            OwnedLibrary.Find(j.Id)?.Wide ?? (j.Id.StartsWith("steam:") ? $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{j.Id[6..]}/library_hero.jpg" : null);
+            j.Id.StartsWith("steam:") ? $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{j.Id[6..]}/library_hero.jpg" : OwnedLibrary.Find(j.Id)?.Wide;
+
+        static string? WideFallback(DownloadJob j) => j.Id.StartsWith("steam:") ? OwnedLibrary.Find(j.Id)?.Wide : null;
 
         /// <summary>A figure as a small glass tile: an icon, its label and the value.</summary>
         static Border Figure(string glyph, string label, TextBlock value)
@@ -1185,13 +1529,21 @@ public sealed partial class DownloadsPage : Page
             var card = new Grid { Height = 262, CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x12, 0x12, 0x18)), RequestedTheme = ElementTheme.Dark };
             if (Wide(_job) is { } wide && Uri.TryCreate(wide, UriKind.Absolute, out var wu))
             {
-                var art = Smooth.Art(new BitmapImage { DecodePixelWidth = 1600, UriSource = wu }, Smooth.Inner(new Border { CornerRadius = card.CornerRadius, BorderThickness = card.BorderThickness }), fadeMs: 300);
-                art.Loaded += (_, _) => art.Opacity = Math.Min(art.Opacity, 0.5);
-                card.Children.Add(new Border { Child = art, Opacity = 0.5 });
+                // Decoded at the card's width on a large display (it was 1600 px, enlarged past 2000: soft), the store's own
+                // wide picture if the game has no library hero.
+                var bitmap = new BitmapImage { DecodePixelWidth = 2560, DecodePixelType = DecodePixelType.Logical, UriSource = wu };
+                if (WideFallback(_job) is { } other && Uri.TryCreate(other, UriKind.Absolute, out var ou))
+                {
+                    bool tried = false;
+                    bitmap.ImageFailed += (_, _) => { if (tried) return; tried = true; bitmap.DecodePixelWidth = 0; bitmap.UriSource = ou; };
+                }
+                var art = Smooth.Art(bitmap, Smooth.Inner(new Border { CornerRadius = card.CornerRadius, BorderThickness = card.BorderThickness }), fadeMs: 300);
+                // 2.1.4: shown as Steam shows it (it was at a quarter of its strength behind two shades: nearly black).
+                card.Children.Add(new Border { Child = art, Opacity = 0.9 });
             }
             var inner = Smooth.Inner(new Border { CornerRadius = card.CornerRadius, BorderThickness = card.BorderThickness });
-            card.Children.Add(new Border { Background = Shade(0xF4, 0xD8, 0x70, horizontal: true), CornerRadius = inner });
-            card.Children.Add(new Border { Background = Shade(0x00, 0x30, 0xC8, horizontal: false), CornerRadius = inner });
+            card.Children.Add(new Border { Background = Shade(0xEC, 0x9C, 0x18, horizontal: true), CornerRadius = inner });
+            card.Children.Add(new Border { Background = Shade(0x00, 0x18, 0x90, horizontal: false), CornerRadius = inner });
 
             // The speed graph: the last five minutes, filled under the line, the full width of the card.
             var accent = Ui.ToneColor(Ui.Tone.Accent);

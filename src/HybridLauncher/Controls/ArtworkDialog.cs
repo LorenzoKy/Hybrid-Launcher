@@ -18,6 +18,11 @@ namespace HybridLauncher.Controls;
 /// </summary>
 public static class ArtworkDialog
 {
+    /// <summary>Self-test: whether the open dialog's picture grid ends inside what the dialog shows (null: no dialog yet).</summary>
+    public static Func<bool>? GridFits { get; private set; }
+    /// <summary>Self-test: the numbers behind the last <see cref="GridFits"/>.</summary>
+    public static string GridFitsDetail { get; private set; } = "";
+
     sealed record KindInfo(ArtKind Kind, string Name, string Hint, double TileW, double TileH, Stretch Stretch);
 
     static readonly KindInfo[] Kinds =
@@ -126,13 +131,60 @@ public static class ArtworkDialog
         panel.Children.Add(status);
         var wrap = new WrapPanel(Gap, []);
         var more = new Button { Content = L.T("More"), HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0) };
-        var ring = new ProgressRing { IsActive = false, Width = 28, Height = 28, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 20, 0, 0) };
         var gridPanel = new StackPanel { Spacing = 6 };
         gridPanel.Children.Add(wrap);
-        gridPanel.Children.Add(ring);
         gridPanel.Children.Add(more);
         var scroller = new ScrollViewer { Content = gridPanel, Height = height, Padding = new Thickness(0, 4, 16, 0) };
         panel.Children.Add(scroller);
+        // The app's own smooth wheel (2.1.4), and the next page asked for on its own near the end.
+        SmoothWheel.Attach(scroller);
+        bool loading = false;
+        int run = 0;
+        var skeletons = new List<FrameworkElement>();
+        scroller.ViewChanged += (_, _) =>
+        {
+            if (!loading && more.Visibility == Visibility.Visible && scroller.VerticalOffset > scroller.ScrollableHeight - 600) _ = LoadAsync(true);
+        };
+
+        // The grid takes what the dialog shows below the rest (2.1.4): a fixed "window minus 300" was taller than that, so the
+        // dialog's own scroller hid the grid's last row and the grid could not be scrolled to its end.
+        bool outerHooked = false;
+        void Fit()
+        {
+            ScrollViewer? outer = null;
+            for (DependencyObject? d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(panel); d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
+                if (d is ScrollViewer sv) { outer = sv; break; }
+            if (outer is null || outer.ViewportHeight <= 0) return;
+            if (!outerHooked) { outerHooked = true; outer.SizeChanged += (_, _) => Fit(); }
+            // Where the grid starts inside what the dialog shows (its title, padding and the rows above it), and what follows it.
+            double top = scroller.TransformToVisual(outer).TransformPoint(new Windows.Foundation.Point(0, 0)).Y + outer.VerticalOffset;
+            double after = 0;
+            bool below = false;
+            foreach (var child in panel.Children)
+            {
+                if (child == scroller) { below = true; continue; }
+                if (below && child.Visibility == Visibility.Visible && child is FrameworkElement fe) after += fe.ActualHeight + panel.Spacing;
+            }
+            double fit = Math.Floor(outer.ViewportHeight - top - after - 4);
+            // A very short window keeps a usable grid and lets the dialog scroll as before.
+            bool fits = fit >= 200;
+            fit = Math.Max(200, fit);
+            if (Math.Abs(scroller.Height - fit) >= 1) scroller.Height = fit;
+            outer.VerticalScrollBarVisibility = fits ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        }
+        panel.Loaded += (_, _) => Fit();
+        GridFits = () =>
+        {
+            for (DependencyObject? d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(panel); d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
+                if (d is ScrollViewer sv)
+                {
+                    var bottom = scroller.TransformToVisual(sv).TransformPoint(new Windows.Foundation.Point(0, scroller.ActualHeight)).Y;
+                    GridFitsDetail = $"grid bottom {bottom:0}, viewport {sv.ViewportHeight:0}, scrollable {sv.ScrollableHeight:0}, grid {scroller.ActualHeight:0}";
+                    return bottom <= sv.ViewportHeight + 1 && sv.ScrollableHeight < 1;
+                }
+            return false;
+        };
+        foreach (var child in panel.Children) if (child != scroller && child is FrameworkElement fe) fe.SizeChanged += (_, _) => Fit();
 
         (double W, double H) TileSize()
         {
@@ -190,13 +242,45 @@ public static class ArtworkDialog
             face.Children.Add(busy);
             // A lighter wash under the pointer, and the accent ring of the picture picked, both over the picture.
             var wash = new Border { CornerRadius = radius, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)), Opacity = 0, IsHitTestVisible = false, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(120) } };
-            var picked = new Border { CornerRadius = radius, BorderBrush = accent, BorderThickness = new Thickness(3), Visibility = Visibility.Collapsed, IsHitTestVisible = false, Tag = "picked" };
+            var picked = new Grid { Visibility = Visibility.Collapsed, IsHitTestVisible = false, Tag = "picked" };
+            picked.Children.Add(new Border { CornerRadius = radius, BorderBrush = accent, BorderThickness = new Thickness(3) });
+            var check = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Background = accent, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8) };
+            check.Child = new FontIcon { Glyph = "", FontSize = 13, Foreground = Ui.Brush("TextOnAccentFillColorPrimaryBrush") };
+            picked.Children.Add(check);
             face.Children.Add(wash);
+            // Who made it, over the foot of the picture while the pointer is on it.
+            UIElement? caption = null;
+            if (asset.Author is { Length: > 0 } author && th >= 90)
+            {
+                var shade = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+                shade.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0, 0, 0, 0), Offset = 0 });
+                shade.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0xCC, 0, 0, 0), Offset = 1 });
+                var foot = new Border
+                {
+                    VerticalAlignment = VerticalAlignment.Bottom, Padding = new Thickness(10, 18, 10, 8), Background = shade, CornerRadius = new CornerRadius(0, 0, radius.BottomRight, radius.BottomLeft),
+                    Opacity = 0, IsHitTestVisible = false, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) },
+                    Child = new TextBlock { Text = L.F("by {0}", author), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), TextTrimming = TextTrimming.CharacterEllipsis },
+                };
+                face.Children.Add(foot);
+                caption = foot;
+            }
             face.Children.Add(picked);
+            face.ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(150) };
             var button = new Button { Content = face, Padding = new Thickness(0), CornerRadius = radius, BorderThickness = new Thickness(0), Background = clear };
             ToolTipService.SetToolTip(button, asset.Author is { } by ? L.F("{0} × {1}, by {2}", asset.Width, asset.Height, by) : $"{asset.Width} × {asset.Height}");
-            button.PointerEntered += (_, _) => wash.Opacity = 1;
-            button.PointerExited += (_, _) => wash.Opacity = 0;
+            button.PointerEntered += (_, _) =>
+            {
+                wash.Opacity = 1;
+                if (caption is not null) caption.Opacity = 1;
+                face.CenterPoint = new((float)(tw / 2), (float)(th / 2), 0);
+                face.Scale = new(1.03f, 1.03f, 1);
+            };
+            button.PointerExited += (_, _) =>
+            {
+                wash.Opacity = 0;
+                if (caption is not null) caption.Opacity = 0;
+                face.Scale = new(1, 1, 1);
+            };
             // The tile's own kind: a tab changed while its picture downloads must not file it under the new tab's kind (2.1-rc.3 audit).
             var tileKind = kind;
             button.Click += async (_, _) =>
@@ -232,13 +316,34 @@ public static class ArtworkDialog
         {
             foreach (var b in wrap.Children.OfType<Button>())
                 if (b.Content is Grid g)
-                    foreach (var r in g.Children.OfType<Border>().Where(x => x.Tag as string == "picked")) r.Visibility = Visibility.Collapsed;
+                    foreach (var r in g.Children.OfType<Grid>().Where(x => x.Tag as string == "picked")) r.Visibility = Visibility.Collapsed;
         }
 
-        int run = 0;
+        // Placeholders the size of the tiles while SteamGridDB answers (2.1.4), gently pulsing; replaced by the pictures.
+        void ShowSkeletons(int count)
+        {
+            var (tw, th) = TileSize();
+            var radius = new CornerRadius(kind.Kind == ArtKind.Icon ? 14 : 10);
+            for (int i = 0; i < count; i++)
+            {
+                var sk = new Border { Width = tw, Height = th, CornerRadius = radius, Background = Ui.Brush("SubtleFillColorSecondaryBrush"), IsHitTestVisible = false };
+                Motion.Pulse(sk);
+                skeletons.Add(sk);
+                wrap.Children.Add(sk);
+            }
+        }
+        void HideSkeletons()
+        {
+            foreach (var sk in skeletons) wrap.Children.Remove(sk);
+            skeletons.Clear();
+        }
+        int Columns() => Math.Max(1, (int)((gridWidth + Gap) / (TileSize().W + Gap)));
+
         async Task LoadAsync(bool append)
         {
             int mine = ++run;
+            loading = true;
+            HideSkeletons();
             if (!append) { wrap.Children.Clear(); page = 0; scroller.ChangeView(null, 0, null, true); }
             // "More" asks for the next page; the page count moves only once it came (a failed try is not skipped).
             int wanted = append ? page + 1 : 0;
@@ -253,8 +358,7 @@ public static class ArtworkDialog
             }
             keyPanel.Visibility = Visibility.Collapsed;
             search.IsEnabled = true;
-            ring.IsActive = true;
-            ring.Visibility = Visibility.Visible;
+            ShowSkeletons(Columns() * (append ? 1 : 3));
             try
             {
                 if (match is null)
@@ -277,7 +381,14 @@ public static class ArtworkDialog
                 var assets = await SteamGridDb.AssetsAsync(match.Id, kind.Kind, wanted, cts.Token);
                 if (mine != run) return;
                 page = wanted;
-                foreach (var a in assets) wrap.Children.Add(Tile(a));
+                HideSkeletons();
+                // Added in turns of a row or two (docs/snappy.md: big content in turns), each turn on its own frame.
+                int turn = Math.Max(6, Columns() * 2), added = 0;
+                foreach (var a in assets)
+                {
+                    wrap.Children.Add(Tile(a));
+                    if (++added % turn == 0) { await Task.Delay(16); if (mine != run) return; }
+                }
                 more.Visibility = assets.Count >= 50 ? Visibility.Visible : Visibility.Collapsed;
                 if (wrap.Children.Count == 0) Status(L.F("No {0} for this game on SteamGridDB yet.", L.T(kind.Name).ToLowerInvariant()));
             }
@@ -294,7 +405,7 @@ public static class ArtworkDialog
             }
             finally
             {
-                if (mine == run) { ring.IsActive = false; ring.Visibility = Visibility.Collapsed; }
+                if (mine == run) { HideSkeletons(); loading = false; }
             }
         }
 
@@ -395,6 +506,7 @@ public static class ArtworkDialog
         dialog.Resources["ContentDialogMaxWidth"] = width + 96;
         dialog.Resources["ContentDialogMaxHeight"] = root.Size.Height;
         // The open tab takes the focus as a click would: no keyboard ring on a pill the moment the window opens.
+        dialog.Opened += (_, _) => Fit();
         dialog.Opened += (_, _) => tabButtons.FirstOrDefault(b => b.Tag is ArtKind k && k == kind.Kind)?.Focus(FocusState.Pointer);
         ShowTabs();
         ShowNow();

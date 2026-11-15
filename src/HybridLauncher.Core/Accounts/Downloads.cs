@@ -49,6 +49,8 @@ public sealed class DownloadJob
     public bool Preparing => Direct && State == DownloadState.Waiting && !Queued && Error is null;
     internal OwnedGame? Source;
     internal string? Root;
+    /// <summary>An update of a game a launcher installed (2.1.4): whose record is brought to the new build when it is done.</summary>
+    internal LauncherInstall? Launcher;
     /// <summary>The file list the install dialog already read: used for the first try instead of asking the store again.</summary>
     internal DownloadPlan? Plan;
     internal CancellationTokenSource? Cts;
@@ -60,6 +62,10 @@ public sealed class DownloadJob
     internal long LastBytes = -1;
     internal DateTime LastAt;
     internal DateTime LastMoved;
+    /// <summary>How often the launcher writes its numbers (smoothed seconds between two changes; 0 = not known yet).</summary>
+    internal double WriteEvery;
+    /// <summary>A Steam download (2.1.4): the app manifest's bytes when it started, and what Steam wrote to disk since.</summary>
+    internal long IoBase = -1, IoBytes;
     internal DateTime LastWalk;
 
     /// <summary>Cancel was asked (the launcher deletes what it downloaded): when its files go away it reads "Cancelled".</summary>
@@ -231,9 +237,9 @@ public static class Downloads
     }
 
     /// <summary>What a direct download of the game would fetch (its files and size), read from the store; the install dialog shows it.</summary>
-    public static Task<DownloadPlan> PlanAsync(OwnedGame game, string root, CancellationToken ct) => game.Store switch
+    public static Task<DownloadPlan> PlanAsync(OwnedGame game, string root, CancellationToken ct, LauncherInstall? launcher = null) => game.Store switch
     {
-        GameStore.Steam => SteamAccount.PlanAsync(game, root, ct),
+        GameStore.Steam => SteamAccount.PlanAsync(game, root, ct, launcher is { Depots.Count: > 0 } l ? l.Depots : null),
         GameStore.Epic => EpicAccount.PlanAsync(game, root, ct),
         GameStore.Gog => GogAccount.PlanAsync(game, root, ct),
         _ => throw new NotSupportedException(L.T("This store's games install from its own app.")),
@@ -261,6 +267,7 @@ public static class Downloads
             job.Root = root;
             job.IsUpdate = updateFolder is not null;
             job.IsVerify = verify && updateFolder is not null;
+            job.Launcher = null;
             job.Checked = job.CheckTotal = 0;
             job.Repaired = -1;
             if (updateFolder is not null) job.Folder = updateFolder;
@@ -286,6 +293,19 @@ public static class Downloads
     {
         Log.Info($"Update: {game.Name} ({install.Version ?? "?"} → newest)");
         return StartDirect(game, Path.GetDirectoryName(install.InstallDir) ?? install.InstallDir, updateFolder: install.InstallDir);
+    }
+
+    /// <summary>
+    /// Updates a game Steam, the Epic Games Launcher or GOG Galaxy installed (2.1.4), in its own folder, only the files that
+    /// changed (for Steam, exactly the depots Steam put in). It stays the launcher's game: when it is done the launcher's record
+    /// says the new build (<see cref="LauncherUpdates.Applied"/>) and Hybrid Launcher adds nothing of its own.
+    /// </summary>
+    public static DownloadJob StartLauncherUpdate(OwnedGame game, LauncherInstall install, string latest)
+    {
+        Log.Info($"Update of {game.Name} installed by {install.Store}: {install.Version ?? "?"} → {latest}");
+        var job = StartDirect(game, Path.GetDirectoryName(install.Folder) ?? install.Folder, updateFolder: install.Folder);
+        job.Launcher = install;
+        return job;
     }
 
     /// <summary>
@@ -429,7 +449,7 @@ public static class Downloads
                     try
                     {
                         // A plan read again at a new try: its servers and keys may have gone stale.
-                        var plan = job.Plan ?? await PlanAsync(game, job.Root!, cts.Token);
+                        var plan = job.Plan ?? await PlanAsync(game, job.Root!, cts.Token, job.IsVerify ? null : job.Launcher);
                         job.Plan = null;
                         if (job.IsUpdate && job.Folder is { } own)
                         {
@@ -437,6 +457,8 @@ public static class Downloads
                             plan.InstallDir = own;
                             plan.Update = true;
                         }
+                        // An update of a launcher's game: the launcher's record is brought up, nothing of Hybrid Launcher's added.
+                        if (job.Launcher is not null && !job.IsVerify) plan.LauncherOwned = true;
                         if (job.IsVerify)
                         {
                             plan.Checked = (n, total) => { job.Checked = n; job.CheckTotal = total; if (n == total || n % 64 == 0) Raise(); };
@@ -459,6 +481,7 @@ public static class Downloads
                             // A game its launcher installed stays the launcher's; one Hybrid Launcher installed keeps its record current.
                             if (IsMine(game.Id)) Register(game, plan);
                         }
+                        else if (job.Launcher is { } launcher) LauncherUpdates.Applied(launcher, plan.Version);
                         else Register(game, plan);
                         break;
                     }
@@ -789,14 +812,18 @@ public static class Downloads
     }
 
     /// <summary>
-    /// Speed from the bytes the launcher reports. Launchers write their numbers every few seconds, not at every check: the speed is
-    /// measured between two changes (not between two checks, which would read 0 in between) and only falls once nothing moved for 20 s.
+    /// Speed from the bytes the launcher reports. Launchers write their numbers every few seconds or less often (Steam's app
+    /// manifest: tens of seconds), not at every check: the speed is measured between two changes (not between two checks, which
+    /// would read 0 in between) and only falls once nothing moved for well over the launcher's own gap between writes.
+    /// <paramref name="wasDownloading"/>: the job was downloading at the last check; bytes that moved after a pause are a new
+    /// starting point, not a slow rate. Issue 10 (2.1.3): Steam wrote its numbers less often than every 30 s, and every write
+    /// was taken for a restart after a pause, so speed, peak and time left stayed empty for a whole Steam download.
     /// </summary>
-    static void Measure(DownloadJob j, long bytes)
+    internal static void Measure(DownloadJob j, long bytes, bool wasDownloading = true, DateTime? at = null)
     {
-        var now = DateTime.UtcNow;
-        // First reading, a restarted download, or one that sat still (paused): a new starting point, not a slow rate.
-        if (j.LastBytes < 0 || bytes < j.LastBytes || (j.Speed == 0 && bytes > j.LastBytes && now - j.LastMoved > TimeSpan.FromSeconds(30)))
+        var now = at ?? DateTime.UtcNow;
+        // First reading, a restarted download, or one that comes back from a pause: a new starting point, not a slow rate.
+        if (j.LastBytes < 0 || bytes < j.LastBytes || bytes > j.LastBytes && !wasDownloading)
         {
             j.LastBytes = bytes;
             j.LastAt = j.LastMoved = now;
@@ -804,13 +831,15 @@ public static class Downloads
         }
         if (bytes > j.LastBytes && now > j.LastAt)
         {
-            double rate = (bytes - j.LastBytes) / (now - j.LastAt).TotalSeconds;
+            double gap = (now - j.LastAt).TotalSeconds;
+            double rate = (bytes - j.LastBytes) / gap;
             // Smoothed, so the number does not jump at every write.
             j.Speed = j.Speed <= 0 ? rate : j.Speed * 0.55 + rate * 0.45;
+            j.WriteEvery = j.WriteEvery <= 0 ? gap : j.WriteEvery * 0.7 + gap * 0.3;
             j.LastBytes = bytes;
             j.LastAt = j.LastMoved = now;
         }
-        else if (now - j.LastMoved > TimeSpan.FromSeconds(20)) j.Speed *= 0.5;
+        else if ((now - j.LastMoved).TotalSeconds > Math.Max(20, j.WriteEvery * 2.5)) j.Speed *= 0.5;
         if (j.Speed < 1024) j.Speed = j.Speed < 1 ? 0 : j.Speed;
         j.Peak = Math.Max(j.Peak, j.Speed);
     }
@@ -861,6 +890,32 @@ public static class Downloads
         Raise();
     }
 
+    /// <summary>Self-test only: a pretend update of an installed game, moving like a real one (2.1.4 pictures of the update states).</summary>
+    public static DownloadJob AddSampleUpdate(GameStore store, string id, string name, string? cover, bool update = true)
+    {
+        var job = new DownloadJob { Store = store, Id = id, Name = name, Cover = cover, State = DownloadState.Downloading, Total = update ? 3L << 30 : 58L << 30, Done = update ? 1L << 30 : 21L << 30, Direct = true, IsSample = true, IsUpdate = update };
+        for (int i = 0; i < 60; i++) job.History.Add((30 + 10 * Math.Sin(i / 5.0)) * (1 << 20));
+        job.Speed = job.History[^1];
+        job.Peak = job.History.Max();
+        lock (Jobs)
+        {
+            Jobs.RemoveAll(j => j.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            Jobs.Add(job);
+        }
+        Watch();
+        Raise();
+        return job;
+    }
+
+    /// <summary>Self-test only: a pretend job ends.</summary>
+    public static void FinishSample(DownloadJob job)
+    {
+        job.State = DownloadState.Done;
+        job.Done = job.Total;
+        job.Speed = 0;
+        Raise();
+    }
+
     static void SampleTick(DownloadJob j)
     {
         if (j.State != DownloadState.Downloading) return;
@@ -881,10 +936,41 @@ public static class Downloads
 
     // ---------- Steam ----------
 
+    static (long Bytes, DateTime At)? _steamIo;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct IoCounters { public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes; }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetProcessIoCounters(nint process, out IoCounters counters);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    static extern nint OpenProcess(uint access, bool inherit, int pid);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern bool CloseHandle(nint handle);
+
+    /// <summary>The bytes the Steam client has written to disk since it started (null when it is not running).</summary>
+    static long? SteamWrites()
+    {
+        var procs = System.Diagnostics.Process.GetProcessesByName("steam");
+        try
+        {
+            if (procs.Length == 0) return null;
+            var h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, procs[0].Id);
+            if (h == 0) return null;
+            try { return GetProcessIoCounters(h, out var c) ? (long)c.WriteBytes : null; }
+            finally { CloseHandle(h); }
+        }
+        catch { return null; }
+        finally { foreach (var p in procs) p.Dispose(); }
+    }
+
     /// <summary>Every appmanifest that is not fully installed is a download (started in Hybrid Launcher or in Steam).</summary>
     static bool SteamTick()
     {
         bool changed = false;
+        var steamLive = new List<(DownloadJob Job, long Manifest)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var lib in SteamScanner.Libraries())
         {
@@ -928,16 +1014,42 @@ public static class Downloads
                 }
                 seen.Add(id);
                 if (state["installdir"] is { } dir) job.Folder = Path.Combine(apps, "common", dir);
-                Measure(job, done);
+                Measure(job, done, wasDownloading: job.State == DownloadState.Downloading);
                 var before = (job.State, job.Done, job.Total);
                 job.Total = total;
-                job.Done = done;
+                // The app manifest's own count lags far behind (Steam writes it now and then); the bytes Steam wrote since the
+                // download started fill the gap (below), never past the end.
+                job.Done = Math.Max(done, job.IoBase >= 0 ? Math.Min(total > 0 ? total - 1 : long.MaxValue, job.IoBase + job.IoBytes) : done);
                 // UpdateRunning (1024) = downloading now; otherwise queued or paused in Steam.
                 job.State = (flags & 1024) != 0 ? DownloadState.Downloading : total > 0 ? DownloadState.Paused : DownloadState.Waiting;
-                if (job.State != DownloadState.Downloading) job.Speed = 0;
+                if (job.State == DownloadState.Downloading) steamLive.Add((job, done));
+                else { job.Speed = 0; job.IoBase = -1; job.IoBytes = 0; }
                 changed |= before != (job.State, job.Done, job.Total) || job.Speed > 0;
             }
         }
+        // 2.1.4 (issue 10): the speed of a Steam download from what the Steam client writes to disk (its I/O counters, readable
+        // without admin), as Steam's own "disk usage": its app manifest's numbers come tens of seconds apart and far behind.
+        // Only with one Steam download running (the bytes cannot be told apart between two).
+        var io = SteamWrites();
+        var nowIo = DateTime.UtcNow;
+        if (io is { } bytes && _steamIo is { } last && steamLive.Count == 1 && bytes >= last.Bytes)
+        {
+            var (j, manifest) = steamLive[0];
+            double seconds = (nowIo - last.At).TotalSeconds;
+            long delta = bytes - last.Bytes;
+            if (j.IoBase < 0) { j.IoBase = manifest; j.IoBytes = 0; }
+            else if (seconds > 0.5)
+            {
+                j.IoBytes += delta;
+                double rate = delta / seconds;
+                j.Speed = j.Speed <= 0 ? rate : j.Speed * 0.6 + rate * 0.4;
+                if (j.Speed < 1024) j.Speed = 0;
+                j.Peak = Math.Max(j.Peak, j.Speed);
+                if (j.Total > 0) j.Done = Math.Max(j.Done, Math.Min(j.Total - 1, j.IoBase + j.IoBytes));
+                changed = true;
+            }
+        }
+        _steamIo = io is { } b ? (b, nowIo) : null;
         // A Steam download whose manifest went away was cancelled in Steam.
         List<DownloadJob> gone;
         lock (Jobs) gone = Jobs.Where(j => j.Store == GameStore.Steam && !j.Direct && j.State is DownloadState.Downloading or DownloadState.Paused or DownloadState.Waiting
@@ -985,7 +1097,7 @@ public static class Downloads
         if (DateTime.UtcNow - j.LastWalk < TimeSpan.FromSeconds(6)) return false;
         j.LastWalk = DateTime.UtcNow;
         long bytes = DiskUsage.FolderSize(j.Folder, CancellationToken.None);
-        Measure(j, bytes);
+        Measure(j, bytes, wasDownloading: j.State == DownloadState.Downloading);
         bool moved = bytes != j.Done;
         j.Done = bytes;
         j.State = moved || j.Speed > 1024 ? DownloadState.Downloading : j.State == DownloadState.Waiting ? DownloadState.Waiting : DownloadState.Paused;

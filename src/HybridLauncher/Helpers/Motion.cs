@@ -169,6 +169,22 @@ public static class Motion
         element.Unloaded += (_, _) => Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element).ImplicitAnimations = null;
     }
 
+    /// <summary>
+    /// A slow breathing of the element's opacity for a loading placeholder (2.1.4), run by the compositor: it costs the UI thread
+    /// nothing and stops with the element.
+    /// </summary>
+    public static void Pulse(UIElement element, int ms = 1100)
+    {
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(element);
+        var anim = visual.Compositor.CreateScalarKeyFrameAnimation();
+        anim.InsertKeyFrame(0, 1f);
+        anim.InsertKeyFrame(0.5f, 0.5f);
+        anim.InsertKeyFrame(1, 1f);
+        anim.Duration = TimeSpan.FromMilliseconds(ms);
+        anim.IterationBehavior = Microsoft.UI.Composition.AnimationIterationBehavior.Forever;
+        visual.StartAnimation("Opacity", anim);
+    }
+
     /// <summary>Fades an element in (pictures, freshly built content).</summary>
     public static void FadeIn(UIElement element, int ms = 250)
     {

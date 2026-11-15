@@ -2,6 +2,20 @@
 
 One entry per version: `run-perf.ps1 -Only snappy -Exe <published exe> -Report` (no input; a copy of real data). Every version must be at least as quick as the one before. Newest first.
 
+## 2.1.4-rc.2 - 2026-11-15 15:47
+
+- summary [first]: first frame median 104 ms, worst 156 ms; jank median 337 ms, worst 429 ms
+- summary [return]: first frame median 5 ms, worst 11 ms; jank median 20 ms, worst 30 ms
+- summary [prepared]: first frame median 12 ms, worst 13 ms; jank median 22 ms, worst 22 ms
+- summary [tab]: first frame median 19 ms, worst 128 ms; jank median 19 ms, worst 377 ms
+- summary [scroll]: first frame median 0 ms, worst 7 ms; jank median 0 ms, worst 0 ms
+- summary [page]: first frame median 38 ms, worst 121 ms; jank median 80 ms, worst 178 ms
+- memory: 893 MB private, 917 MB working set, 8 game pages alive
+- verdict: FAIL (1 of 29 over budget)
+- gate vs 2.1.2 - 2026-11-15 01:06: no regression
+- Over budget:
+  - [tab] tab opti: first frame 46 ms (busy 7), 61 missed, worst gap 175 ms, jank 377 ms, settled 433 ms  (budget 150 / 200)
+
 ## 2.1.2 - 2026-11-15 01:06
 
 - summary [first]: first frame median 97 ms, worst 148 ms; jank median 379 ms, worst 477 ms

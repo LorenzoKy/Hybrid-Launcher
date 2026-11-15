@@ -176,6 +176,14 @@ public partial class GamePage
         return b;
     }
 
+    /// <summary>Self-test: opens a page of Properties and tells whether it holds the Artwork row.</summary>
+    internal bool SelfTestPropsPageHasArtwork(string id)
+    {
+        ShowPropsPage(id);
+        return _propsBody?.Content is StackPanel page && page.Children.OfType<Border>().Any(b => b.Child is Grid g
+            && g.Children.OfType<StackPanel>().Any(t => t.Children.OfType<TextBlock>().FirstOrDefault()?.Text == L.T("Artwork")));
+    }
+
     void ShowPropsPage(string id)
     {
         if (_game is not { } game || _propsNav is null || _propsBody is null) return;
@@ -195,7 +203,7 @@ public partial class GamePage
             case "general": GeneralPage(page, game); break;
             case "files": FilesPage(page, game); break;
             case "library": LibraryPropsPage(page, game); break;
-            default: CustomPage(page); break;
+            default: CustomPage(page, game); break;
         }
         _propsBody.Content = page;
         _propsBody.ChangeView(null, 0, null, disableAnimation: true);
@@ -321,8 +329,11 @@ public partial class GamePage
     }
 
     /// <summary>"Customization": a switch per part of the banner and the launch bar, for this game.</summary>
-    void CustomPage(StackPanel page)
+    void CustomPage(StackPanel page, Game game)
     {
+        // The pictures here too (2.1.4), as in Library: how the game looks is customization as well.
+        CoverRow(page, game);
+        page.Children.Add(PropHeading(L.T("Page parts")));
         page.Children.Add(PropNote(L.T("The parts of the banner and the launch bar shown for this game. Parts hidden for every game are changed in Settings.")));
         foreach (var (key, label) in PageParts.All)
         {

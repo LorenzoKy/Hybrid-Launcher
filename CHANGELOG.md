@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.2.0 — 2026-11-15 · A new Downloads tab and game updates
+
+**Hybrid Launcher 2.2** redoes the Downloads tab, updates the games Steam, the Epic Games Launcher and GOG Galaxy
+installed, and scrolls the game page smoothly again. If you have 2.1.0 to 2.1.3, the app offers this update by itself a
+few seconds after it starts.
+
+### ✨ New
+
+- **Downloads is laid out around what is happening.** At the top: the game downloading now, then the queue, the
+  updates you can install and the last few finished downloads (*Show all* lists the rest). With nothing going on, a
+  card says so and when your games were last checked for updates. *Check for updates* sits in the header and shows
+  when a check is running.
+- **Your games are behind one bar, closed by default.** It shows how many games you own, how many are installed and
+  on which launchers; *Show games* opens the covers, filters and search, and Downloads remembers that you opened it.
+  With the bar closed, the covers are not loaded at all, so the tab opens faster with a big library.
+- **Updates show where you look.** Opening *Downloads* or a game's page checks for an update in the background, without
+  slowing the page down. With automatic updates on it starts at once; otherwise *Downloads* lists it under *Updates
+  available* (with *Update* and *Update all*) and the game's launch bar shows *Update · Available*.
+- **Games installed by Steam, the Epic Games Launcher or GOG Galaxy are kept up to date by Hybrid Launcher**, when you
+  are signed in to that store in *Downloads → Accounts*. Until now only the games Hybrid Launcher downloaded itself were
+  updated. They are checked when Hybrid Launcher starts and every six hours, and update in *Downloads* by themselves:
+  only the files that changed are downloaded, mods and settings stay, and afterwards Steam and the Epic Games Launcher
+  see the game as up to date. A game its launcher is running or already updating is left to it. Turn it off in
+  *Settings → Features → Keep games up to date*.
+- **Profile picture framing.** After you pick a picture for your profile, drag it to move it and scroll or use the
+  slider to zoom; the circle shows what is saved.
+- **Artwork in Customization.** The game's *Properties → Customization* page has the *Artwork* row too (it stays in
+  *Library* as well).
+
+### 🐛 Fixes
+
+- **Scrolling a game's home page stuttered** while its trailer played: the page stopped for a frame and then jumped,
+  even far below the trailer. The trailer now pauses when you scroll it mostly out of view and plays on when you come
+  back to it.
+- **Speed, time left and peak showed "—" for a download running in Steam**
+  ([#10](https://github.com/LorenzoKy/Hybrid-Launcher/issues/10)). Steam writes its progress only every so often, and
+  Hybrid Launcher took each write for a download resuming after a pause. The speed and progress now follow what Steam is writing to disk.
+- **Downloads hitched for a moment when it opened** with a large library, and again at every step of a download: the
+  whole library was counted each time. It is counted once when the lists change.
+- **The game's picture behind a download in Downloads was blurry.** It now uses the same large picture Steam's own
+  downloads page shows.
+- **The SteamGridDB artwork window cut off its last row of pictures**, which could not be scrolled to. The picture grid
+  now fits the window, shows placeholders while SteamGridDB answers, and loads the next page by itself near the end.
+
 ## 2.1.3 — 2026-11-15 · Small fixes
 
 **Hybrid Launcher 2.1.3** fixes a text shown in the wrong language. If you have 2.1.0 to 2.1.2, the app offers this

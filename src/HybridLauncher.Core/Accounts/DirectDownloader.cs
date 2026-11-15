@@ -20,6 +20,11 @@ public sealed class PlanFile
     public bool Temporary { get; init; }
     /// <summary>The whole file's checksum from the store's manifest (hex), when it gives one: an update keeps a file that matches.</summary>
     public string? Sha1 { get; init; }
+    /// <summary>
+    /// The same file, unchanged, in the build installed before (2.1.4, a launcher's game updated from its old file list): a file
+    /// on disk of the right size is taken as it is, without reading it all to compare its checksum, as Steam does.
+    /// </summary>
+    public bool Unchanged { get; init; }
     public string? Md5 { get; init; }
 }
 
@@ -35,6 +40,11 @@ public sealed class DownloadPlan
     public string? Version { get; init; }
     /// <summary>An update of a game already in <see cref="InstallDir"/>: files already as the new build has them are not downloaded again.</summary>
     public bool Update { get; set; }
+    /// <summary>
+    /// An update of a game its launcher installed (2.1.4): the launcher's own record of the game (Steam's app manifest) is
+    /// brought up to the new build instead of Hybrid Launcher's, and nothing of Hybrid Launcher's own is added to the folder.
+    /// </summary>
+    public bool LauncherOwned { get; set; }
     /// <summary>Run after the files are in place (reads the store's launch info that came with the files, writes extra files).</summary>
     public Action<DownloadPlan>? Finish { get; set; }
     /// <summary>An update's check of the files on disk (a verify, 2.1-rc.3): called with how many were checked of how many.</summary>
@@ -269,7 +279,7 @@ public static class DirectDownloader
             if (!info.Exists || info.Length != f.Size) return false;
             // An empty file is what it should be once its size matches (it has no checksum to compare, and writing it again
             // every update changed nothing).
-            if (f.Size == 0) return true;
+            if (f.Size == 0 || f.Unchanged) return true;
             if (f.Sha1 is null && f.Md5 is null) return false; // nothing to compare with: download it
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20, FileOptions.SequentialScan);
             var hash = f.Sha1 is not null ? System.Security.Cryptography.SHA1.HashData(stream) : System.Security.Cryptography.MD5.HashData(stream);

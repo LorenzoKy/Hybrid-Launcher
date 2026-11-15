@@ -832,7 +832,7 @@ public sealed partial class SettingsPage : Page
         UpdateCheckText.Visibility = Visibility.Visible;
         UpdateCheckText.Text = L.T("Checking…");
         int started = await Helpers.GameUpdater.CheckNowAsync(evenIfOff: true);
-        UpdateCheckText.Text = started == 0 ? L.T("Every game Hybrid Launcher downloaded is up to date.") : L.F("{0} update(s) started in Downloads.", started);
+        UpdateCheckText.Text = started == 0 ? L.T("Every game is up to date.") : L.F("{0} update(s) started in Downloads.", started);
         CheckUpdatesButton.IsEnabled = true;
     }
 

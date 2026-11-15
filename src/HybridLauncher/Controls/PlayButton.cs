@@ -22,7 +22,7 @@ namespace HybridLauncher.Controls;
 /// </summary>
 public sealed partial class PlayButton : UserControl
 {
-    public enum Mode { Play, Starting, Stop, Stopping, Install, Downloading }
+    public enum Mode { Play, Starting, Stop, Stopping, Install, Downloading, Updating }
 
     const double Corner = 9;
     readonly Button _button;
@@ -67,7 +67,7 @@ public sealed partial class PlayButton : UserControl
     // Every mode is set exactly like Play (same size, same spacing). The face is about 3.3 times as wide as it is tall (the
     // user's reference, 2.0.0-rc.5) with the icon and word centred as one block; a word that needs more room (a long
     // translation) widens it, keeping SidePad on each side. The word is never made smaller, squeezed, spread or cut.
-    const double MinFace = 192, SidePad = 26, TextSize = 24, IconGap = 14;
+    const double MinFace = 192, SidePad = 26, TextSize = 24, IconGap = 14, CompactText = 16, CompactPad = 20;
     readonly StackPanel _content;
     readonly Border _pad;
 
@@ -151,10 +151,13 @@ public sealed partial class PlayButton : UserControl
     /// </summary>
     void FitLabel()
     {
-        _text.FontSize = TextSize;
+        // 2.1.4: a download (Downloading, Updating, Download) is a status, not the page's main action: a smaller word and a
+        // face just around it, so it does not grow past Play (it was 270 px wide and pushed the bar beside it).
+        bool compact = _mode is Mode.Downloading or Mode.Updating or Mode.Install;
+        _text.FontSize = compact ? CompactText : TextSize;
         _content.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
         double need = Math.Ceiling(_content.DesiredSize.Width);
-        double face = Math.Max(MinFace, need + 2 * SidePad);
+        double face = compact ? need + 2 * CompactPad : Math.Max(MinFace, need + 2 * SidePad);
         double pad = Math.Floor((face - need) / 2);
         _pad.Padding = new Thickness(pad, 0, pad, 0);
         MinWidth = MaxWidth = face;
@@ -224,6 +227,7 @@ public sealed partial class PlayButton : UserControl
             Mode.Stop => (StopPath, Labels[1], stop, false),
             // A static arrow, not a spinner: the download may be paused or queued, the bar beside it says which.
             Mode.Downloading => (DownloadPath, Labels[2], blue, false),
+            Mode.Updating => (DownloadPath, Labels[6], blue, false),
             Mode.Stopping => (StopPath, Labels[3], Mix(stop, Microsoft.UI.Colors.Black, 0.18), true),
             Mode.Install => (DownloadPath, Labels[4], blue, false),
             _ => (PlayPath, Labels[5], play, false),
@@ -234,7 +238,7 @@ public sealed partial class PlayButton : UserControl
         _color = color;
         _icon.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), path);
         // Each icon a little smaller than the capitals beside it, like the reference (the square looks bigger: smaller still).
-        _icon.Height = _icon.Width = path == StopPath ? 16 : 18;
+        _icon.Height = _icon.Width = path == StopPath ? 16 : mode is Mode.Downloading or Mode.Updating or Mode.Install ? 14 : 18;
         // The busy modes (Starting…, Closing…) keep their icon, drawn like Play's, and it breathes faster than Stop's.
         _icon.Visibility = Visibility.Visible;
         _text.Text = text.ToUpper();
@@ -303,7 +307,7 @@ public sealed partial class PlayButton : UserControl
     void OnPolicyChanged() => Pulse();
 
     /// <summary>The words of the modes, in the order of <see cref="SetMode"/>: Starting, Stop, Downloading, Closing, Download, Play.</summary>
-    static readonly string[] Labels = [L.T("Starting…"), L.T("Stop"), L.T("Downloading"), L.T("Closing…"), L.T("Download"), L.T("Play")];
+    static readonly string[] Labels = [L.T("Starting…"), L.T("Stop"), L.T("Downloading"), L.T("Closing…"), L.T("Download"), L.T("Play"), L.T("Updating")];
 
     /// <summary>The theme's own accent (not the lightened fill WinUI uses for controls): a deep, saturated face for the main button.</summary>
     internal static Color Accent() =>

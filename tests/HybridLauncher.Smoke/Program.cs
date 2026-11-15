@@ -1,3 +1,4 @@
+using HybridLauncher.Core.Accounts;
 // End-to-end checks for HybridLauncher.Core that need a real Windows box and network:
 //   dotnet run -- scan              list detected games and their exe folders
 //   dotnet run -- ini <file>        parse an OptiScaler.ini and print the option kinds
@@ -1078,6 +1079,129 @@ switch (cmd)
         {
             Environment.SetEnvironmentVariable("HL_UPDATE_FEED", null);
             Directory.Delete(dir, recursive: true);
+        }
+        break;
+    }
+    case "launcher-speed":
+    {
+        // Issue 10: a launcher that writes its numbers every 45 s (Steam's app manifest) still gives a speed, a peak and a time
+        // left; one paused for minutes then resumed starts over instead of a slow rate.
+        var t0 = DateTime.UtcNow;
+        var job = new DownloadJob { Store = GameStore.Steam, Id = "steam:1", Name = "Speed", State = DownloadState.Downloading, Total = 50L << 30 };
+        long done = 0;
+        for (int s = 0; s <= 300; s += 3)
+        {
+            if (s % 45 == 0 && s > 0) done += 45L * 20 * (1 << 20); // 20 MB/s written every 45 s
+            Downloads.Measure(job, done, wasDownloading: s > 0, at: t0.AddSeconds(s));
+            job.Done = done;
+        }
+        Console.WriteLine($"speed {job.Speed / (1 << 20):F1} MB/s, peak {job.Peak / (1 << 20):F1} MB/s, left {job.Remaining}");
+        Check(job.Speed / (1 << 20) is > 15 and < 25, "speed measured from writes 45 s apart");
+        Check(job.Peak > 0 && job.Remaining is not null, "peak and time left known");
+        // Paused for 10 minutes (no writes, state not downloading), then a write: a new starting point, not 2 MB/s.
+        Downloads.Measure(job, done + (200L << 20), wasDownloading: false, at: t0.AddSeconds(900));
+        Check(job.Speed / (1 << 20) > 15, "a resume after a pause does not read as a slow rate");
+        break;
+    }
+    case "launcher-updates":
+    {
+        // 2.1.4: updates of games a launcher installed. Offline: the launcher's records are brought to a new build (fake copies)
+        // and the version Hybrid Launcher counts as installed. Nothing on this PC is written.
+        var dir = Path.Combine(Path.GetTempPath(), "hl-smoke-lupd-" + Guid.NewGuid().ToString("N")[..8]);
+        var common = Directory.CreateDirectory(Path.Combine(dir, "steamapps", "common", "Fake Game")).FullName;
+        try
+        {
+            var acf = Path.Combine(dir, "steamapps", "appmanifest_480.acf");
+            File.WriteAllText(acf, "\"AppState\"\n{\n\t\"appid\"\t\t\"480\"\n\t\"name\"\t\t\"Fake Game\"\n\t\"StateFlags\"\t\t\"6\"\n\t\"installdir\"\t\t\"Fake Game\"\n\t\"buildid\"\t\t\"100\"\n\t\"TargetBuildID\"\t\t\"101\"\n\t\"LastOwner\"\t\t\"7\"\n\t\"InstalledDepots\"\n\t{\n\t\t\"481\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"111\"\n\t\t\t\"size\"\t\t\"5\"\n\t\t}\n\t\t\"482\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"222\"\n\t\t\t\"size\"\t\t\"6\"\n\t\t}\n\t}\n}\n");
+            Check(HybridLauncher.Core.Accounts.SteamAccount.PatchAppManifest(common, "480", "205", [(481u, 999UL)]), "Steam app manifest patched");
+            var state = HybridLauncher.Core.Detection.VdfNode.Parse(File.ReadAllText(acf)).Child("AppState")!;
+            Check(state["buildid"] == "205" && state["TargetBuildID"] == "205" && state["StateFlags"] == "4", "build, target build and state say the new build");
+            Check(state.Child("InstalledDepots")!.Child("481")!["manifest"] == "999" && state.Child("InstalledDepots")!.Child("482")!["manifest"] == "222", "the updated depot's manifest changed, the other kept");
+            Check(state["LastOwner"] == "7" && state.Child("InstalledDepots")!.Child("481")!["size"] == "5", "the rest of Steam's record kept");
+
+            var manifests = Directory.CreateDirectory(Path.Combine(dir, "Manifests")).FullName;
+            var game = Directory.CreateDirectory(Path.Combine(dir, "EpicGame")).FullName;
+            var item = Path.Combine(manifests, "x.item");
+            File.WriteAllText(item, System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["AppName"] = "Fake", ["MainGameAppName"] = "Fake", ["DisplayName"] = "Fake Epic", ["InstallLocation"] = game, ["AppVersionString"] = "1.0", ["Other"] = 5,
+            }));
+            var epic = LauncherUpdates.ScanEpic(manifests);
+            Check(epic.Count == 1 && epic[0].Id == "epic:Fake" && epic[0].Version == "1.0", "Epic install read: " + string.Join(",", epic.Select(e => $"{e.Id} {e.Version}")));
+            Check(LauncherUpdates.PatchEpicItem(item, "2.0"), "Epic .item patched");
+            var after = LauncherUpdates.ScanEpic(manifests)[0];
+            Check(after.Version == "2.0" && File.ReadAllText(item).Contains("\"Other\": 5"), "the .item says the new version, its other fields kept");
+
+            // The version counted as installed: a launcher whose record is not written (GOG Galaxy) keeps showing the old one.
+            var gog = new LauncherInstall(GameStore.Gog, "gog:smoke-test", "Fake GOG", game, "1.0", "key", new Dictionary<uint, ulong>(), false);
+            lock (SettingsStore.Current) SettingsStore.Current.LauncherUpdates[gog.Id] = new LauncherUpdateMark { Before = "1.0", Applied = "1.1" };
+            Check(LauncherUpdates.Installed(gog) == "1.1", "the build Hybrid Launcher put in counts while the launcher's record is unchanged");
+            Check(LauncherUpdates.Installed(gog with { Version = "1.2" }) == "1.2", "a record the launcher changed since counts again");
+            Check(!SettingsStore.Current.LauncherUpdates.ContainsKey(gog.Id), "and the old mark goes");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+
+        // Live, read only (HL_LIVE=1 with the accounts copied into HL_DATA): the launchers' games and their stores' newest builds.
+        if (Environment.GetEnvironmentVariable("HL_LIVE") == "1")
+        {
+            var installs = LauncherUpdates.Scan();
+            Console.WriteLine($"Launcher installs: {installs.Count} ({string.Join(", ", installs.GroupBy(i => i.Store).Select(g => $"{g.Key} {g.Count()}"))})");
+            var owned = new Dictionary<string, HybridLauncher.Core.Accounts.OwnedGame>(StringComparer.OrdinalIgnoreCase);
+            foreach (var store in new[] { GameStore.Steam, GameStore.Epic, GameStore.Gog })
+            {
+                Console.WriteLine($"{store}: signed in {HybridLauncher.Core.Accounts.OwnedGames.Direct(store)}");
+                if (!HybridLauncher.Core.Accounts.OwnedGames.Direct(store)) continue;
+                var list = await HybridLauncher.Core.Accounts.OwnedGames.LoadAsync(store, SettingsStore.Current.Accounts, CancellationToken.None);
+                foreach (var g in list.Games) owned[g.Id] = g;
+            }
+            foreach (var i in installs.Where(i => owned.ContainsKey(i.Id)))
+            {
+                string? latest = null, error = null;
+                try { latest = await LauncherUpdates.LatestAsync(i, owned[i.Id], CancellationToken.None); } catch (Exception ex) { error = ex.Message; }
+                Console.WriteLine($"  {i.Store,-5} {i.Name,-40} installed {i.Version ?? "?",-24} store {latest ?? "?",-24} {(error is not null ? "ERROR " + error : latest is null ? "no answer" : latest == i.Version ? "up to date" : "UPDATE")} {(i.Busy ? "(busy)" : "")}");
+                Check(error is null && latest is { Length: > 0 }, $"{i.Name}: the store gives its newest build");
+            }
+            var found = await LauncherUpdates.CheckAsync(id => owned.GetValueOrDefault(id), CancellationToken.None, installs);
+            Console.WriteLine($"Updates found: {found.Count}");
+
+            // End to end on a COPY (HL_LUPD_COPY=<appid>): the game's folder and app manifest copied to a temp Steam library,
+            // the manifest set back to an old build and one file removed; the update must fetch only that file and bring the
+            // manifest to the store's build, without adding anything of Hybrid Launcher's. The Steam client is never restarted.
+            if (Environment.GetEnvironmentVariable("HL_LUPD_COPY") is { Length: > 0 } copyId && installs.FirstOrDefault(i => i.Id == "steam:" + copyId) is { } real && owned.TryGetValue(real.Id, out var ownedGame))
+            {
+                HybridLauncher.Core.Detection.SteamScanner.RestartDisabled = true;
+                var lib = Path.Combine(Path.GetTempPath(), "hl-smoke-lupd-lib");
+                if (Directory.Exists(lib)) Directory.Delete(lib, true);
+                var folder = Path.Combine(lib, "steamapps", "common", Path.GetFileName(real.Folder));
+                foreach (var f in Directory.EnumerateFiles(real.Folder, "*", SearchOption.AllDirectories))
+                {
+                    var to = Path.Combine(folder, Path.GetRelativePath(real.Folder, f));
+                    Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                    File.Copy(f, to);
+                }
+                var acfCopy = Path.Combine(lib, "steamapps", Path.GetFileName(real.Record));
+                File.WriteAllText(acfCopy, System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(real.Record), "(\"buildid\"\\s+\")\\d+", "${1}1"));
+                var victim = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Where(f => new FileInfo(f).Length is > 1000 and < 2_000_000).First();
+                File.Delete(victim);
+                var copy = real with { Folder = folder, Record = acfCopy, Version = "1" };
+                var check = await LauncherUpdates.CheckAsync(id => owned.GetValueOrDefault(id), CancellationToken.None, [copy]);
+                Check(check.Count == 1, "the copy at build 1 needs an update");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var plan = await Downloads.PlanAsync(ownedGame, lib, CancellationToken.None, copy);
+                plan.InstallDir = folder;
+                plan.Update = true;
+                plan.LauncherOwned = true;
+                await DirectDownloader.RunAsync(plan, _ => { }, CancellationToken.None);
+                Console.WriteLine($"Update of the copy: {plan.Fetched} file(s) fetched of {plan.Files.Count(f => !f.Directory)} in {sw.Elapsed.TotalSeconds:F0} s");
+                var st = HybridLauncher.Core.Detection.VdfNode.Parse(File.ReadAllText(acfCopy)).Child("AppState")!;
+                Check(File.Exists(victim), "the removed file is back");
+                Check(plan.Fetched <= 3, $"only the missing file(s) fetched ({plan.Fetched})");
+                Check(st["buildid"] == check[0].Latest && st["StateFlags"] == "4", $"the copy's app manifest says build {st["buildid"]}");
+                Check(!File.Exists(Path.Combine(folder, "steam_appid.txt")) || File.Exists(Path.Combine(real.Folder, "steam_appid.txt")), "no steam_appid.txt added to Steam's install");
+                Check(!DirectDownloader.HasState(folder), "no download state left in the folder");
+                Check(!SettingsStore.Current.DirectInstalls.Any(d => d.Id == real.Id), "not added to Hybrid Launcher's own installs");
+                Directory.Delete(lib, true);
+            }
         }
         break;
     }

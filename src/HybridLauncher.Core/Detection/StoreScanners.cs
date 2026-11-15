@@ -77,6 +77,9 @@ public static partial class SteamScanner
         return false;
     }
 
+    /// <summary>Tests: the Steam client on this PC is never restarted.</summary>
+    internal static bool RestartDisabled;
+
     /// <summary>
     /// Closes the Steam client and opens it again with <paramref name="args"/>, so it reads the app manifests Hybrid Launcher wrote
     /// while it was open (a game downloaded by Hybrid Launcher is unknown to a Steam that was already running).
@@ -84,7 +87,7 @@ public static partial class SteamScanner
     public static async Task RestartClientAsync(string args)
     {
         var exe = SteamExe();
-        if (exe is null) return;
+        if (exe is null || RestartDisabled) return;
         Log.Info($"Restarting Steam so it sees new installs ({args})");
         if (ClientRunning())
         {
@@ -193,13 +196,15 @@ public static class EpicScanner
         catch (Exception ex) { Log.Warn($"Launcher libraries: {ex.Message}"); return []; }
     }
 
-    public static IEnumerable<Game> Scan()
+    public static IEnumerable<Game> Scan() => ScanManifests(ManifestsDir());
+
+    /// <summary>The Epic Games Launcher's folder of .item manifests (one per installed game).</summary>
+    public static string ManifestsDir()
     {
         var dataPath = RegistryValue.Read(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Epic Games\EpicGamesLauncher", "AppDataPath") as string;
-        var manifestsDir = dataPath is not null
+        return dataPath is not null
             ? Path.Combine(dataPath, "Manifests")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Epic\EpicGamesLauncher\Data\Manifests");
-        return ScanManifests(manifestsDir);
     }
 
     /// <summary>The games in a folder of Epic's .item manifests (the launcher's, or a test's).</summary>
