@@ -34,7 +34,7 @@
 
 ## What is Hybrid Launcher
 
-A free and open source Windows 11 app that **finds the games on your PC**, gives each one **its own page**, and properly manages popular mods.
+A free and open source Native Windows 11 app that **finds the games on your PC**, gives each one **its own page**, and properly manages popular mods.
 A launcher and a mod tool in one window, for several stores at once.
 
 <p align="center">
