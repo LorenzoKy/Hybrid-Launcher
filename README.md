@@ -34,9 +34,8 @@
 
 ## What is Hybrid Launcher
 
-A free and open source Windows 11 app that **finds the games on your PC**, gives each one **its own page**, and installs the
-mods that make them run and look better: **OptiScaler** first of all, then **ReShade**, **RenoDX**, **Luma**, **DXVK** and,
-in early and experimental form, **DLSS 5**. A launcher and a mod tool in one window, for several stores at once.
+A free and open source Windows 11 app that **finds the games on your PC**, gives each one **its own page**, and properly manages popular mods.
+A launcher and a mod tool in one window, for several stores at once.
 
 <p align="center">
   <img src="docs/images/readme-game-page.webp" width="100%" alt="A game's page in Hybrid Launcher: the library sidebar, the banner with its upscalers, the Play button with last played, play time, HDR and cloud status, the tabs, the trailer and the Achievements card with the latest and rarest unlocks" />
