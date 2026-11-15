@@ -3993,6 +3993,8 @@ static class Italian
         ["{0} launcher"] = "{0} launcher",
         ["{0} launchers"] = "{0} launcher",
         ["{0} not installed"] = "{0} non installati",
+        ["{0:#,0} more in the Library"] = "Altri {0:#,0} nella Libreria",
+        ["The list shows the first games you own but have not installed. The Library shows them all."] = "La lista mostra i primi giochi che possiedi ma non hai installato. La Libreria li mostra tutti.",
         // 2.1-rc.4
         ["From {0}: {1:0.#} hours"] = "Da {0}: {1:0.#} ore",
         // 2.1-rc.6

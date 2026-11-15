@@ -59,6 +59,8 @@ public sealed partial class ProfilePage : Page
         {
             var dq = DispatcherQueue;
             await OwnedLibrary.LoadAsync();
+            // The owned games count at once (2.1.2): the page waited for their stats before showing any of them.
+            dq.TryEnqueue(Refill);
             await Library.LoadOwnedStatsAsync(dq);
         }
         catch (Exception ex) { Log.Warn($"Profile owned games: {ex.Message}"); }

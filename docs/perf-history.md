@@ -2,6 +2,23 @@
 
 One entry per version: `run-perf.ps1 -Only snappy -Exe <published exe> -Report` (no input; a copy of real data). Every version must be at least as quick as the one before. Newest first.
 
+## 2.1.2 - 2026-11-15 01:06
+
+- summary [first]: first frame median 97 ms, worst 148 ms; jank median 379 ms, worst 477 ms
+- summary [return]: first frame median 6 ms, worst 11 ms; jank median 27 ms, worst 35 ms
+- summary [prepared]: first frame median 6 ms, worst 6 ms; jank median 57 ms, worst 76 ms
+- summary [tab]: first frame median 50 ms, worst 123 ms; jank median 137 ms, worst 535 ms
+- summary [scroll]: first frame median 6 ms, worst 12 ms; jank median 0 ms, worst 19 ms
+- summary [page]: first frame median 46 ms, worst 134 ms; jank median 95 ms, worst 200 ms
+- memory: 889 MB private, 904 MB working set, 8 game pages alive
+- verdict: FAIL (4 of 30 over budget)
+- gate vs 2.1.1 - 2026-11-14 21:15: no regression
+- Over budget:
+  - [first] open Gears of War: E-Day: first frame 89 ms (busy 45), 70 missed, worst gap 142 ms, jank 469 ms, settled 740 ms  (budget 300 / 450)
+  - [first] open HITMAN World of Assassination: first frame 127 ms (busy 74), 66 missed, worst gap 145 ms, jank 477 ms, settled 1220 ms  (budget 300 / 450)
+  - [tab] tab opti: first frame 109 ms (busy 51), 78 missed, worst gap 99 ms, jank 535 ms, settled 619 ms  (budget 150 / 200)
+  - [tab] tab ach: first frame 50 ms (busy 21), 44 missed, worst gap 197 ms, jank 291 ms, settled 360 ms  (budget 150 / 200)
+
 ## 2.1.1 - 2026-11-14 21:15
 
 - summary [first]: first frame median 126 ms, worst 145 ms; jank median 356 ms, worst 453 ms

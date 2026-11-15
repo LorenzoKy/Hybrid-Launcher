@@ -132,6 +132,13 @@ public sealed partial class LibraryPage
         bool byName = f.Sort is "name" or "added" or "tech";
         bool descending = !byName;
         if (f.Descending) descending = !descending;
+        // NotInstalled is in name order already: sorting a big library again on every redraw cost 100 ms or more (2.1.2).
+        if (byName)
+        {
+            var named = list.ToList();
+            if (descending) named.Reverse();
+            return named;
+        }
         var ordered = descending ? list.OrderByDescending(key) : list.OrderBy(key);
         return ordered.ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }

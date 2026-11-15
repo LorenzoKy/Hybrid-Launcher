@@ -784,13 +784,13 @@ public sealed partial class MainWindow : Window
     /// <summary>The games under one group heading, in the list's order: what folding a group takes out or puts back.</summary>
     List<NavigationViewItem> GroupItems(string key)
     {
-        if (key == NotInstalledKey) return NotInstalledShown().Select(CreateOwnedItem).ToList();
+        if (key == NotInstalledKey) return CappedOwned(NotInstalledShown()).ToList();
         var list = Library.Apply(AppState.VisibleGames.Where(g => !g.NotInstalled).Where(Matches), Library.ListFilter)
             .Where(g => !AppState.IsPinned(g.Id) && StoreLogos.GroupOf(g).Key == key)
             .Select(CreateItem).ToList();
         // Grouped, a launcher's group holds its games not installed too, after the others.
         if (Library.ListFilter.GroupByLauncher)
-            list.AddRange(NotInstalledShown().Where(o => "store:" + o.Store == key).Select(CreateOwnedItem));
+            list.AddRange(CappedOwned(NotInstalledShown().Where(o => "store:" + o.Store == key).ToList()));
         return list;
     }
 
@@ -952,13 +952,47 @@ public sealed partial class MainWindow : Window
     const int OwnedAtOnce = 30;
 
     /// <summary>
-    /// The not-installed games of a group: the first few at once, the rest in turns of the UI thread (2.1-rc.3: 370 items added
-    /// in one go held the window 0.5-0.8 s). A newer redraw drops what an older one had left to add.
+    /// The most not-installed games one block of the side list holds (2.1.2, issue 9): the list's items are all made (the pane
+    /// does not virtualize), and a Steam library of 15,000 games made the window freeze for good, again at every start while the
+    /// filter stayed on. The rest are one click away in the Library, whose covers are made only as they scroll into view.
     /// </summary>
-    void AddOwnedItems(List<OwnedGame> games, Dictionary<string, NavigationViewItem> items)
+    internal const int OwnedListMax = 50;
+
+    const string MoreOwnedTag = "owned-more";
+
+    /// <summary>"14,913 more in the Library": the last item of a block of not-installed games cut at <see cref="OwnedListMax"/>.</summary>
+    NavigationViewItem MoreOwnedItem(int more)
     {
+        var item = new NavigationViewItem
+        {
+            Content = ItemName(L.F("{0:#,0} more in the Library", more)), Tag = MoreOwnedTag, SelectsOnInvoked = false, Opacity = 0.75,
+            Icon = new FontIcon { Glyph = "" },
+        };
+        BigIcon(item);
+        PaneTip(item, L.T("The list shows the first games you own but have not installed. The Library shows them all."));
+        return item;
+    }
+
+    /// <summary>The not-installed games of a block, cut at <see cref="OwnedListMax"/> with the "more in the Library" item.</summary>
+    IEnumerable<NavigationViewItem> CappedOwned(List<OwnedGame> games)
+    {
+        foreach (var g in games.Take(OwnedListMax)) yield return CreateOwnedItem(g);
+        if (games.Count > OwnedListMax) yield return MoreOwnedItem(games.Count - OwnedListMax);
+    }
+
+    /// <summary>
+    /// The not-installed games of a group: the first few at once, the rest in turns of the UI thread (2.1-rc.3: 370 items added
+    /// in one go held the window 0.5-0.8 s), never more than <see cref="OwnedListMax"/>. A newer redraw drops what an older one
+    /// had left to add.
+    /// </summary>
+    void AddOwnedItems(List<OwnedGame> all, Dictionary<string, NavigationViewItem> items)
+    {
+        var games = all.Count > OwnedListMax ? all.GetRange(0, OwnedListMax) : all;
         foreach (var g in games.Take(OwnedAtOnce)) Nav.MenuItems.Add(items[g.Id] = CreateOwnedItem(g));
-        if (games.Count <= OwnedAtOnce || Nav.MenuItems.LastOrDefault() is not { } anchor) return;
+        var last = Nav.MenuItems.LastOrDefault();
+        // The rest go in before it, after the last game added.
+        if (all.Count > games.Count) Nav.MenuItems.Add(MoreOwnedItem(all.Count - games.Count));
+        if (games.Count <= OwnedAtOnce || last is not { } anchor) return;
         int run = _navRun;
         var rest = new Queue<OwnedGame>(games.Skip(OwnedAtOnce));
         void Next()
@@ -1824,7 +1858,7 @@ public sealed partial class MainWindow : Window
             if (Shown is not DownloadsPage) ContentFrame.Navigate(typeof(DownloadsPage));
             return;
         }
-        if (args.SelectedItem is NavigationViewItem { Tag: string id } && id != "add" && id != DownloadsTag)
+        if (args.SelectedItem is NavigationViewItem { Tag: string id } && id != "add" && id != DownloadsTag && id != MoreOwnedTag)
         {
             // A game listed as not installed opens on its Download page.
             if (AppState.Find(id) is null && OwnedLibrary.Find(id) is { } owned) AppState.AddOwned(OwnedLibrary.AsGame(owned));
@@ -1840,6 +1874,11 @@ public sealed partial class MainWindow : Window
             FlyoutBase.ShowAttachedFlyout(AddGameItem);
         else if (args.InvokedItemContainer == FriendsItem)
             ShowFriends();
+        else if (args.InvokedItemContainer is NavigationViewItem { Tag: MoreOwnedTag })
+        {
+            // Every game not installed is in the Library's covers.
+            if (Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag is LibraryTag) is { } library) Nav.SelectedItem = library;
+        }
     }
 
     // ---------- Steam friends ----------
@@ -2175,12 +2214,24 @@ public sealed partial class MainWindow : Window
             RebuildNav();
             Log.Info($"Self-test: {LibraryPage.OwnedShown("").Count} owned games not installed shown, list {Nav.MenuItems.Count} items");
         }, 1200);
+        // 2.1.2 (issue 9): never more than OwnedListMax not-installed games per block of the side list, the rest in the Library.
+        void CheckOwnedCap()
+        {
+            int owned = Nav.MenuItems.OfType<NavigationViewItem>().Count(i => i.Tag is string t && _ownedInList.Contains(t));
+            int more = Nav.MenuItems.OfType<NavigationViewItem>().Count(i => i.Tag is MoreOwnedTag);
+            int blocks = Math.Max(1, Nav.MenuItems.OfType<NavigationViewItemHeader>().Count());
+            Log.Info($"Self-test: side list {Nav.MenuItems.Count} items, {owned} not installed, {more} 'more' items");
+            if (owned > OwnedListMax * blocks) throw new InvalidOperationException($"{owned} not-installed items in the side list");
+            if (LibraryPage.OwnedShown("", Library.ListFilter).Count > OwnedListMax && more == 0) throw new InvalidOperationException("no 'more in the Library' item");
+        }
+        await Step("library not installed: list capped", CheckOwnedCap, 600);
         await Step("library not installed: one block", () =>
         {
             AppState.Settings.Library = new LibraryFilter { ShowNotInstalled = true, GroupByLauncher = false, Sort = "recent", Descending = true };
             AppState.Settings.ListFilter = AppState.Settings.Library.CopyFilters();
             RebuildNav();
         }, 1200);
+        await Step("library not installed: one block capped", CheckOwnedCap, 600);
         await Step("library not installed: zoom", () => { AppState.Settings.Library.TileSize = 150; (Shown as LibraryPage)?.Reload(""); }, 800);
         var savedList = AppState.Settings.ListFilter;
         await Step("library not installed: off", () => { AppState.Settings.Library = savedFilter; AppState.Settings.ListFilter = savedList; RebuildNav(); }, 800);
@@ -2279,8 +2330,9 @@ public sealed partial class MainWindow : Window
         // 2.1: the user's dashboard, empty then with a profile; a game's own cover and icon, then the store's again; the verify plan.
         // 2.1-rc.6: a game owned on Steam but not installed, whose achievements Steam keeps on this PC: its page shows its
         // hours and its achievements (they never showed: the page's load returned early for games not installed).
-        if (OwnedLibrary.NotInstalled().FirstOrDefault(o => o.Store == GameStore.Steam && o.Id.StartsWith("steam:", StringComparison.Ordinal)
-                && HybridLauncher.Core.Steam.SteamAchievements.HasSchema(o.Id[6..])) is { } ownedPick)
+        // The first 500 Steam games only: each one is a look on disk, and a big library (HL_TEST_OWNED) held the window 1.5 s.
+        if (OwnedLibrary.NotInstalled().Where(o => o.Store == GameStore.Steam && o.Id.StartsWith("steam:", StringComparison.Ordinal)).Take(500)
+                .FirstOrDefault(o => HybridLauncher.Core.Steam.SteamAchievements.HasSchema(o.Id[6..])) is { } ownedPick)
         {
             await Step("owned game page: open", () => OwnedLibrary.Open(ownedPick), 5000);
             await Step("owned game page: hours and achievements", () =>

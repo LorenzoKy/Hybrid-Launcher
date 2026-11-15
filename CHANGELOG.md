@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.1.2 — 2026-11-15 · Large libraries and Most played
+
+**Hybrid Launcher 2.1.2** fixes two problems found in [2.1.1](#211--2026-11-14--hotfix-for-210). If you have 2.1.0 or
+2.1.1, the app offers this update by itself a few seconds after it starts.
+
+### 🐛 Fixes
+
+- **Hybrid Launcher froze with a very large library** when *Also games you own but have not installed* was turned on
+  (reported with about 15,000 Steam games), and froze again at every start until the setting was turned off by hand. The
+  game list on the left made an entry for every game you own; it now lists the first 50 games not installed in each
+  group, followed by *N more in the Library*. The Library shows them all and only draws the covers you scroll to.
+- **Most played and Last played filled in late.** Games from Steam, Epic and the other launchers only appeared after
+  Hybrid Launcher had finished asking Epic for your play time and PCGamingWiki for each game's upscalers. The hours
+  and achievements kept on your PC now show at once; the rest follows when it arrives.
+
 ## 2.1.1 — 2026-11-14 · Hotfix for 2.1.0
 
 **Hybrid Launcher 2.1.1** is a hotfix for [2.1.0](#210--2026-11-14--profiles-epic-achievements-and-new-themes). Everything

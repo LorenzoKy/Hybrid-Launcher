@@ -96,23 +96,54 @@ public static class OwnedLibrary
         var results = await Task.WhenAll(tasks);
         for (int i = 0; i < results.Length; i++)
             if (OwnedGames.InstalledOnly(results[i].Store)) results[i] = await InstalledOnlyAsync(results[i]);
+        if (TestOwnedCount() is int fake and > 0)
+        {
+            // Self-test only: a Steam library of that many games (issue 9 had 15,000), names and ids that match no real game.
+            var games = Enumerable.Range(0, fake).Select(i => new OwnedGame(GameStore.Steam, $"steam:{90_000_000 + i}", $"Test game {i:00000}", null, null, "", null)).ToList();
+            results = [.. results.Where(r => r.Store != GameStore.Steam), new OwnedList(GameStore.Steam, games, "test")];
+        }
         Lists.Clear();
         foreach (var r in results) Lists[r.Store] = r;
+        var byId = new Dictionary<string, OwnedGame>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in results)
+            foreach (var g in r.Games) byId.TryAdd(g.Id, g);
+        _byId = byId;
+        _version++;
         _loaded = true;
         Loaded?.Invoke();
     }
+
+    /// <summary>HL_TEST_OWNED=&lt;count&gt;, honoured only with a scratch data folder (HL_DATA): the self-test's big library.</summary>
+    static int? TestOwnedCount() =>
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")) && int.TryParse(Environment.GetEnvironmentVariable("HL_TEST_OWNED"), out var n) ? Math.Clamp(n, 0, 50_000) : null;
 
     /// <summary>Every owned game of the linked launchers (hidden ones left out).</summary>
     public static IEnumerable<OwnedGame> Owned() =>
         Lists.Values.Where(l => Linked(l.Store)).SelectMany(l => l.Games).Where(g => !AppState.Settings.HiddenGames.Contains(g.Id));
 
-    public static OwnedGame? Find(string id) => Lists.Values.SelectMany(l => l.Games).FirstOrDefault(g => g.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+    // Every owned game by id, and the lists' version (2.1.2: a Steam library of 15,000 games was searched one by one and sorted
+    // by name again on every call, many times per redraw).
+    static Dictionary<string, OwnedGame> _byId = new(StringComparer.OrdinalIgnoreCase);
+    static int _version;
+    static (int Version, string Key, List<OwnedGame> Games)? _sorted;
+
+    public static OwnedGame? Find(string id) => _byId.GetValueOrDefault(id);
 
     /// <summary>Owned games of linked launchers that are not installed (nor hidden), name order.</summary>
     public static List<OwnedGame> NotInstalled()
     {
+        // The name order is kept while the lists, the launchers linked and the hidden games stay the same.
+        var hidden = AppState.Settings.HiddenGames;
+        var hash = new HashCode();
+        foreach (var id in hidden.Order(StringComparer.OrdinalIgnoreCase)) hash.Add(id, StringComparer.OrdinalIgnoreCase);
+        var key = $"{string.Join(",", Lists.Keys.Where(Linked).Order())}|{hidden.Count}|{hash.ToHashCode()}|{System.Globalization.CultureInfo.CurrentCulture.Name}";
+        if (_sorted is not { } s || s.Version != _version || s.Key != key)
+        {
+            s = (_version, key, Owned().OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList());
+            _sorted = s;
+        }
         var installed = InstalledIds();
-        return Owned().Where(g => !installed.Contains(g.Id)).OrderBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        return s.Games.Where(g => !installed.Contains(g.Id)).ToList();
     }
 
     public static HashSet<string> InstalledIds() =>

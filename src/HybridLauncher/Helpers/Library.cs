@@ -149,6 +149,41 @@ public static class Library
         {
             var results = new Dictionary<string, GameStats>(StringComparer.OrdinalIgnoreCase);
             var unlocks = new List<RecentUnlock>();
+            // What is on this PC first (2.1.2): the hours and the achievements kept locally go on screen at once. Before, Most
+            // played and the Last played banner waited for Epic's account (up to 20 s) and a PCGamingWiki look-up per game.
+            {
+                var quick = new Dictionary<string, GameStats>(StringComparer.OrdinalIgnoreCase);
+                var quickUnlocks = new List<RecentUnlock>();
+                foreach (var g in games)
+                {
+                    try
+                    {
+                        var play = Playtime.Get(g, settings[g.Id]);
+                        int unlocked = 0, total = 0;
+                        if (SteamAchievements.ReadFor(g) is { Total: > 0 } set)
+                        {
+                            unlocked = set.UnlockedCount;
+                            total = set.Total;
+                            quickUnlocks.AddRange(UnlocksOf(g, set));
+                        }
+                        quick[g.Id] = new GameStats(play.Minutes, play.LastPlayed, unlocked, total, null);
+                    }
+                    catch (Exception ex) { Log.Warn($"Library stats for {g.Name}: {ex.Message}"); }
+                }
+                var quickNewest = quickUnlocks.OrderByDescending(u => u.At).Take(UnlocksKept).ToList();
+                int quickWeek = CountWeek(quickUnlocks);
+                ui.TryEnqueue(() =>
+                {
+                    if (App.ShuttingDown) return;
+                    // The tags the covers found meanwhile stay; the full read below brings the rest.
+                    foreach (var (id, st) in quick)
+                        Stats[id] = Stats.TryGetValue(id, out var old) ? st with { Tags = old.Tags } : st;
+                    _unlocks = quickNewest;
+                    _merged = null;
+                    _unlocksWeek = quickWeek;
+                    StatsReady?.Invoke();
+                });
+            }
             // Epic keeps play time and achievements on its servers only: the account's hours first, so Playtime.Get counts them.
             await RefreshEpicAsync();
             foreach (var g in games)
@@ -251,7 +286,30 @@ public static class Library
             var results = new Dictionary<string, GameStats>(StringComparer.OrdinalIgnoreCase);
             var unlocks = new List<RecentUnlock>();
             var online = new List<Game>();
-            await RefreshEpicAsync();
+            // What is on this PC goes on screen at once (2.1.2): Most played waited for Epic's play time and up to sixty
+            // achievement pages read online before showing any game owned on a launcher.
+            void Publish()
+            {
+                Dictionary<string, GameStats> snapshot;
+                List<RecentUnlock> newest;
+                int week;
+                lock (results)
+                {
+                    snapshot = new(results, StringComparer.OrdinalIgnoreCase);
+                    newest = unlocks.OrderByDescending(u => u.At).Take(UnlocksKept).ToList();
+                    week = CountWeek(unlocks);
+                }
+                ui.TryEnqueue(() =>
+                {
+                    if (App.ShuttingDown) return;
+                    foreach (var (id, st) in snapshot)
+                        if (AppState.Find(id) is not { NotInstalled: false }) Stats[id] = st;
+                    _ownedUnlocks = newest;
+                    _merged = null;
+                    _ownedWeek = week;
+                    OwnedStatsReady?.Invoke();
+                });
+            }
             foreach (var g in games)
             {
                 try
@@ -268,6 +326,21 @@ public static class Library
                         online.Add(g);
                     if (play.Minutes > 0 || total > 0 || play.LastPlayed is not null)
                         results[g.Id] = new GameStats(play.Minutes, play.LastPlayed, got, total, null);
+                }
+                catch (Exception ex) { Log.Warn($"Owned stats for {g.Name}: {ex.Message}"); }
+            }
+            Publish();
+            // Epic's play time asked again (a copy older than ten minutes): its games' hours follow.
+            await RefreshEpicAsync();
+            foreach (var g in games.Where(g => g.Store == GameStore.Epic))
+            {
+                try
+                {
+                    var play = Playtime.Get(g, settings[g.Id]);
+                    if (play.Minutes <= 0 && play.LastPlayed is null) continue;
+                    var old = results.GetValueOrDefault(g.Id);
+                    results[g.Id] = old is null ? new GameStats(play.Minutes, play.LastPlayed, 0, 0, null) : old with { Minutes = play.Minutes, LastPlayed = play.LastPlayed };
+                    if (epicAch && !online.Contains(g)) online.Add(g);
                 }
                 catch (Exception ex) { Log.Warn($"Owned stats for {g.Name}: {ex.Message}"); }
             }
@@ -294,18 +367,8 @@ public static class Library
                 finally { gate.Release(); }
             });
             await Task.WhenAll(work);
-            var newest = unlocks.OrderByDescending(u => u.At).Take(UnlocksKept).ToList();
-            int week = CountWeek(unlocks);
-            Log.Info($"Owned games' stats: {results.Count} of {games.Count} with play time or achievements ({online.Count} read online)");
-            ui.TryEnqueue(() =>
-            {
-                foreach (var (id, st) in results)
-                    if (AppState.Find(id) is not { NotInstalled: false }) Stats[id] = st;
-                _ownedUnlocks = newest;
-                _merged = null;
-                _ownedWeek = week;
-                OwnedStatsReady?.Invoke();
-            });
+            Log.Info($"Owned games' stats: {results.Count} of {games.Count} with play time or achievements ({Math.Min(online.Count, 60)} of {online.Count} read online)");
+            Publish();
         });
         return _ownedLoading;
     }
