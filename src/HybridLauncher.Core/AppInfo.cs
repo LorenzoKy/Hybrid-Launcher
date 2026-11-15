@@ -27,7 +27,40 @@ public static class AppInfo
     static string? _dataRoot;
 
     /// <summary>A separate data folder (HL_DATA): a test instance, which must leave the user's own setup (start with Windows) alone.</summary>
-    public static bool SeparateData => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA"));
+    public static bool SeparateData { get { _ = DataRoot; return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")); } }
+
+    /// <summary>
+    /// A test instance that nobody gave a data folder (2.1.3): a build started from inside a source checkout (bin or dist next
+    /// to a .git folder), or one started for a test (--selftest, HL_SELFTEST_ONLY, HL_PERF, HL_DEMO, HL_SHOTS). It gets
+    /// %TEMP%\HybridLauncher-test through HL_DATA instead of the user's real settings. HL_REAL_DATA=1 opts out.
+    /// </summary>
+    static void GuardTestInstance()
+    {
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")) || Environment.GetEnvironmentVariable("HL_REAL_DATA") == "1") return;
+        bool test = Environment.GetCommandLineArgs().Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase))
+            || new[] { "HL_SELFTEST_ONLY", "HL_PERF", "HL_DEMO", "HL_SHOTS" }.Any(v => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(v)));
+        if (!test)
+            try
+            {
+                for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+                    if (Directory.Exists(Path.Combine(dir.FullName, ".git")) && Directory.Exists(Path.Combine(dir.FullName, "src", "HybridLauncher"))) { test = true; break; }
+            }
+            catch { }
+        if (!test) return;
+        var scratch = Path.Combine(Path.GetTempPath(), FileName + "-test");
+        try
+        {
+            // The GitHub sign-in only, so update checks do not run into the anonymous hourly limit.
+            var gh = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), FileName, "accounts", "github.bin");
+            var dst = Path.Combine(scratch, "accounts", "github.bin");
+            if (File.Exists(gh) && !File.Exists(dst)) { Directory.CreateDirectory(Path.GetDirectoryName(dst)!); File.Copy(gh, dst); }
+            // Test instances run in English, maximized.
+            var settings = Path.Combine(scratch, "settings.json");
+            if (!File.Exists(settings)) { Directory.CreateDirectory(scratch); File.WriteAllText(settings, "{ \"Language\": \"en\", \"WindowMaximized\": true }"); }
+        }
+        catch { }
+        Environment.SetEnvironmentVariable("HL_DATA", scratch);
+    }
 
     /// <summary>%LOCALAPPDATA%\HybridLauncher, or the HL_DATA environment variable (used by tests).</summary>
     public static string DataRoot
@@ -36,6 +69,7 @@ public static class AppInfo
         {
             if (_dataRoot is null)
             {
+                GuardTestInstance();
                 var overridePath = Environment.GetEnvironmentVariable("HL_DATA");
                 var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 _dataRoot = string.IsNullOrWhiteSpace(overridePath) ? Path.Combine(local, FileName) : overridePath;

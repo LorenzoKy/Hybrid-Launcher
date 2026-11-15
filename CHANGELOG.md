@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.3 — 2026-11-15 · Small fixes
+
+**Hybrid Launcher 2.1.3** fixes a text shown in the wrong language. If you have 2.1.0 to 2.1.2, the app offers this
+update by itself a few seconds after it starts.
+
+### 🐛 Fixes
+
+- **Settings → Features → Back up the game files Hybrid Launcher replaces** showed its switch as *On*/*Off* in the
+  Windows language (for example *Attivato* on an Italian Windows) while Hybrid Launcher was set to English. It now
+  follows the app's language, like every other switch.
+
 ## 2.1.2 — 2026-11-15 · Large libraries and Most played
 
 **Hybrid Launcher 2.1.2** fixes two problems found in [2.1.1](#211--2026-11-14--hotfix-for-210). If you have 2.1.0 or

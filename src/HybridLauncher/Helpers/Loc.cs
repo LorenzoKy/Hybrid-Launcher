@@ -50,8 +50,9 @@ public static class Loc
                 asb.PlaceholderText = Tr(asb.PlaceholderText) ?? "";
                 return;
             case ToggleSwitch ts:
-                if (ts.OnContent is string on) ts.OnContent = Tr(on);
-                if (ts.OffContent is string off) ts.OffContent = Tr(off);
+                // No content falls back to WinUI's own "On"/"Off", which follows the Windows language, not the app's.
+                ts.OnContent = ts.OnContent is string on ? Tr(on) : ts.OnContent ?? Tr("On");
+                ts.OffContent = ts.OffContent is string off ? Tr(off) : ts.OffContent ?? Tr("Off");
                 if (ts.Header is string h) ts.Header = Tr(h);
                 return;
             case ComboBox combo:

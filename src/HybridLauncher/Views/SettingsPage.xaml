@@ -319,7 +319,7 @@
                         <TextBlock Text="Back up the game files Hybrid Launcher replaces" Style="{StaticResource RowHeader}" />
                         <TextBlock Text="When OptiScaler, Luma, DXVK, Ultra+ or a DLSS NR file goes into a game, the game's own files it replaces are kept first and uninstalling puts them back. Off: they are simply replaced, and uninstalling only removes the mod's files. ReShade's own installer keeps its own backups." Style="{StaticResource RowDescription}" />
                     </StackPanel>
-                    <ToggleSwitch x:Name="BackupGameFilesToggle" Grid.Column="1" MinWidth="0" VerticalAlignment="Center" Toggled="BackupGameFiles_Toggled" />
+                    <ToggleSwitch x:Name="BackupGameFilesToggle" Grid.Column="1" OnContent="On" OffContent="Off" MinWidth="0" VerticalAlignment="Center" Toggled="BackupGameFiles_Toggled" />
                     <StackPanel x:Name="ModBackupsRow" Grid.Row="1" VerticalAlignment="Center">
                         <TextBlock Text="When to back up" Style="{StaticResource RowHeader}" />
                         <TextBlock Text="At every install, or asked each time a mod goes into a game." Style="{StaticResource RowDescription}" />

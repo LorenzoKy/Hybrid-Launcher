@@ -65,6 +65,8 @@ public partial class App : Application
         if (Interlocked.Exchange(ref _watching, 1) == 1) return;
         AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
         {
+            // Cancelled work (an upload the close stops) is the close doing its job, not a crash.
+            if (e.Exception is OperationCanceledException) return;
             try { Log.Warn($"Shutdown: {e.Exception.GetType().Name} on thread {Environment.CurrentManagedThreadId}: {e.Exception.Message}\n{new System.Diagnostics.StackTrace(1, false)}"); }
             catch { }
         };
@@ -109,7 +111,7 @@ public partial class App : Application
         // One Hybrid Launcher at a time: two instances would overwrite each other's settings and could install into the same folder.
         // A separate data folder (HL_DATA, used for tests) is a separate Hybrid Launcher: it may run beside the normal one.
         var name = @"Local\HybridLauncher-SingleInstance";
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")))
+        if (AppInfo.SeparateData)
             name += "-" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(AppInfo.DataRoot.ToLowerInvariant())))[..12];
         _singleInstance = new Mutex(true, name, out bool first);
         var launch = Shortcuts.LaunchRequest(Environment.GetCommandLineArgs());
