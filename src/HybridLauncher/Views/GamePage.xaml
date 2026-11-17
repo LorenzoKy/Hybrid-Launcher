@@ -15,16 +15,8 @@
             <Grid x:Name="Floor" Height="170">
                 <!-- The bottom of the art flipped, blurred and fading out downwards (Helpers/FloorMirror). -->
                 <Image x:Name="FloorImage" Stretch="Fill" />
-                <!-- The art's dark bottom edge, carried on and fading to nothing: no colour of its own, so it meets any page. -->
-                <Rectangle x:Name="FloorShade">
-                    <Rectangle.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#D8000000" Offset="0" />
-                            <GradientStop Color="#A0000000" Offset="0.35" />
-                            <GradientStop Color="#00000000" Offset="1" />
-                        </LinearGradientBrush>
-                    </Rectangle.Fill>
-                </Rectangle>
+                <!-- 2.3-rc.2: no black shade of its own any more (it showed as a dark band around the launch bar and the tab row,
+                     spilling past them): the mirror alone fades to the page, neutral and see-through. -->
             </Grid>
         </Canvas>
         <StackPanel x:Name="Root" MaxWidth="2600" Padding="20,4,20,32" Spacing="12">
@@ -55,15 +47,15 @@
                     </Rectangle.Fill>
                 </Rectangle>
                 <Image x:Name="HeroImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
-                <!-- The art at full brightness, as on Steam: no shade over the top or the middle, only a fade at the bottom
-                     where the launch bar sits (it starts at 62%, so most of the art stays untouched). -->
+                <!-- The art at full brightness, as on Steam: no shade over the top or the middle, only a light one at the bottom
+                     where the launch bar sits. 2.3-rc.2: it no longer turns black at the edge (that dark rim spilled under the
+                     launch bar and around the tab row); the mirror below carries the art on. -->
                 <Rectangle>
                     <Rectangle.Fill>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                             <GradientStop Color="#00000000" Offset="0.62" />
-                            <GradientStop Color="#1A000000" Offset="0.72" />
-                            <GradientStop Color="#1A000000" Offset="0.95" />
-                            <GradientStop Color="#D8000000" Offset="1" />
+                            <GradientStop Color="#14000000" Offset="0.8" />
+                            <GradientStop Color="#14000000" Offset="1" />
                         </LinearGradientBrush>
                     </Rectangle.Fill>
                 </Rectangle>

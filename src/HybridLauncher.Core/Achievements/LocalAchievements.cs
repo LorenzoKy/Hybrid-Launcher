@@ -431,8 +431,9 @@ public static class LocalAchievements
 public static class SteamSchema
 {
     const string IconBase = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/";
-    static string CacheName(string appId) => Path.Combine("steam", $"achievement-list-{appId}.json");
-    static string Url(string appId) => $"https://api.steampowered.com/IPlayerService/GetGameAchievements/v1/?appid={appId}&language=english";
+    static string CacheName(string appId) => Path.Combine("steam", AchievementLanguage.IsEnglish
+        ? $"achievement-list-{appId}.json" : $"achievement-list-{appId}-{AchievementLanguage.Steam}.json");
+    static string Url(string appId) => $"https://api.steampowered.com/IPlayerService/GetGameAchievements/v1/?appid={appId}&language={AchievementLanguage.Steam}";
 
     /// <summary>The list fetched before (or Steam's client cache), no network; null when neither is here.</summary>
     public static List<Achievement>? Cached(string appId)

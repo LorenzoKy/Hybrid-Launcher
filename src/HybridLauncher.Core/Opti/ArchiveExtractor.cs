@@ -28,7 +28,7 @@ public static class ArchiveExtractor
 
     public static void ExtractManaged(string archive, string destination, CancellationToken ct)
     {
-        var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination)) + Path.DirectorySeparatorChar;
         // A compressed tar (DXVK's .tar.gz, VKD3D-Proton's .tar.zst) opened as an archive is one compressed file holding the tar:
         // read as a stream instead, the reader looks inside.
         if (IsCompressedTar(archive))
@@ -111,7 +111,6 @@ public static class ArchiveExtractor
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardError = true,
-            RedirectStandardOutput = true,
         };
         psi.ArgumentList.Add("-xf");
         psi.ArgumentList.Add(archive);

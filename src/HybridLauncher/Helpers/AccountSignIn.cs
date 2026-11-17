@@ -232,7 +232,8 @@ static class AccountSignIn
             }, () => status.Text = L.T("Approve the sign-in in the Steam mobile app…"));
             try
             {
-                Finish(await SteamAccount.SignInAsync(user.Text.Trim(), pass.Password, guard, CancellationToken.None));
+                // Closing the window stops it too (2.3: it kept waiting for Steam Guard and could still save a token).
+                Finish(await SteamAccount.SignInAsync(user.Text.Trim(), pass.Password, guard, qrCts.Token));
             }
             catch (Exception ex)
             {
@@ -344,9 +345,13 @@ static class AccountSignIn
                 web.Loaded += (_, _) => loaded.TrySetResult();
                 await loaded.Task;
             }
+            // Closed while the browser was still starting: nothing more to touch (2.3).
+            if (done.Task.IsCompleted) return await done.Task;
             // The browser's data (the sign-in cookies) stays in Hybrid Launcher's own folder.
             var env = await CoreWebView2Environment.CreateWithOptionsAsync(null, Path.Combine(AppInfo.DataRoot, "WebView2"), new CoreWebView2EnvironmentOptions());
+            if (done.Task.IsCompleted) return await done.Task;
             await web.EnsureCoreWebView2Async(env);
+            if (done.Task.IsCompleted) return await done.Task;
             // Pages that open a window of their own (a captcha, "sign in with...") stay in this one.
             web.CoreWebView2.NewWindowRequested += (_, e) =>
             {

@@ -29,8 +29,29 @@ static class Program
             WorkingDirectory = Path.GetDirectoryName(exe),
             UseShellExecute = false,
         };
-        Process.Start(psi)?.Dispose();
-        return 0;
+        Process? app;
+        try { app = Process.Start(psi); }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Hybrid Launcher could not be started:\n{ex.Message}\n\n{exe}", "Hybrid Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
+        if (app is null) return 0;
+        using (app)
+        {
+            // 2.3-rc.2: an app that ends by itself while starting is said, not a double-click that seems to do nothing. Code 0 is
+            // a normal end (another copy was asked to show itself), 3 is a failure the app has already explained.
+            if (!app.WaitForExit(20000)) return 0;
+            int code = app.ExitCode;
+            if (code is 0 or 3) return 0;
+            var logs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HybridLauncher", "logs");
+            MessageBox.Show(
+                $"Hybrid Launcher closed while starting (code 0x{code:X8}).\n\n" +
+                "Try starting it again. If it keeps happening, restart Windows or extract the whole download again, and send the newest log with a bug report.\n\n" +
+                $"Logs: {logs}",
+                "Hybrid Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return code;
+        }
     }
 
     /// <summary>One argument as Windows parses it back: quoted when it has spaces or quotes, inner quotes and the backslashes before them escaped.</summary>

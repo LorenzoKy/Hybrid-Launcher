@@ -190,6 +190,8 @@ public static class AchievementPopup
     public static void CloseAll()
     {
         Waiting.Clear();
+        SoundPlayed.Clear();
+        _holdTimer?.Stop();
         _generation++;
         _preparing = Task.CompletedTask;
         if (_current is { } shown) Finish(shown, next: false);
@@ -356,14 +358,104 @@ public static class AchievementPopup
         return t;
     }
 
+    /// <summary>
+    /// 2.3-rc.6: a game in exclusive full screen (Direct3D's own mode, old games such as Shadow of Mordor) drops out of it as soon
+    /// as any always-on-top window is drawn over it, even one that never takes the focus: it minimized or went to the desktop when
+    /// an unlock showed. While Windows says such a game is in front the pop-up waits (its sound plays at once) and shows when the
+    /// game leaves that mode (closed, alt-tabbed, minimized). Borderless and windowed games still get it on top as before.
+    /// </summary>
+    internal static bool? SelfTestExclusive;
+    static Microsoft.UI.Dispatching.DispatcherQueueTimer? _holdTimer;
+    static readonly HashSet<Toast> SoundPlayed = new(ReferenceEqualityComparer.Instance);
+    internal static int HeldCount => _holdTimer?.IsRunning == true ? Waiting.Count : 0;
+
+    static bool ExclusiveFullScreen()
+    {
+        if (SelfTestExclusive is { } forced) return forced;
+        try
+        {
+            if (SHQueryUserNotificationState(out int state) == 0 && state == 3) return true; // QUNS_RUNNING_D3D_FULL_SCREEN
+            // A game learnt to drop out under a pop-up (Windows does not always report its mode), while it is the window in front.
+            return ForegroundExe() is { } exe && AppState.Settings.Popup.HeldOver.Contains(exe, StringComparer.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>The exe file name of the window in front when it is another app's, else null.</summary>
+    static string? ForegroundExe() => ExeOf(GetForegroundWindow());
+
+    static string? ExeOf(nint hwnd)
+    {
+        if (hwnd == 0) return null;
+        _ = GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == 0 || pid == (uint)Environment.ProcessId) return null;
+        try { using var p = System.Diagnostics.Process.GetProcessById((int)pid); return p.ProcessName + ".exe"; }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// After a pop-up opens over a full-screen game: when that game is minimized or the desktop / Hybrid Launcher is in front a
+    /// moment later, the pop-up knocked it out of full screen (the "took the focus" seen with Shadow of Mordor). The pop-up goes,
+    /// the game is put back, and the game is remembered so its next pop-ups wait (<see cref="PopupSettings.HeldOver"/>).
+    /// </summary>
+    static void WatchGameAfterOpen(Window window, nint game)
+    {
+        if (game == 0 || !Helpers.FocusGuard.FullScreen(game) || ExeOf(game) is not { } exe) return;
+        var queue = window.DispatcherQueue;
+        _ = Task.Delay(1500).ContinueWith(_ => queue.TryEnqueue(() =>
+        {
+            var fg = GetForegroundWindow();
+            bool knocked = IsIconic(game) || (fg != game && (ExeOf(fg) is null || ClassOf(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd"));
+            if (!knocked) return;
+            var held = AppState.Settings.Popup.HeldOver;
+            if (!held.Contains(exe, StringComparer.OrdinalIgnoreCase)) { held.Add(exe); SettingsStore.Save(); }
+            Log.Warn($"Pop-up knocked {exe} out of full screen: closed, game put back, its pop-ups now wait");
+            Finish(window);
+            if (IsIconic(game)) ShowWindow(game, 9 /* SW_RESTORE */);
+            SetForegroundWindow(game);
+        }), TaskScheduler.Default);
+    }
+
+    static string ClassOf(nint hwnd)
+    {
+        var sb = new System.Text.StringBuilder(128);
+        _ = GetClassName(hwnd, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    /// <summary>True when the next pop-up must wait for the game to leave exclusive full screen (checked again every second).</summary>
+    static bool HoldForExclusiveGame()
+    {
+        if (Waiting.Count == 0 || !ExclusiveFullScreen()) { _holdTimer?.Stop(); return false; }
+        foreach (var item in Waiting)
+            if (SoundPlayed.Add(item))
+            {
+                Log.Info($"Pop-up held: a game is in exclusive full screen ({item.Name})");
+                try { PlaySound(AppState.Settings.Popup, Tier(item).Name); } catch (Exception ex) { Log.Warn($"Pop-up sound: {ex.Message}"); }
+            }
+        if (_holdTimer is null && Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() is { } dq)
+        {
+            _holdTimer = dq.CreateTimer();
+            _holdTimer.Interval = TimeSpan.FromSeconds(1);
+            _holdTimer.Tick += (_, _) => { if (_current is null) ShowNext(); };
+        }
+        _holdTimer?.Start();
+        return true;
+    }
+
     static void ShowNext()
     {
+        if (HoldForExclusiveGame()) return;
         while (Waiting.TryDequeue(out var item))
         {
             try
             {
                 try { Opening?.Invoke(item); } catch (Exception ex) { Log.Warn($"Pop-up opening: {ex.Message}"); }
-                _current = Open(item, placing: false);
+                bool quiet = SoundPlayed.Remove(item);
+                if (quiet) Log.Info($"Pop-up shown after the game left exclusive full screen ({item.Name})");
+                var game = GetForegroundWindow();
+                _current = Open(item, placing: false, quiet);
+                WatchGameAfterOpen(_current, game);
                 if (item.GameId is not null) { _lastShown = item; _lastLeft = null; }
                 return;
             }
@@ -521,7 +613,7 @@ public static class AchievementPopup
 
     // ---------- window ----------
 
-    static Window Open(Toast item, bool placing)
+    static Window Open(Toast item, bool placing, bool quiet = false)
     {
         var o = AppState.Settings.Popup;
         double size = o.Size == "Large" ? 1.3 : 1.0;
@@ -662,7 +754,7 @@ public static class AchievementPopup
         }
         else app.MoveAndResize(new RectInt32(x, y, w, h));
         app.Show(placing);
-        if (!placing) PlaySound(o, Tier(item).Name);
+        if (!placing && !quiet) PlaySound(o, Tier(item).Name);
 
         // Once laid out in the window (fonts loaded), fit the height again if it differs.
         root.Loaded += (_, _) =>
@@ -1054,6 +1146,9 @@ public static class AchievementPopup
     /// </summary>
     /// <param name="tier">Bronze, Silver, Gold or Platinum; <see cref="EveryTier"/> for the sound of every achievement (the
     /// fallback file alone, never a tier's).</param>
+    static readonly bool MutedForTests = Environment.GetEnvironmentVariable("HL_MUTE_SOUNDS") == "1"
+        && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA"));
+
     static void PlaySound(PopupSettings o, string tier)
     {
         try
@@ -1065,6 +1160,9 @@ public static class AchievementPopup
                 : SoundFor(o, tier);
             file ??= WindowsNotificationSound();
             LastSound = file ?? "Notification.Default";
+            // 2.3-rc.6: volume 0 is silence (the Windows sound by name used to play at the system's volume), and test runs on a
+            // scratch data folder never play a sound (HL_MUTE_SOUNDS=1, set by the test scripts): what would play is still noted.
+            if (o.Volume <= 0 || MutedForTests) return;
             if (file is not null) PlayAt(file, Math.Clamp(o.Volume, 0, 1));
             else _ = PlaySoundW("Notification.Default", 0, 0x00010000 /* ALIAS */ | 0x0001 /* ASYNC */ | 0x0002 /* NODEFAULT */);
         }
@@ -1715,6 +1813,15 @@ public static class AchievementPopup
 
     [DllImport("user32.dll")]
     static extern long GetWindowLongPtr(nint hwnd, int index);
+
+    [DllImport("shell32.dll")]
+    static extern int SHQueryUserNotificationState(out int state);
+
+    [DllImport("user32.dll")] static extern bool IsIconic(nint hwnd);
+    [DllImport("user32.dll")] static extern bool ShowWindow(nint hwnd, int cmd);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(nint hwnd, System.Text.StringBuilder name, int max);
 
     [DllImport("user32.dll")]
     static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);

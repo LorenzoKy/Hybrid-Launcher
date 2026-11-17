@@ -291,6 +291,23 @@ public partial class GamePage : Page, IAutoHost
         GameJobs.Changed += OnJobsChanged;
         GameJobs.Progress += OnJobProgress;
         OptiReleases.Updated += OnReleasesUpdated;
+        GameInfo.ArtChanged += OnArtChanged;
+    }
+
+    // The banner and logo the page shows: a newer one found on the store (GameInfo.ArtChanged) takes their place.
+    string? _logoUri;
+
+    void OnArtChanged(string id) => DispatcherQueue.TryEnqueue(() => { if (_game?.Id == id) RefreshArtIfChanged(); });
+
+    /// <summary>
+    /// Steam's banner or logo of this game changed on the store (2.3-rc.3): put in place where the page is, without building
+    /// it again. Also looked at when a page is shown again (a page prepared ahead of time may have missed the news).
+    /// </summary>
+    void RefreshArtIfChanged()
+    {
+        if (_game is not { } game || _data is null || GameInfo.KnownArt(game) is not { HeroImage: not null } art) return;
+        if (art.HeroImage == _heroUri && art.LogoImage == _logoUri) return;
+        _ = LoadArtAsync(_pageCts.Token, Task.FromResult(art));
     }
 
     // ---------- one page per recent game (2.0.0-rc.4) ----------
@@ -357,6 +374,7 @@ public partial class GamePage : Page, IAutoHost
         var ct = _pageCts.Token;
         // As a game is always opened: at the top, the banner in view.
         Scroller.ChangeView(null, 0, null, disableAnimation: true);
+        MediaShown();
         AfterFirstFrame(() =>
         {
             if (ct.IsCancellationRequested || _game != game) return;
@@ -373,6 +391,7 @@ public partial class GamePage : Page, IAutoHost
             _ = UpdateCloudButtonAsync();
             // Pictures whose loading the last visit left unfinished.
             if (HeroImage.Source is null) _ = LoadArtAsync(ct);
+            else RefreshArtIfChanged();
             _ = ResumeFolderAsync(game, ct);
             _filesTimer.Start();
             StartWarmUp();
@@ -908,6 +927,15 @@ public partial class GamePage : Page, IAutoHost
         _game = null;
     }
 
+    /// <summary>
+    /// The page is on screen (shown from the cache, or a page prepared ahead of time now shown): the overview's trailer starts
+    /// (again). 2.3-rc.3: a page shown from the cache never restarted the trailer its last Leave stopped.
+    /// </summary>
+    internal void MediaShown()
+    {
+        if (_tab == "overview" && !Unseen) _dashboard?.Show();
+    }
+
     /// <summary>The page is hidden (another page or game is shown): its work stops until it is shown again.</summary>
     public void Leave()
     {
@@ -942,6 +970,7 @@ public partial class GamePage : Page, IAutoHost
         GameJobs.Changed -= OnJobsChanged;
         GameJobs.Progress -= OnJobProgress;
         OptiReleases.Updated -= OnReleasesUpdated;
+        GameInfo.ArtChanged -= OnArtChanged;
     }
 
     /// <summary>When the page's first frame was drawn, from when it was asked for (for the log's game-switch timing).</summary>
@@ -1371,7 +1400,8 @@ public partial class GamePage : Page, IAutoHost
                 // time was already laid out and drawn in the warm-up layer: it is only moved.
                 if (madeNow && !Unseen) _dashboard?.RevealInTurns();
                 if (_dashboard is not null) _dashboard.SectionsChanged = OnDashboardSections;
-                _dashboard?.Show();
+                // Prepared ahead of time (unseen): the trailer waits until the page is really shown (MediaShown).
+                if (!Unseen) _dashboard?.Show();
             }
             if (opti)
             {
@@ -2180,16 +2210,17 @@ public partial class GamePage : Page, IAutoHost
 
     // ---------- banner ----------
 
-    async Task LoadArtAsync(CancellationToken ct)
+    async Task LoadArtAsync(CancellationToken ct, Task<GameArt>? newer = null)
     {
         var game = _game!;
         _steamAppId = game.SteamAppId;
-        var art = await _data!.Art;
+        var art = await (newer ?? _data!.Art);
         if (ct.IsCancellationRequested || game != _game) return;
 
         _steamAppId = art.SteamAppId ?? _steamAppId;
         UpdateLinks();
-        _ = LoadApiAsync(ct);
+        _logoUri = art.LogoImage;
+        if (newer is null) _ = LoadApiAsync(ct);
         var meta = new List<string>();
         if (!string.IsNullOrWhiteSpace(art.Developer)) meta.Add(art.Developer!.ToUpperInvariant());
         if (!string.IsNullOrWhiteSpace(art.ReleaseDate)) meta.Add(art.ReleaseDate!.ToUpperInvariant());
@@ -3687,7 +3718,8 @@ public partial class GamePage : Page, IAutoHost
         AppState.Settings.SelectedFork = null;
         SettingsStore.Save();
         FillForkList();
-        _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) { FillVersions(); _ = SyncForwarderAsync(); } }));
+        var ct = _pageCts.Token;
+        _ = LoadForkAsync(false, ct).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (!ct.IsCancellationRequested && _channel == OptiChannel.Fork) { FillVersions(); _ = SyncForwarderAsync(); } }));
     }
 
     // Stable / nightly: item 0 of the list is "Latest". Custom: one item per build.
@@ -3707,7 +3739,11 @@ public partial class GamePage : Page, IAutoHost
         if (channel == OptiChannel.Fork)
         {
             if (ForkCombo.Items.Count == 0) FillForkList();
-            if (_forkLoaded != AppState.Settings.SelectedFork || _forkFailed) _ = LoadForkAsync(false, _pageCts.Token).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (_channel == OptiChannel.Fork) FillVersions(); }));
+            if (_forkLoaded != AppState.Settings.SelectedFork || _forkFailed)
+            {
+                var ct = _pageCts.Token;
+                _ = LoadForkAsync(false, ct).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => { if (!ct.IsCancellationRequested && _channel == OptiChannel.Fork) FillVersions(); }));
+            }
         }
         FillVersions();
     }

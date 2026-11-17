@@ -7,7 +7,7 @@ using HybridLauncher.Core.Net;
 namespace HybridLauncher.Core;
 
 /// <summary>A newer version of the app on GitHub: its version, notes, and the zip for this PC's processor.</summary>
-public sealed record AppRelease(Version Version, string Tag, string Notes, string ZipUrl, long ZipSize, string PageUrl);
+public sealed record AppRelease(Version Version, string Tag, string Notes, string ZipUrl, long ZipSize, string PageUrl, DateTimeOffset? Published = null);
 
 /// <summary>
 /// The app's own updates, from the GitHub releases of <see cref="AppInfo.Repository"/>. The app runs from a plain folder (no
@@ -44,7 +44,7 @@ public static class AppUpdates
     }
 
     /// <summary>A release candidate (or other pre-release): the final release of the same number is still an update for it.</summary>
-    public static bool IsPrerelease => System.Text.RegularExpressions.Regex.IsMatch(DisplayVersion, @"-(rc|alpha|beta|preview)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    public static bool IsPrerelease => System.Text.RegularExpressions.Regex.IsMatch(DisplayVersion, @"-(rc|alpha|beta|preview)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     /// <summary>
     /// The version as people read it: "1.3.1 Hotfix 1" for a hotfix build (named "1.3.1-Hotfix-1", numbered 1.3.2 for the
@@ -97,7 +97,9 @@ public static class AppUpdates
             var url = a!["browser_download_url"]?.GetValue<string>();
             if (url is null) continue;
             return new AppRelease(version, tag, o["body"]?.GetValue<string>() ?? "", url, a["size"]?.GetValue<long>() ?? 0,
-                o["html_url"]?.GetValue<string>() ?? $"https://github.com/{AppInfo.Repository}/releases");
+                o["html_url"]?.GetValue<string>() ?? $"https://github.com/{AppInfo.Repository}/releases",
+                DateTimeOffset.TryParse(o["published_at"]?.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal, out var when) ? when : null);
         }
         return null;
     }

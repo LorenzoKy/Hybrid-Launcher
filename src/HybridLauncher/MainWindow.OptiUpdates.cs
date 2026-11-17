@@ -6,13 +6,15 @@ namespace HybridLauncher;
 
 /// <summary>
 /// OptiScaler update notifications: the sources the user turned on in a game's OptiScaler tab (Get notified on updates: Stable,
-/// Nightly or one fork, each apart) are looked at half a minute after start and then every three hours; a new release raises one
+/// Nightly or one fork, each apart) are looked at half a minute after start, then every half hour on the clock and when the
+/// window comes back after ten minutes (2.3; Helpers.WallClock); a new release raises one
 /// Windows notification from the icon by the clock (shown as a toast and kept in the notification centre).
 /// A click on it opens a game that uses that source on its OptiScaler tab.
 /// </summary>
 public sealed partial class MainWindow
 {
-    static readonly TimeSpan OptiCheckEvery = TimeSpan.FromHours(3);
+    static readonly TimeSpan OptiCheckEvery = TimeSpan.FromMinutes(30), OptiCheckOnReturn = TimeSpan.FromMinutes(10);
+    bool _wallClockHooked;
     CancellationTokenSource? _optiChecks;
 
     /// <summary>Starts (or stops, with nothing followed) the background look at the followed sources.</summary>
@@ -24,6 +26,7 @@ public sealed partial class MainWindow
             _optiChecks = null;
             return;
         }
+        HookWallClock();
         if (_optiChecks is not null) return;
         var cts = _optiChecks = new CancellationTokenSource();
         _ = OptiChecksAsync(cts.Token);
@@ -45,11 +48,19 @@ public sealed partial class MainWindow
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { Log.Warn($"OptiScaler update check: {ex.Message}"); }
-                await Task.Delay(OptiCheckEvery, ct);
+                await WallClock.WaitAsync(DateTime.UtcNow, OptiCheckEvery, OptiCheckOnReturn, ct);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Log.Warn($"OptiScaler update checks: {ex.Message}"); }
+    }
+
+    /// <summary>The window coming to the front wakes the background checks that waited long enough.</summary>
+    void HookWallClock()
+    {
+        if (_wallClockHooked) return;
+        _wallClockHooked = true;
+        Activated += (_, e) => { if (e.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated) WallClock.Returned(); };
     }
 
     /// <summary>

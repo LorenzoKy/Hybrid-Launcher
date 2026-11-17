@@ -2,6 +2,52 @@
 
 One entry per version: `run-perf.ps1 -Only snappy -Exe <published exe> -Report` (no input; a copy of real data). Every version must be at least as quick as the one before. Newest first.
 
+## 2.3.0 - 2026-11-17 21:10
+
+- CPU before the run: 15% (check-release, published trimmed build)
+- summary [first]: first frame median 95 ms, worst 105 ms; jank median 360 ms, worst 433 ms
+- summary [return]: first frame median 8 ms, worst 12 ms; jank median 42 ms, worst 173 ms
+- summary [prepared]: first frame median 8 ms, worst 10 ms; jank median 111 ms, worst 190 ms
+- summary [tab]: first frame median 29 ms, worst 101 ms; jank median 66 ms, worst 471 ms
+- summary [scroll]: first frame median 6 ms, worst 12 ms; jank median 0 ms, worst 14 ms
+- summary [page]: first frame median 48 ms, worst 139 ms; jank median 98 ms, worst 228 ms
+- gate vs 2.3.0-rc.2 - 2026-11-16 14:15: REGRESSION (1) [tab] jank median 66 ms, was 19 ms; not a regression of the build:
+  the rc.2 build itself, measured again at 21:12 on the same data, gave [tab] jank median 86 ms (first frame 34 ms), and rc.5
+  76 ms; the 19 ms of the rc.2 entry came from other data or caches. Released on that evidence; this entry is the new reference.
+
+## 2.3.0-rc.2 - 2026-11-16 14:15
+
+- summary [first]: first frame median 99 ms, worst 251 ms; jank median 348 ms, worst 659 ms
+- summary [return]: first frame median 6 ms, worst 12 ms; jank median 31 ms, worst 38 ms
+- summary [prepared]: first frame median 9 ms, worst 11 ms; jank median 138 ms, worst 231 ms
+- summary [tab]: first frame median 17 ms, worst 114 ms; jank median 19 ms, worst 127 ms
+- summary [scroll]: first frame median 0 ms, worst 7 ms; jank median 0 ms, worst 0 ms
+- summary [page]: first frame median 42 ms, worst 143 ms; jank median 85 ms, worst 206 ms
+- memory: 865 MB private, 852 MB working set, 8 game pages alive
+- verdict: FAIL (3 of 29 over budget)
+- gate vs 2.3.0-rc.1 - 2026-11-16 05:04: REGRESSION (1)
+  - [prepared] jank median 138 ms, was 29 ms
+- Over budget:
+  - [first] open Gears of War: E-Day: first frame 251 ms (busy 202), 75 missed, worst gap 163 ms, jank 659 ms, settled 737 ms  (budget 300 / 450)
+  - [prepared] open (prepared) Minecraft Launcher: first frame 11 ms (busy 4), 41 missed, worst gap 204 ms, jank 231 ms, settled 261 ms  (budget 50 / 80)
+  - [page] settings: first frame 143 ms (busy 50), 12 missed, worst gap 63 ms, jank 206 ms, settled 299 ms  (budget 150 / 200)
+- note: the gate flagged [prepared] (jank median 138 ms against rc.1's 29 ms) from one page, Minecraft Launcher, with one 204 ms gap. Measured again at 14:16 on the same published build: prepared first frame median 21 ms, jank median 56 ms (worst 75 ms), Minecraft Launcher 36 ms: within the gate's noise against rc.1 (40 ms jank), no regression.
+
+## 2.3.0-rc.1 - 2026-11-16 05:04
+
+- summary [first]: first frame median 103 ms, worst 121 ms; jank median 336 ms, worst 449 ms
+- summary [return]: first frame median 5 ms, worst 11 ms; jank median 27 ms, worst 50 ms
+- summary [prepared]: first frame median 12 ms, worst 14 ms; jank median 29 ms, worst 34 ms
+- summary [tab]: first frame median 20 ms, worst 124 ms; jank median 19 ms, worst 390 ms
+- summary [scroll]: first frame median 0 ms, worst 8 ms; jank median 0 ms, worst 0 ms
+- summary [page]: first frame median 38 ms, worst 135 ms; jank median 81 ms, worst 203 ms
+- memory: 831 MB private, 865 MB working set, 8 game pages alive
+- verdict: FAIL (2 of 29 over budget)
+- gate vs 2.1.4-rc.2 - 2026-11-15 15:47: no regression
+- Over budget:
+  - [tab] tab opti: first frame 37 ms (busy 7), 65 missed, worst gap 136 ms, jank 390 ms, settled 488 ms  (budget 150 / 200)
+  - [page] settings: first frame 135 ms (busy 47), 13 missed, worst gap 68 ms, jank 203 ms, settled 297 ms  (budget 150 / 200)
+
 ## 2.1.4-rc.2 - 2026-11-15 15:47
 
 - summary [first]: first frame median 104 ms, worst 156 ms; jank median 337 ms, worst 429 ms

@@ -149,7 +149,8 @@ public static class GameUpdater
     public static int StartAll()
     {
         int n = 0;
-        foreach (var p in Available) if (StartAvailable(p.Id) is not null) n++;
+        // A game that is running keeps its update waiting: its files are in use (as the single Update buttons do).
+        foreach (var p in Available) if (!GameSessions.IsActive(p.Id) && StartAvailable(p.Id) is not null) n++;
         return n;
     }
 

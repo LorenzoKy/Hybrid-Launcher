@@ -27,11 +27,25 @@ static class AppUpdater
             App.Window?.ShowSuccess(L.F("Updated to {0} {1}.", AppInfo.Name, AppUpdates.FriendlyVersion));
             _ = Task.Run(async () => { await Task.Delay(5000); AppUpdates.CleanUp(); });
         }
-        if (!AppState.Settings.CheckAppUpdates) return;
         await Task.Delay(TimeSpan.FromSeconds(8));
-        var release = await CheckAsync(quiet: true);
-        if (release is null || AppState.Settings.SkippedAppUpdate == release.Version.ToString()) return;
-        await OfferAsync(root, release);
+        // 2.3: not only at start. A Hybrid Launcher left open for days (in the tray) looks again every six hours on the clock,
+        // and when the window comes back after an hour; each version is offered once.
+        Version? offered = null;
+        while (true)
+        {
+            if (AppState.Settings.CheckAppUpdates && !_busy)
+            {
+                var release = await CheckAsync(quiet: true);
+                Log.Info($"App update check: {(release is null ? "up to date" : $"{release.Version} available")} (this is {AppUpdates.DisplayVersion})");
+                if (release is not null && release.Version != offered && AppState.Settings.SkippedAppUpdate != release.Version.ToString() && !DialogGuard.Busy)
+                {
+                    offered = release.Version;
+                    await OfferAsync(root, release);
+                }
+            }
+            try { await WallClock.WaitAsync(DateTime.UtcNow, TimeSpan.FromHours(6), TimeSpan.FromHours(1), CancellationToken.None); }
+            catch (OperationCanceledException) { return; }
+        }
     }
 
     /// <summary>Asks GitHub for a newer version; null when this is the newest. Not quiet: a failure is shown.</summary>
@@ -55,23 +69,79 @@ static class AppUpdater
     public static async Task OfferAsync(XamlRoot root, AppRelease release)
     {
         if (_busy) return;
-        var notes = new TextBlock
+        // 2.3: the notes as GitHub shows them, easy to read: the version in large type with the one installed beside it, a
+        // count of each section's changes, then the changelog itself with its sections set apart, its lists and links, in a
+        // pane that scrolls on its own. The download shows its megabytes.
+        double width = Math.Clamp(root.Size.Width - 160, 420, 680);
+        var accent = (Ui.Brush("AccentFillColorDefaultBrush") as Microsoft.UI.Xaml.Media.SolidColorBrush)?.Color ?? Microsoft.UI.Colors.White;
+        var muted = Ui.Brush("TextFillColorSecondaryBrush");
+        var body = new StackPanel { Spacing = 14, Width = width };
+
+        var head = new Grid { ColumnSpacing = 14 };
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        head.Children.Add(new Border
         {
-            Text = release.Notes.Length > 0 ? release.Notes.Trim() : L.T("No notes for this version."),
-            TextWrapping = TextWrapping.Wrap,
-            IsTextSelectionEnabled = true,
-            Style = Ui.Style("RowDescription"),
-        };
-        var status = new TextBlock { Style = Ui.Style("RowDescription"), Visibility = Visibility.Collapsed };
-        var bar = new ProgressBar { Maximum = 1, Visibility = Visibility.Collapsed };
-        var body = new StackPanel { Spacing = 10, MaxWidth = 520 };
-        body.Children.Add(new TextBlock
-        {
-            Text = L.F("{0} {1} is out (you have {2}). Update now? The app closes for a moment and opens again by itself; your games, settings and accounts stay as they are.",
-                AppInfo.Name, release.Version.ToString(3), AppUpdates.FriendlyVersion),
-            TextWrapping = TextWrapping.Wrap,
+            Width = 52, Height = 52, CornerRadius = new CornerRadius(14), VerticalAlignment = VerticalAlignment.Center,
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x30, accent.R, accent.G, accent.B)),
+            Child = new FontIcon { Glyph = "", FontSize = 24, Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush") },
         });
-        body.Children.Add(new ScrollViewer { Content = notes, MaxHeight = 260 });
+        var titles = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        titles.Children.Add(new TextBlock { Text = $"{AppInfo.Name} {release.Version.ToString(3)}", FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        var sub = L.F("You have {0}", AppUpdates.FriendlyVersion);
+        if (release.Published is { } when) sub += " · " + L.F("released {0}", when.LocalDateTime.ToString("d MMMM yyyy", System.Globalization.CultureInfo.CurrentCulture));
+        titles.Children.Add(new TextBlock { Text = sub, Foreground = muted });
+        Grid.SetColumn(titles, 1);
+        head.Children.Add(titles);
+        body.Children.Add(head);
+
+        var lines = release.Notes.Length > 0 ? Core.Media.MarkdownText.ToLines(release.Notes) : [];
+        // A first heading that only repeats the name and number is left out (the head says it).
+        if (lines.FirstOrDefault() is { Heading: true } first && first.Text.Contains(release.Version.ToString(3), StringComparison.Ordinal)) lines.RemoveAt(0);
+
+        // What each section holds, at a glance: "New 6", "Fixed 4".
+        var counts = new List<(string Name, int Count)>();
+        foreach (var line in lines)
+        {
+            if (line.Heading) counts.Add((line.Text, 0));
+            else if (line.Level == 1 && counts.Count > 0) counts[^1] = (counts[^1].Name, counts[^1].Count + 1);
+        }
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var (name, count) in counts.Where(c => c.Count > 0).Take(5))
+        {
+            var pill = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            pill.Children.Add(new TextBlock { Text = name, FontSize = 12 });
+            pill.Children.Add(new TextBlock { Text = count.ToString(System.Globalization.CultureInfo.CurrentCulture), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = Ui.Brush("AccentTextFillColorPrimaryBrush") });
+            pills.Children.Add(new Border { Child = pill, Padding = new Thickness(10, 3, 10, 4), CornerRadius = new CornerRadius(11), Background = Ui.Brush("SubtleFillColorSecondaryBrush") });
+        }
+        if (pills.Children.Count > 0) body.Children.Add(pills);
+
+        FrameworkElement notes = lines.Count > 0
+            ? Ui.Rich(lines, spacing: 6, headingTint: accent)
+            : new TextBlock { Text = L.T("No notes for this version."), Foreground = muted };
+        var pane = new ScrollViewer
+        {
+            Content = new Border { Child = notes, Padding = new Thickness(16, 12, 20, 16) },
+            MaxHeight = Math.Clamp(root.Size.Height - 560, 160, 400),
+        };
+        SmoothWheel.Attach(pane);
+        body.Children.Add(new Border { Child = pane, CornerRadius = new CornerRadius(12), Background = Ui.Brush("CardBackgroundFillColorDefaultBrush") });
+
+        var foot = new Grid { ColumnSpacing = 12 };
+        foot.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        foot.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        foot.Children.Add(new TextBlock
+        {
+            Text = L.T("The app closes for a moment and opens again by itself; your games, settings and accounts stay as they are."),
+            TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = muted, VerticalAlignment = VerticalAlignment.Center,
+        });
+        var page = new HyperlinkButton { Content = L.T("Open on GitHub"), NavigateUri = Uri.TryCreate(release.PageUrl, UriKind.Absolute, out var pageUri) ? pageUri : null, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(page, 1);
+        foot.Children.Add(page);
+        body.Children.Add(foot);
+
+        var status = new TextBlock { Foreground = muted, Visibility = Visibility.Collapsed };
+        var bar = new ProgressBar { Maximum = 1, Visibility = Visibility.Collapsed };
         body.Children.Add(bar);
         body.Children.Add(status);
         var dialog = new ContentDialog
@@ -84,6 +154,8 @@ static class AppUpdater
             CloseButtonText = L.T("Later"),
             DefaultButton = ContentDialogButton.Primary,
         };
+        dialog.Resources["ContentDialogMaxWidth"] = width + 96;
+        dialog.Resources["ContentDialogMaxHeight"] = Math.Max(500, root.Size.Height - 80);
         dialog.PrimaryButtonClick += async (d, e) =>
         {
             // The dialog stays open with the download's progress, then the app closes.
@@ -95,7 +167,12 @@ static class AppUpdater
             status.Text = L.T("Downloading the update…");
             try
             {
-                var exe = await AppUpdates.DownloadAsync(release, new Progress<double>(p => bar.Value = p), CancellationToken.None);
+                double total = release.ZipSize / 1048576.0;
+                var exe = await AppUpdates.DownloadAsync(release, new Progress<double>(p =>
+                {
+                    bar.Value = p;
+                    if (total > 0) status.Text = L.F("Downloading the update… {0:0.0} of {1:0.0} MB", p * total, total);
+                }), CancellationToken.None);
                 status.Text = L.T("Restarting…");
                 AppState.Settings.SkippedAppUpdate = null;
                 SettingsStore.Save();

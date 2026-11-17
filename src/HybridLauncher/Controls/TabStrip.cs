@@ -460,7 +460,7 @@ public sealed partial class TabStrip : UserControl
         _homePlate.Background = Clear;
         // Dark see-through glass like the launch bar above it (the art, blurred, under a smoky tint), as Steam's tab band.
         // One glass brush for the bar's life: a new one at every restyle compiled its blur effect again.
-        _bar.Background ??= new HybridLauncher.Helpers.GlassBrush(Color.FromArgb(0x70, 0x0C, 0x0D, 0x11), 32);
+        _bar.Background ??= new HybridLauncher.Helpers.GlassBrush(Color.FromArgb(0x99, 0, 0, 0), 10); // 2.3-rc.4: the launch bar's glass (GamePage.xaml), so the two strips match
         _bar.BorderBrush = Clear;
         var accent = (res["AccentFillColorDefaultBrush"] as SolidColorBrush)?.Color ?? Color.FromArgb(255, 0x9A, 0x5C, 0xFF);
         bool dark = ActualTheme == ElementTheme.Dark;

@@ -142,6 +142,7 @@ public sealed partial class SettingsPage : Page
         FillCoverTagKinds();
         MetacriticToggle.IsOn = S.ShowMetacritic;
         FillPalettes();
+        FillMyColours();
         SteamCheck.IsChecked = S.ScanSteam;
         EpicCheck.IsChecked = S.ScanEpic;
         GogCheck.IsChecked = S.ScanGog;
@@ -264,6 +265,8 @@ public sealed partial class SettingsPage : Page
                     S.CustomTint = d.CustomTint;
                     S.CustomBackground = d.CustomBackground;
                     S.CustomBackdrop = d.CustomBackdrop;
+                    S.CustomTextOn = d.CustomTextOn;
+                    S.CustomText = d.CustomText;
                     S.InterfaceSize = d.InterfaceSize;
                     S.HideScrollBars = d.HideScrollBars;
                     Helpers.UiScale.Set(S.InterfaceSize);
@@ -723,6 +726,131 @@ public sealed partial class SettingsPage : Page
         _loading = was;
     }
 
+    // ---------- My colours (2.3) ----------
+
+    readonly List<Action> _colourChips = [];
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _colourTimer;
+
+    /// <summary>
+    /// The "My colours" chips: accent, glow, background and text, each a swatch with its hex code that opens a colour picker
+    /// (background and text with a switch to use them at all), and "Start from a theme" to copy a theme's colours as a base. The
+    /// app follows a pick live, gathered into one apply a quarter second after the last change (a theme apply restyles the window).
+    /// </summary>
+    void FillMyColours()
+    {
+        _colourChips.Clear();
+        var chips = new List<FrameworkElement>
+        {
+            ColourChip(L.T("Accent"), L.T("Buttons, selections, highlights"), () => S.CustomAccent, v => S.CustomAccent = v, null, null),
+            ColourChip(L.T("Glow"), L.T("The soft colour wash behind the window"), () => S.CustomTint, v => S.CustomTint = v, null, null),
+            ColourChip(L.T("Background"), L.T("Your own background, always kept dark"), () => S.CustomBackground, v => S.CustomBackground = v,
+                () => S.CustomBackdrop, v => S.CustomBackdrop = v),
+            ColourChip(L.T("Text"), L.T("The colour of every text, always kept light"), () => S.CustomText, v => S.CustomText = v,
+                () => S.CustomTextOn, v => S.CustomTextOn = v),
+        };
+        var start = new DropDownButton { Content = L.T("Start from a theme"), Padding = new Thickness(12, 6, 12, 6) };
+        var menu = new MenuFlyout();
+        foreach (var p in Palettes.All.Where(p => p.Key != "Custom"))
+        {
+            var item = new MenuFlyoutItem { Text = L.T(p.Name) };
+            var key = p.Key;
+            item.Click += (_, _) =>
+            {
+                var from = Palettes.Get(key);
+                if (from.Accent is { } a) S.CustomAccent = Palettes.ToHex(a);
+                if ((from.Tint ?? from.Accent) is { } t) S.CustomTint = Palettes.ToHex(t);
+                S.CustomBackdrop = from.Backdrop is not null;
+                if (from.Backdrop is { } b) S.CustomBackground = Palettes.ToHex(b.Top);
+                S.CustomTextOn = from.Text is not null;
+                if (from.Text is { } tx) S.CustomText = Palettes.ToHex(tx);
+                foreach (var refresh in _colourChips) refresh();
+                ColoursChanged();
+            };
+            menu.Items.Add(item);
+        }
+        start.Flyout = menu;
+        chips.Add(start);
+        MyColoursHost.Child = new WrapPanel(8, chips);
+    }
+
+    FrameworkElement ColourChip(string name, string hint, Func<string> get, Action<string> set, Func<bool>? isOn, Action<bool>? setOn)
+    {
+        var swatch = new Border { Width = 18, Height = 18, CornerRadius = new CornerRadius(9), VerticalAlignment = VerticalAlignment.Center };
+        var hex = new TextBlock { FontSize = 12, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas") };
+        var label = new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center };
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        content.Children.Add(swatch);
+        content.Children.Add(label);
+        content.Children.Add(hex);
+        var button = new DropDownButton { Content = content, Padding = new Thickness(10, 6, 10, 6) };
+        ToolTipService.SetToolTip(button, hint);
+        var picker = new ColorPicker
+        {
+            IsAlphaEnabled = false, IsMoreButtonVisible = false, IsColorChannelTextInputVisible = false, IsHexInputVisible = true,
+            ColorSpectrumShape = ColorSpectrumShape.Ring,
+        };
+        var panel = new StackPanel { Spacing = 10 };
+        ToggleSwitch? use = null;
+        if (isOn is not null && setOn is not null)
+        {
+            use = new ToggleSwitch { OnContent = L.T("In use"), OffContent = L.T("Not used") };
+            use.Toggled += (_, _) =>
+            {
+                if (_loading || use.IsOn == isOn()) return;
+                setOn(use.IsOn);
+                Refresh();
+                ColoursChanged();
+            };
+            panel.Children.Add(use);
+        }
+        panel.Children.Add(picker);
+        button.Flyout = new Flyout { Content = panel, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom };
+        void Refresh()
+        {
+            bool was = _loading;
+            _loading = true;
+            var c = Palettes.ParseHex(get()) ?? Microsoft.UI.Colors.Gray;
+            bool on = isOn?.Invoke() ?? true;
+            swatch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(c);
+            swatch.Opacity = on ? 1 : 0.35;
+            hex.Text = on ? Palettes.ToHex(c) : L.T("Off");
+            picker.Color = c;
+            if (use is not null) use.IsOn = on;
+            _loading = was;
+        }
+        picker.ColorChanged += (_, e) =>
+        {
+            if (_loading) return;
+            set(Palettes.ToHex(e.NewColor));
+            // Picking a background or text colour turns it on: that is what the pick is for.
+            if (isOn is not null && setOn is not null && !isOn()) setOn(true);
+            Refresh();
+            ColoursChanged();
+        };
+        _colourChips.Add(Refresh);
+        Refresh();
+        return button;
+    }
+
+    void ColoursChanged()
+    {
+        S.Palette = "Custom";
+        if (_colourTimer is null)
+        {
+            _colourTimer = DispatcherQueue.CreateTimer();
+            _colourTimer.Interval = TimeSpan.FromMilliseconds(250);
+            _colourTimer.IsRepeating = false;
+            _colourTimer.Tick += (_, _) =>
+            {
+                SettingsStore.Save();
+                App.Window?.ApplyTheme(S.Theme);
+                FillPalettes();
+            };
+        }
+        _colourTimer.Stop();
+        _colourTimer.Start();
+    }
+
     /// <summary>Windows' colours changed while the page is open (MainWindow.WatchWindowsColours applied them): the swatch follows.</summary>
     void OnThemeApplied()
     {
@@ -831,8 +959,13 @@ public sealed partial class SettingsPage : Page
         CheckUpdatesButton.IsEnabled = false;
         UpdateCheckText.Visibility = Visibility.Visible;
         UpdateCheckText.Text = L.T("Checking…");
+        // A check already running (Downloads opened, the timer) is waited for instead of reported as "up to date".
+        while (Helpers.GameUpdater.Checking) await Task.Delay(250);
         int started = await Helpers.GameUpdater.CheckNowAsync(evenIfOff: true);
-        UpdateCheckText.Text = started == 0 ? L.T("Every game is up to date.") : L.F("{0} update(s) started in Downloads.", started);
+        int waiting = Helpers.GameUpdater.Available.Count;
+        UpdateCheckText.Text = started > 0 ? L.F("{0} update(s) started in Downloads.", started)
+            : waiting > 0 ? L.F("{0} update(s) waiting in Downloads.", waiting)
+            : L.T("Every game is up to date.");
         CheckUpdatesButton.IsEnabled = true;
     }
 

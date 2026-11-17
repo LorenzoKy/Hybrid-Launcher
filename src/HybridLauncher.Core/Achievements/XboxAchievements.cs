@@ -367,7 +367,7 @@ public static class XboxAccount
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("Authorization", $"XBL3.0 x={t["uhs"]};{t["xsts"]}");
         req.Headers.Add("x-xbl-contract-version", contract);
-        req.Headers.AcceptLanguage.Add(new StringWithQualityHeaderValue(CultureInfo.CurrentUICulture.Name));
+        req.Headers.AcceptLanguage.Add(new StringWithQualityHeaderValue(AchievementLanguage.Locale));
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await Http.Client.SendAsync(req, ct);
         var text = await resp.Content.ReadAsStringAsync(ct);

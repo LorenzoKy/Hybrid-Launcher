@@ -21,9 +21,11 @@ public static class Smooth
         var brush = new ImageBrush { Stretch = stretch };
         var art = new Border { CornerRadius = radius, Background = brush, IsHitTestVisible = false };
         if (fadeMs > 0) art.Opacity = 0;
+        bool faded = false;
         brush.ImageOpened += (_, _) =>
         {
-            if (fadeMs > 0) { art.Opacity = 1; Motion.FadeIn(art, fadeMs); }
+            // Only the first time: a picture decoded again at a new size (a zoom) must not blink.
+            if (fadeMs > 0 && !faded) { faded = true; art.Opacity = 1; Motion.FadeIn(art, fadeMs); }
             opened?.Invoke();
         };
         brush.ImageFailed += (_, _) => failed?.Invoke();

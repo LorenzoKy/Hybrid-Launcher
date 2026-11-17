@@ -176,7 +176,9 @@ public static class EpicStats
     // no records. The product id comes with the definitions.
     const string ProfileQuery = "query($epicAccountId: String!, $productId: String!) { PlayerProfile { playerProfile(epicAccountId: $epicAccountId) { productAchievements(productId: $productId) { ... on PlayerProductAchievementsResponseSuccess { data { totalUnlocked playerAchievements { playerAchievement { achievementName unlocked unlockDate } } } } } } } }";
 
-    static string DefsFile(string ns) => Path.Combine(Dir, $"ach-defs-{ns}.json");
+    // Per language (2.3: the names come in Windows' display language); English keeps the old name.
+    static string DefsFile(string ns) => Path.Combine(Dir, Achievements.AchievementLanguage.Locale.StartsWith("en", StringComparison.OrdinalIgnoreCase)
+        ? $"ach-defs-{ns}.json" : $"ach-defs-{ns}-{Achievements.AchievementLanguage.Locale}.json");
     static string PlayerFile(string ns) => Path.Combine(Dir, $"ach-player-{ns}.json");
 
     /// <summary>Whether Epic achievements are read at all: the setting is on and the account is signed in.</summary>
@@ -216,7 +218,7 @@ public static class EpicStats
             if (kept is not null && DefsUsable(kept)) defs = kept;
             else
             {
-                defs = await QueryAsync(Body(DefinitionsQuery, ("sandboxId", ns), ("locale", "en-US")), signed: false, ct);
+                defs = await QueryAsync(Body(DefinitionsQuery, ("sandboxId", ns), ("locale", Achievements.AchievementLanguage.Locale)), signed: false, ct);
                 // Kept a week only when it is a real answer: an error payload would otherwise stop the retries for days.
                 if (!IsAnswer(defs)) { Log.Warn($"Epic achievements {ns}: no definitions in the answer"); return ReadCached(game); }
                 Write(defsFile, defs);
@@ -262,7 +264,7 @@ public static class EpicStats
     {
         try
         {
-            var text = await EpicAccount.GraphQlAsync(Body(DefinitionsQuery, ("sandboxId", sandbox), ("locale", "en-US")), signed: false, CancellationToken.None);
+            var text = await EpicAccount.GraphQlAsync(Body(DefinitionsQuery, ("sandboxId", sandbox), ("locale", Achievements.AchievementLanguage.Locale)), signed: false, CancellationToken.None);
             return text.Length > 160 ? text[..160] : text;
         }
         catch (Exception ex) { return "failed: " + ex.Message; }

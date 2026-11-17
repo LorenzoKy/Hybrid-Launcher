@@ -123,7 +123,70 @@ public static class SteamGridDb
     public static void Prefetch(long gameId)
     {
         foreach (var kind in new[] { ArtKind.Cover, ArtKind.Banner, ArtKind.Logo, ArtKind.Icon })
-            _ = AssetsAsync(gameId, kind, 0, CancellationToken.None).ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // 2.3: the first rows' thumbnails too, so another tab's pictures are on screen as it opens.
+                    var list = await AssetsAsync(gameId, kind, 0, CancellationToken.None).ConfigureAwait(false);
+                    foreach (var a in list.Take(PrefetchThumbs)) await ThumbAsync(a.Thumb, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex) { Log.Info($"SteamGridDB prefetch: {ex.Message}"); }
+            });
+    }
+
+    const int PrefetchThumbs = 12;
+
+    // Thumbnails (2.3): fetched by the app itself, at most this many at a time, and kept on disk for a month, so a picker opened
+    // again shows its pictures from the disk at once and the ones in view are not queued behind dozens WinUI would fetch at once.
+    static readonly SemaphoreSlim ThumbGate = new(8);
+    static readonly TimeSpan KeepThumbsFor = TimeSpan.FromDays(30);
+    static int _thumbsPruned;
+
+    static string ThumbDir => AppInfo.Ensure(System.IO.Path.Combine(AppInfo.CacheDir, "sgdb-thumbs"));
+
+    /// <summary>Where a thumbnail is kept on disk (it may not be there yet).</summary>
+    public static string ThumbFile(string url)
+    {
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(url)))[..24];
+        var ext = System.IO.Path.GetExtension(new Uri(url).AbsolutePath).ToLowerInvariant();
+        if (ext is not (".png" or ".jpg" or ".jpeg" or ".webp")) ext = ".img";
+        return System.IO.Path.Combine(ThumbDir, hash + ext);
+    }
+
+    /// <summary>
+    /// A thumbnail as a file on disk: the copy kept, else downloaded (at most <c>8</c> at once). Null when it is not a picture.
+    /// Call it off the UI thread.
+    /// </summary>
+    public static async Task<string?> ThumbAsync(string url, CancellationToken ct)
+    {
+        if (Interlocked.Exchange(ref _thumbsPruned, 1) == 0) _ = Task.Run(PruneThumbs);
+        var file = ThumbFile(url);
+        if (File.Exists(file)) return file;
+        await ThumbGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(file)) return file;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            var bytes = await Http.Client.GetByteArrayAsync(url, cts.Token).ConfigureAwait(false);
+            if (!IsPicture(bytes)) return null;
+            var tmp = $"{file}.{Guid.NewGuid():N}.tmp";
+            await File.WriteAllBytesAsync(tmp, bytes, CancellationToken.None).ConfigureAwait(false);
+            File.Move(tmp, file, overwrite: true);
+            return file;
+        }
+        finally { ThumbGate.Release(); }
+    }
+
+    static void PruneThumbs()
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(ThumbDir))
+                if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > KeepThumbsFor) File.Delete(f);
+        }
+        catch (Exception ex) { Log.Warn($"SteamGridDB thumbnails: {ex.Message}"); }
     }
 
     /// <summary>One request, its answer's text (null: not found). Not cached.</summary>

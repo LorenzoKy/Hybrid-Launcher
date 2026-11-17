@@ -525,6 +525,13 @@ public sealed class PopupLookColours
 
 public sealed class PopupSettings
 {
+    /// <summary>
+    /// 2.3-rc.6: games (exe file names) that dropped out of full screen when a pop-up showed over them, learnt the first time it
+    /// happened: over these the pop-up waits until the game is no longer in front, as over any game Windows reports in exclusive
+    /// full screen.
+    /// </summary>
+    public List<string> HeldOver { get; set; } = [];
+
     /// <summary>"Native" (where the chosen look's original shows it), "BottomRight", "BottomLeft", "TopRight", "TopLeft",
     /// "TopCenter", "BottomCenter", or "Custom" (<see cref="X"/>, <see cref="Y"/>).</summary>
     public string Corner { get; set; } = "Native";
@@ -839,6 +846,9 @@ public sealed class AppSettings
     /// <summary>Hardware acceleration is paused while a game started from Hybrid Launcher runs, and resumes when it closes.</summary>
     public bool PauseEffectsInGame { get; set; } = true;
 
+    /// <summary>The user paused a trailer: trailers stay paused (the page opens on a screenshot) until they play one again, also after a restart.</summary>
+    public bool TrailersPaused { get; set; }
+
     /// <summary>
     /// Background saver: while the window is open but another app is in front, the moving clips and muted trailers pause, the
     /// polling stops and Windows runs Hybrid Launcher in efficiency mode; all of it comes back the moment it is in front again.
@@ -909,11 +919,14 @@ public sealed class AppSettings
     /// <summary>The theme (2.1): "Windows" (the default since rc.11: Windows' accent), "TotalDark", "Dark", "Gray" or "Hybrid".</summary>
     public string Palette { get; set; } = "Windows";
 
-    /// <summary>The "My colours" palette of 2.0 (#RRGGBB), no longer offered since 2.1; kept so older settings files still read.</summary>
+    /// <summary>The "My colours" theme (#RRGGBB; back in 2.3): accent, the glow behind the window, an own background (when
+    /// <see cref="CustomBackdrop"/>) and an own text colour (when <see cref="CustomTextOn"/>).</summary>
     public string CustomAccent { get; set; } = "#9A5CFF";
     public string CustomTint { get; set; } = "#8A4DFF";
     public bool CustomBackdrop { get; set; }
     public string CustomBackground { get; set; } = "#16121F";
+    public bool CustomTextOn { get; set; }
+    public string CustomText { get; set; } = "#ECE8F4";
 
     /// <summary>The local users of this PC (2.1): a name and a picture each; the one in use is <see cref="ActiveProfile"/>.</summary>
     public List<UserProfile> Profiles { get; set; } = [];

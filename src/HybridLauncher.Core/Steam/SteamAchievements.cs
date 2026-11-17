@@ -308,12 +308,14 @@ public static class SteamAchievements
     {
         if (node is null) return null;
         if (node.Value is string s) return s;
-        return node.Str("english") ?? node.Children.FirstOrDefault(c => c.Value is string && c.Name != "token")?.Value as string;
+        // Windows' display language first (2.3), as Steam shows them.
+        return node.Str(Achievements.AchievementLanguage.Steam) ?? node.Str("english") ?? node.Children.FirstOrDefault(c => c.Value is string && c.Name != "token")?.Value as string;
     }
 
     // ---------- the account's community page (games Steam has not cached here) ----------
 
-    static string CommunityCacheName(string appId) => Path.Combine("steam", $"achievements-{appId}.xml");
+    static string CommunityCacheName(string appId) => Path.Combine("steam", Achievements.AchievementLanguage.IsEnglish
+        ? $"achievements-{appId}.xml" : $"achievements-{appId}-{Achievements.AchievementLanguage.Steam}.xml");
 
     /// <summary>
     /// The signed-in Steam account's achievements for the game from its community page
@@ -325,7 +327,7 @@ public static class SteamAchievements
         if (CurrentAccountId() is not { } account || !long.TryParse(account, out var id32)) return null;
         try
         {
-            var url = $"https://steamcommunity.com/profiles/{SteamId64Base + id32}/stats/{appId}/achievements/?xml=1&l=english";
+            var url = $"https://steamcommunity.com/profiles/{SteamId64Base + id32}/stats/{appId}/achievements/?xml=1&l={Achievements.AchievementLanguage.Steam}";
             var xml = await Http.GetCachedAsync(url, CommunityCacheName(appId), TimeSpan.FromMinutes(10), ct: ct);
             return xml is null ? null : ParseCommunity(appId, xml);
         }

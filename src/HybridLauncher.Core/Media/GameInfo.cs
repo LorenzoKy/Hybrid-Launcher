@@ -38,7 +38,7 @@ public static class GameInfo
             if (appId is null) return null;
             var assets = await AssetsAsync(appId, ct);
             var cover = assets is { Format: { } f, Cover: { } c } ? AssetRoot + f.Replace("${FILENAME}", c) : $"{AssetBase}{appId}/library_600x900.jpg";
-            return await CacheImageAsync(cover, $"{appId}-cover.jpg", ct)
+            return await CacheArtAsync(cover, $"{appId}-cover", ".jpg", ct)
                 ?? await CacheImageAsync($"{AssetBase}{appId}/header.jpg", $"{appId}-header.jpg", ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -94,6 +94,99 @@ public static class GameInfo
 
     static bool Exists(string? image) => image is null || !Path.IsPathRooted(image) || File.Exists(image);
 
+    /// <summary>
+    /// A game's Steam banner or logo changed on the store since it was cached (2.3-rc.3): the new one is in the cache and in
+    /// <see cref="GetAsync"/>'s answer; a page showing the game puts it in place. Raised on a pool thread with the game's id.
+    /// </summary>
+    public static event Action<string>? ArtChanged;
+
+    /// <summary>The art found for a game this session (with the user's own pictures), or null: no network, no disk.</summary>
+    public static GameArt? KnownArt(Game game)
+    {
+        lock (Known) return Known.TryGetValue(game.Id, out var art) ? ArtOverrides.Apply(game, art) : null;
+    }
+
+    /// <summary>How old the store's art list may be before a look at a game asks Steam again, in the background.</summary>
+    static readonly TimeSpan AssetsRecheck = TimeSpan.FromHours(12);
+    static readonly HashSet<string> Rechecked = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The store's art list is older than <see cref="AssetsRecheck"/>: asked again off the page's way (the banner never waits
+    /// for it). When it names another banner or logo than the one shown, the game's art is looked up again and
+    /// <see cref="ArtChanged"/> raised. Once per game and session.
+    /// </summary>
+    static void RecheckLater(Game game, string appId, string? format, string? hero, string? logo)
+    {
+        var file = Path.Combine(AppInfo.CacheDir, "store", $"assets-{appId}.json");
+        try { if (File.Exists(file) && DateTime.UtcNow - File.GetLastWriteTimeUtc(file) < AssetsRecheck) return; }
+        catch { return; }
+        lock (Rechecked) if (!Rechecked.Add(appId)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var fresh = await AssetsAsync(appId, CancellationToken.None, force: true);
+                if (fresh is null || (fresh.Format == format && fresh.Hero == hero && fresh.Logo == logo)) return;
+                var art = await LoadAsync(game, CancellationToken.None);
+                lock (Known)
+                {
+                    if (!Known.TryGetValue(game.Id, out var old)) return;
+                    if (art.HeroImage is null || old.HeroImage == art.HeroImage && old.LogoImage == art.LogoImage) return;
+                    Known[game.Id] = art;
+                }
+                Log.Info($"Steam art of {game.Name} changed on the store: new banner or logo in place");
+                ArtChanged?.Invoke(game.Id);
+            }
+            catch (Exception ex) { Log.Warn($"Art recheck for {game.Name}: {ex.Message}"); }
+        });
+    }
+
+    /// <summary>
+    /// A picture of Steam's art cached under a name that carries its address (2.3-rc.3). The store's art list names each picture
+    /// by a hash and a time ("…/b9cb…/library_hero.jpg?t=1794339458"): when a game's banner or logo changes, the address does
+    /// too, so the new picture is fetched instead of the old one being shown for good (the user's Apex Legends kept its old
+    /// banner). A picture cached before 2.3 under the plain name is kept when it is newer than the art's time on the store.
+    /// The new picture failing to download, the last one cached is used.
+    /// </summary>
+    static async Task<string?> CacheArtAsync(string url, string baseName, string ext, CancellationToken ct)
+    {
+        var dir = AppInfo.ImageCacheDir;
+        var name = $"{baseName}-{OptiNameHash(url)[..10]}{ext}";
+        var path = Path.Combine(dir, name);
+        if (File.Exists(path)) { CacheJanitor.Touch(path); return path; }
+        var legacy = Path.Combine(dir, baseName + ext);
+        // Its creation time is when it was downloaded (the janitor moves the write time to mark a picture as used).
+        if (File.Exists(legacy) && !ChangedSince(url, File.GetCreationTimeUtc(legacy)))
+        {
+            try { File.Copy(legacy, path, overwrite: false); return path; }
+            catch { return legacy; }
+        }
+        var got = await CacheImageAsync(url, name, ct);
+        if (got is not null) return got;
+        try
+        {
+            return Directory.EnumerateFiles(dir, baseName + "-*" + ext).Append(legacy).Where(File.Exists)
+                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Whether a cached picture is a Steam portrait cover ("1172470-cover.jpg", or with its version "1172470-cover-ab12….jpg").</summary>
+    public static bool IsSteamCover(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        int i = name.IndexOf("-cover", StringComparison.OrdinalIgnoreCase);
+        return i > 0 && (i + 6 == name.Length || name[i + 6] == '-') && path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Whether the art's address says it was changed on the store after <paramref name="cachedUtc"/> ("?t=" seconds).</summary>
+    static bool ChangedSince(string url, DateTime cachedUtc)
+    {
+        int i = url.IndexOf("?t=", StringComparison.Ordinal);
+        if (i < 0 || !long.TryParse(url.AsSpan(i + 3), out var t)) return false;
+        return DateTimeOffset.FromUnixTimeSeconds(t).UtcDateTime > cachedUtc;
+    }
+
     static async Task<GameArt> LoadAsync(Game game, CancellationToken ct)
     {
         try
@@ -125,11 +218,12 @@ public static class GameInfo
             var assets = await AssetsAsync(appId, ct);
             string Asset(string file) => assets?.Format is { } f ? AssetRoot + f.Replace("${FILENAME}", file) : $"{AssetBase}{appId}/{file}";
             // Listed by the store: its own file; not listed (or no list): the old fixed name, which most older games still have.
-            var logoTask = CacheImageAsync(Asset(assets?.Logo ?? "logo.png"), $"{appId}-logo.png", ct);
-            var hero = await CacheImageAsync(Asset(assets?.Hero ?? "library_hero.jpg"), $"{appId}-hero.jpg", ct)
+            var logoTask = CacheArtAsync(Asset(assets?.Logo ?? "logo.png"), $"{appId}-logo", ".png", ct);
+            var hero = await CacheArtAsync(Asset(assets?.Hero ?? "library_hero.jpg"), $"{appId}-hero", ".jpg", ct)
                     ?? (shot is not null ? await CacheImageAsync(shot, $"{appId}-shot.jpg", ct) : null)
                     ?? await CacheImageAsync(header ?? $"{AssetBase}{appId}/header.jpg", $"{appId}-header.jpg", ct);
             var logo = await logoTask;
+            RecheckLater(game, appId, assets?.Format, assets?.Hero, assets?.Logo);
 
             return new GameArt { HeroImage = hero, HeaderImage = header, LogoImage = logo, Description = desc, Developer = dev, ReleaseDate = date, SteamAppId = appId };
         }
@@ -145,13 +239,13 @@ public static class GameInfo
     sealed record StoreAssets(string? Format, string? Hero, string? Logo, string? Cover);
 
     /// <summary>The store's own list of a game's art (IStoreBrowseService): file names and the folder they are in. Null when unknown.</summary>
-    static async Task<StoreAssets?> AssetsAsync(string appId, CancellationToken ct)
+    static async Task<StoreAssets?> AssetsAsync(string appId, CancellationToken ct, bool force = false)
     {
         try
         {
             var input = $"{{\"ids\":[{{\"appid\":{appId}}}],\"context\":{{\"language\":\"english\",\"country_code\":\"US\"}},\"data_request\":{{\"include_assets\":true}}}}";
             var json = await Http.GetCachedAsync("https://api.steampowered.com/IStoreBrowseService/GetItems/v1?input_json=" + Uri.EscapeDataString(input),
-                Path.Combine("store", $"assets-{appId}.json"), TimeSpan.FromDays(14), ct: ct);
+                Path.Combine("store", $"assets-{appId}.json"), TimeSpan.FromDays(14), force: force, ct: ct);
             if (json is null) return null;
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("response", out var r) || !r.TryGetProperty("store_items", out var items) || items.GetArrayLength() == 0

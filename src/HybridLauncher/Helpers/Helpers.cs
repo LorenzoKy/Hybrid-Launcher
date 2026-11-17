@@ -69,8 +69,7 @@ public static class IconCache
                 if (File.Exists(exe))
                 {
                     var bmp = new BitmapImage { DecodePixelWidth = 48 };
-                    var file = await StorageFile.GetFileFromPathAsync(exe);
-                    using var stream = await file.OpenReadAsync();
+                    using var stream = await LocalFile.OpenReadAsync(exe);
                     await bmp.SetSourceAsync(stream);
                     image = bmp;
                 }
@@ -215,5 +214,22 @@ public static class Elevation
         {
             return false;
         }
+    }
+}
+
+/// <summary>
+/// A local file read into memory, for the picture decoders (2.3-rc.7). A plain read: StorageFile.GetFileFromPathAsync goes
+/// through Windows' file broker, which refuses an app at low integrity even to read (the sandboxed self-test, run-selftest
+/// -Sandbox), and costs a round trip for nothing on a path the app already has.
+/// </summary>
+public static class LocalFile
+{
+    public static async Task<Windows.Storage.Streams.IRandomAccessStream> OpenReadAsync(string path)
+    {
+        var bytes = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
+        var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        await stream.WriteAsync(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(bytes));
+        stream.Seek(0);
+        return stream;
     }
 }

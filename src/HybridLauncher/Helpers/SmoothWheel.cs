@@ -32,23 +32,96 @@ public sealed class SmoothWheel
     TimeSpan _lastFrame;
     bool _active;
 
-    SmoothWheel(ScrollViewer sv)
+    /// <summary>One glide per scroller, shared by the wheel and the controller (so the two blend instead of fighting).</summary>
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ScrollViewer, SmoothWheel> All = new();
+
+    SmoothWheel(ScrollViewer sv, bool wheel)
     {
         _sv = sv;
-        sv.Loaded += (_, _) => Hook();
+        if (wheel) sv.Loaded += (_, _) => Hook();
         sv.Unloaded += (_, _) => Stop();
-        // Someone else moved the view (scroll bar, keyboard, a jump to a section): the glide gives way.
+        // Someone else moved the view (scroll bar, keyboard, a jump to a section): the glide gives way. Not a controller key
+        // (should Windows report one): the controller scrolls through this same glide.
         sv.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => Stop()), true);
-        sv.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, _) => Stop()), true);
-        if (sv.IsLoaded) Hook();
+        sv.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) => { if (e.Key is < VirtualKey.GamepadA or > VirtualKey.GamepadRightThumbstickLeft) Stop(); }), true);
+        if (wheel && sv.IsLoaded) Hook();
     }
 
     public static void Attach(ScrollViewer sv)
     {
         // Tests only: Windows' own wheel scrolling, to compare.
         if (Environment.GetEnvironmentVariable("HL_NATIVE_WHEEL") == "1") return;
-        try { _ = new SmoothWheel(sv); }
+        try
+        {
+            if (All.TryGetValue(sv, out var known)) { known.Hook(); return; }
+            All.AddOrUpdate(sv, new SmoothWheel(sv, wheel: true));
+        }
         catch (Exception ex) { Log.Warn($"Smooth wheel: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// The controller (2.3-rc.3): moves the view's target by <paramref name="dy"/> px and lets it glide there exactly as a wheel
+    /// notch does, in XAML's own frame. A stick or a held trigger pushes a little every frame, a tap of a page button a page at
+    /// once. Before, the controller set the offset itself on its own clock, from an offset Windows had not updated yet, and a
+    /// page tap's own animation fought the held scroll that followed: it stuttered where the wheel was smooth.
+    /// </summary>
+    public static void Push(ScrollViewer sv, double dy)
+    {
+        try
+        {
+            if (!All.TryGetValue(sv, out var glide))
+            {
+                glide = new SmoothWheel(sv, wheel: false);
+                All.AddOrUpdate(sv, glide);
+            }
+            glide.Add(dy);
+        }
+        catch (Exception ex) { Log.Warn($"Smooth scroll: {ex.Message}"); }
+    }
+
+    /// <summary>A held trigger or stick (2.3-rc.4): the target moves at <paramref name="pxPerSecond"/> by the real time of each frame.</summary>
+    public static void Drive(ScrollViewer sv, double pxPerSecond)
+    {
+        try
+        {
+            if (!All.TryGetValue(sv, out var glide))
+            {
+                glide = new SmoothWheel(sv, wheel: false);
+                All.AddOrUpdate(sv, glide);
+            }
+            glide.SetVelocity(pxPerSecond);
+        }
+        catch (Exception ex) { Log.Warn($"Smooth scroll: {ex.Message}"); }
+    }
+
+    double _vel;
+    long _velAt;
+
+    void SetVelocity(double v)
+    {
+        if (v == 0) { _vel = 0; return; }
+        if (_sv.VerticalScrollMode == ScrollMode.Disabled || _sv.ScrollableHeight <= 0) return;
+        if (!_active) _current = _target = _sv.VerticalOffset;
+        _vel = v;
+        _velAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        Start();
+    }
+
+    void Add(double dy)
+    {
+        if (_sv.VerticalScrollMode == ScrollMode.Disabled || _sv.ScrollableHeight <= 0) return;
+        if (!_active) _current = _target = _sv.VerticalOffset;
+        // Never far ahead of the view: let go, it stops within a few frames.
+        _target = Math.Clamp(_target + dy, 0, _sv.ScrollableHeight);
+        Start();
+    }
+
+    void Start()
+    {
+        if (_active) return;
+        _active = true;
+        _lastFrame = TimeSpan.Zero;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnRendering;
     }
 
     /// <summary>The wheel is taken on the scroller's content: it reaches it before the scroller would scroll by itself.</summary>
@@ -71,10 +144,7 @@ public sealed class SmoothWheel
         double step = Math.Min(LinePixels * WheelLines(), _sv.ViewportHeight * 0.4);
         _target = Math.Clamp(_target - props.MouseWheelDelta / 120.0 * step, 0, _sv.ScrollableHeight);
         e.Handled = true;
-        if (_active) return;
-        _active = true;
-        _lastFrame = TimeSpan.Zero;
-        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnRendering;
+        Start();
     }
 
     void OnRendering(object? sender, object e)
@@ -92,9 +162,15 @@ public sealed class SmoothWheel
     void Tick(double ms)
     {
         if (!_active) return;
+        if (_vel != 0)
+        {
+            // Stops by itself if the controller stopped reporting (no frame of it for 80 ms).
+            if (System.Diagnostics.Stopwatch.GetElapsedTime(_velAt).TotalMilliseconds > 80) _vel = 0;
+            else _target += _vel * Math.Clamp(ms, 0, 100) / 1000;
+        }
         _target = Math.Clamp(_target, 0, _sv.ScrollableHeight);
         _current += (_target - _current) * (1 - Math.Exp(-Math.Clamp(ms, 0, 100) / TauMs));
-        bool done = Math.Abs(_target - _current) < 0.5;
+        bool done = _vel == 0 && Math.Abs(_target - _current) < 0.5;
         if (done) _current = _target;
         long t = System.Diagnostics.Stopwatch.GetTimestamp();
         _sv.ChangeView(null, _current, null, disableAnimation: true);

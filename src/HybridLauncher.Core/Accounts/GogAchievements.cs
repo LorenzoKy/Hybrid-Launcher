@@ -20,7 +20,7 @@ public static class GogAchievements
         if (!SettingsStore.Current.ReadGogAchievements || !GogAccount.SignedIn || GogAccount.UserId is not { } user) return null;
         try
         {
-            var json = await GogAccount.GetAuthorizedAsync($"https://gameplay.gog.com/clients/{productId}/users/{user}/achievements", ct);
+            var json = await GogAccount.GetAuthorizedAsync($"https://gameplay.gog.com/clients/{productId}/users/{user}/achievements?locale={Achievements.AchievementLanguage.Locale}", ct);
             return Parse(productId, json);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

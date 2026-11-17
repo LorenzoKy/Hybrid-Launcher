@@ -383,7 +383,18 @@ public sealed partial class MainWindow : Window
         InitInbox();
         Helpers.AppUpdater.Changed += () => DispatcherQueue.TryEnqueue(UpdateUpdateButton);
         UpdateUpdateButton();
+        // 2.3: the window's content may not have its XamlRoot yet here; the check then waits for it instead of never running.
         if (Content?.XamlRoot is { } root) _ = Helpers.AppUpdater.CheckAtStartAsync(root);
+        else if (Content is FrameworkElement fe)
+        {
+            Log.Info("App update check: waiting for the window");
+            void Ready(object s, RoutedEventArgs e)
+            {
+                fe.Loaded -= Ready;
+                if (fe.XamlRoot is { } r) _ = Helpers.AppUpdater.CheckAtStartAsync(r);
+            }
+            fe.Loaded += Ready;
+        }
         // New versions of the OptiScaler builds the user follows (each turned on in a game's OptiScaler tab).
         OptiFollowChanged();
         // Ultra+: the installed mods with a newer build (a notification when the user asked for one).
@@ -1177,6 +1188,8 @@ public sealed partial class MainWindow : Window
     /// <summary>The Downloads item shows how many installs are running (an info badge).</summary>
     bool _closed;
 
+    int _badgeKey = int.MinValue;
+
     public void UpdateDownloadsBadge()
     {
         // Raised from the downloads' timer too: on any other thread (or while the window closes) it goes to the UI thread.
@@ -1184,6 +1197,10 @@ public sealed partial class MainWindow : Window
         if (!ui.HasThreadAccess) { ui.TryEnqueue(UpdateDownloadsBadge); return; }
         if (_downloadsItem is null) return;
         int active = HybridLauncher.Core.Accounts.Downloads.ActiveCount;
+        // Raised every second while a download runs: the badge is made again only when what it shows changed (2.3).
+        int key = active > 0 ? active : Helpers.GameUpdater.Available.Count > 0 ? -1 : 0;
+        if (key == _badgeKey && _downloadsItem.InfoBadge is not null == (key != 0)) return;
+        _badgeKey = key;
         // 2.1.4: no download but an update waiting: a small blue dot.
         _downloadsItem.InfoBadge = active > 0 ? new InfoBadge { Value = active }
             : Helpers.GameUpdater.Available.Count > 0 ? new InfoBadge { Width = 9, Height = 9, MinWidth = 9, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x2F, 0x8C, 0xF0)) }
@@ -2117,18 +2134,29 @@ public sealed partial class MainWindow : Window
     public async Task RunSelfTestAsync()
     {
         int failures = 0;
+        // The pop-ups never wait for a real game that happens to be in exclusive full screen while the test runs.
+        AchievementPopup.SelfTestExclusive = false;
         // HL_SHOTS=<folder>: a picture of the window as on screen after each step, for checking the pages by eye (tests only).
         var shots = Environment.GetEnvironmentVariable("HL_SHOTS");
         int shot = 0;
         // HL_SELFTEST_ONLY=downloads,settings: only the steps whose name starts with one of these (a quick look at a few pages).
         var only = (Environment.GetEnvironmentVariable("HL_SELFTEST_ONLY") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        async Task Step(string what, Action action, int waitMs = 700)
+        // HL_SELFTEST_QUICK=1 (run-selftest -Quick): the steps that repeat a check already made are left out (every pop-up look
+        // in every colour and as a platinum, every Settings tab and game page tab again at the narrow size), and the fake game's
+        // tour visits one tab per group; the full run keeps them all for release candidates and releases.
+        bool quick = Environment.GetEnvironmentVariable("HL_SELFTEST_QUICK") == "1";
+        string[] quickSkip = ["pop-up look ", "pop-up platinum ", "settings tab ", "page game "];
+        async Task Step(string what, Action action, int waitMs = 700, bool settle = false)
         {
             if (only.Length > 0 && !only.Any(o => what.StartsWith(o, StringComparison.OrdinalIgnoreCase))) return;
+            if (quick && only.Length == 0 && quickSkip.Any(q => what.StartsWith(q, StringComparison.OrdinalIgnoreCase))) return;
             try
             {
                 action();
-                await Task.Delay(waitMs);
+                // A step with nothing loading from the network moves on once the UI is idle (at most waitMs); pictures
+                // (HL_SHOTS) always wait the whole time, for what loads late.
+                if (settle && string.IsNullOrWhiteSpace(shots)) await SettleAsync(waitMs);
+                else await Task.Delay(waitMs);
                 // No step clicks the search box: holding the focus after one means it grabbed it by itself (an old bug).
                 if (SearchHasFocus()) throw new InvalidOperationException($"the game list's search box took the focus by itself (page shown: {Shown?.GetType().Name})");
                 Log.Info($"Self-test: {what}");
@@ -2149,6 +2177,29 @@ public sealed partial class MainWindow : Window
             Log.Info($"Self-test finished: {demo} failure(s)");
             Close();
             return;
+        }
+        // HL_SELFTEST_SANDBOX=1 (run-selftest -Sandbox, always with -RealLibrary): the app runs at low integrity and Windows
+        // must refuse it every write outside the scratch folder. Tried for real before anything else; a write that gets
+        // through ends the run at once.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_SANDBOX") == "1" && !SelfTestSandboxHolds())
+        {
+            Log.Info("Self-test finished: 1 failure(s)");
+            Close();
+            return;
+        }
+        // HL_SELFTEST_REAL=1 (run-selftest -RealLibrary): a read-only walk through a copy of the real library; then, when fake
+        // games were added to it (-FakeGame), the whole self-test, its writing steps on the fake games only.
+        // With -Only, the walk runs when "real" is asked for, and the steps asked for run after it on the real library.
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_REAL") == "1")
+        {
+            bool walk = only.Length == 0 || only.Any(o => o.StartsWith("real", StringComparison.OrdinalIgnoreCase));
+            if (walk) failures += await SelfTestRealLibraryAsync((w, a, ms) => Step(w, a, ms), (w, a, ms) => Step(w, a, ms, settle: true));
+            if (only.Length == 0 && !AppState.VisibleGames.Any(IsScratchGame))
+            {
+                Log.Info($"Self-test finished: {failures} failure(s)");
+                Close();
+                return;
+            }
         }
         if (only.Any(o => o.StartsWith("perf", StringComparison.OrdinalIgnoreCase)))
             failures += await SelfTestPerfAsync((what, action, wait) => Step(what, action, wait));
@@ -2285,6 +2336,8 @@ public sealed partial class MainWindow : Window
         {
             if (Controls.ArtworkDialog.GridFits?.Invoke() != true) throw new InvalidOperationException("the picture grid runs past the dialog: " + Controls.ArtworkDialog.GridFitsDetail);
         }, 300);
+        // 2.3-rc.2: half way down, rows pass under soft edges at the top and the foot (no hard cut, no empty band).
+        await Step("library artwork: scrolled", () => Controls.ArtworkDialog.ScrollForTest?.Invoke(0.5), 900);
         await Step("library artwork closed", () =>
         {
             if (Content?.XamlRoot is { } root)
@@ -2579,11 +2632,44 @@ public sealed partial class MainWindow : Window
             {
                 if ((Shown as DownloadsPage)?.SelfTestGames(true) != true) throw new InvalidOperationException("your games did not open");
             }, 2500);
+            await Step("installs 7b cover hover: Downloads", () => (Shown as DownloadsPage)?.SelfTestHover(true), 900);
+            await Step("installs 7c cover hover off", () => (Shown as DownloadsPage)?.SelfTestHover(false), 500);
             await Step("installs 8 games closed again", () => (Shown as DownloadsPage)?.SelfTestGames(false), 500);
             // 2.2: nothing left in the list: the "Nothing is downloading" card.
             await Step("installs 9 idle: Downloads", () => Downloads.ClearFinished(), 1500);
         }
         if (Environment.GetEnvironmentVariable("HL_SAMPLE_DOWNLOADS") == "1") Downloads.AddSamples();
+        // 2.3-rc.4: the controller reaches Downloads: Down from Library lands on it, A opens it, LB / RB step to it.
+        await Step("pad to Downloads 1: Library", () =>
+        {
+            ContentFrame.Navigate(typeof(LibraryPage), _filter);
+            Nav.MenuItems.OfType<NavigationViewItem>().First(i => i.Tag as string == LibraryTag).Focus(FocusState.Keyboard);
+        }, 1500);
+        await Step("pad to Downloads 2: Down", () => Pad(PadKey.Down), 600);
+        await Step("pad to Downloads 3: focus is on Downloads", () =>
+        {
+            var f = Focused(RootGrid.XamlRoot) as NavigationViewItem;
+            Log.Info($"PADTEST focus after Down: {f?.Tag ?? Focused(RootGrid.XamlRoot)?.GetType().Name ?? "none"}");
+            if (f?.Tag as string != DownloadsTag) throw new InvalidOperationException("Down from Library did not reach Downloads");
+        }, 100);
+        await Step("pad to Downloads 4: A", () => Pad(PadKey.A), 2000);
+        await Step("pad to Downloads 5: opened", () =>
+        {
+            if (Shown is not DownloadsPage) throw new InvalidOperationException($"A on Downloads opened {Shown?.GetType().Name}");
+        }, 100);
+        await Step("pad to Downloads 6: RB from Library", () => { Nav.SelectedItem = Nav.MenuItems.OfType<NavigationViewItem>().First(i => i.Tag as string == LibraryTag); }, 1500);
+        await Step("pad to Downloads 7: RB", () => Pad(PadKey.RB), 2000);
+        await Step("pad to Downloads 8: opened", () =>
+        {
+            Log.Info($"PADTEST after RB: {Shown?.GetType().Name}");
+            if (Shown is not DownloadsPage) throw new InvalidOperationException($"RB from Library opened {Shown?.GetType().Name}");
+        }, 100);
+        // 2.3-rc.6: the profile picture's framing (EXIF-turned photo, zoom about a point, a file that cannot be read).
+        if (only.Length == 0 || only.Any(o => "profile picture".StartsWith(o, StringComparison.OrdinalIgnoreCase) || o.StartsWith("profile picture", StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestProfilePictureAsync();
+        // 2.3-rc.6: the controller moves inside Downloads (rc.5 reached the tab but the stick could not get into its page).
+        if (only.Any(o => o.StartsWith("pad in", StringComparison.OrdinalIgnoreCase)))
+            failures += await SelfTestPadInDownloadsAsync();
         await Step("downloads", () => ContentFrame.Navigate(typeof(DownloadsPage)), 2500);
         // The focused list item thrown away by a redraw: WinUI used to hand the focus to the search box.
         await Step("list redrawn under the focus", () => { (Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault())?.Focus(FocusState.Keyboard); RebuildNav(); }, 500);
@@ -2634,12 +2720,25 @@ public sealed partial class MainWindow : Window
         await Step("pane folded: checked", () => { if (Nav.IsPaneOpen) throw new InvalidOperationException("the game list is still open"); }, 50);
         await Step("pane open", () => SetPaneOpen(true), 500);
         await Step("pane open: checked", () => { if (!Nav.IsPaneOpen) throw new InvalidOperationException("the game list did not open"); }, 50);
-        foreach (var game in AppState.VisibleGames.ToList())
+        // The full tour of a game page (every tab, Auto, DLSS 5, the mods) writes into the game's folder: only ever on a fake game
+        // made in the scratch data folder (rc.18: run on a real library it swapped the dlls of the real Cyberpunk 2077). The
+        // fake games are all alike, so one is toured (HL_SELFTEST_TOUR_ALL=1: every one).
+        var tour = AppState.VisibleGames.Where(IsScratchGame).ToList();
+        if (Environment.GetEnvironmentVariable("HL_SELFTEST_TOUR_ALL") != "1") tour = tour.Take(1).ToList();
+        if (tour.Count == 0) Log.Info("Self-test: no fake game in the scratch folder, the game page tour is left out");
+        foreach (var game in tour)
         {
             await Step($"open {game.Name}", () => OpenGame(game.Id), 2500);
             await Step($"{game.Name}: pin", () => AppState.SetPinned(game.Id, true));
-            foreach (var (tab, view) in new[] { ("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/notes", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/dlss5", null), ("mods/dxvk", null), ("mods/vkd3d", null), ("mods/reshade", null), ("mods/installed", null), ("auto", null), ("ultra", null), ("ultra/addons", null), ("ultra/settings", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview/news", null), ("overview/reviews", null), ("overview", null) })
-                await Step($"{game.Name}: {tab} {view}", () => (Shown as GamePage)?.SelfTestShow(tab, view), tab is "overview" or "opti/wiki" or "opti/notes" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" or "mods/dxvk" or "mods/vkd3d" or "mods/installed" or "auto" or "ultra" ? 2500 : 600);
+            (string, string?)[] allTabs = [("overview", (string?)null), ("opti", null), ("opti/quickpanel", null), ("opti/settings", "essentials"), ("opti/settings", "restart"), ("opti/settings", "changed"), ("opti/settings", "all"), ("opti/wiki", null), ("opti/notes", null), ("opti/install", null), ("mods", null), ("mods/renodx", null), ("mods/luma", null), ("mods/dlss5", null), ("mods/dxvk", null), ("mods/vkd3d", null), ("mods/reshade", null), ("mods/installed", null), ("auto", null), ("ultra", null), ("ultra/addons", null), ("ultra/settings", null), ("pcgw", null), ("pcgw/issues", null), ("pcgw/page2", null), ("ach", null), ("links", null), ("quick", null), ("notes", null), ("overview/news", null), ("overview/reviews", null), ("overview", null)];
+            (string, string?)[] quickTabs = [("overview", null), ("opti", null), ("opti/settings", "essentials"), ("mods", null), ("mods/installed", null), ("auto", null), ("ach", null), ("links", null), ("overview", null)];
+            foreach (var (tab, view) in quick ? quickTabs : allTabs)
+            {
+                // The tabs that read the network keep their time (later steps check what they loaded); the others move on
+                // as soon as the page is idle.
+                bool network = tab is "overview" or "opti/wiki" or "opti/notes" or "pcgw" or "links" or "mods" or "mods/renodx" or "mods/luma" or "mods/dxvk" or "mods/vkd3d" or "mods/installed" or "auto" or "ultra";
+                await Step($"{game.Name}: {tab} {view}", () => (Shown as GamePage)?.SelfTestShow(tab, view), network ? 2500 : 600, settle: !network);
+            }
             // The Auto tab (rc.7) read the game and made a plan; then, on a fake game, its one click with ReShade ticked puts
             // OptiScaler and ReShade in together: ReShade as ReShade64.dll, loaded by OptiScaler.
             await Step($"{game.Name}: auto plan", () =>
@@ -3025,11 +3124,36 @@ public sealed partial class MainWindow : Window
         AppState.Settings.Popup.Corner = savedCorner;
         await Step("pop-up again", () => AchievementPopup.ShowTest(), 7000);
         await Step("pop-up gone by itself", () => { if (AchievementPopup.CurrentHandle is not null) throw new InvalidOperationException("the pop-up is still on screen after its time"); }, 100);
+        // 2.3-rc.6: a game in exclusive full screen drops out of it under any window on top: the pop-up waits, its sound does not.
+        await Step("pop-up held over an exclusive game", () =>
+        {
+            AchievementPopup.SelfTestExclusive = true;
+            AchievementPopup.LastSound = "";
+            AchievementPopup.Show(new Toast("Held", "Waits for the game to leave exclusive full screen.", null, "Game: The game", 30));
+        }, 2500);
+        await Step("pop-up waited, sound played", () =>
+        {
+            // The game "leaves" first, so a failure here does not hold every pop-up of the steps after it.
+            bool opened = AchievementPopup.CurrentHandle is not null;
+            int held = AchievementPopup.HeldCount;
+            string? sound = AchievementPopup.LastSound;
+            AchievementPopup.SelfTestExclusive = false;
+            AchievementPopup.LastSound = "";
+            if (opened) throw new InvalidOperationException("the pop-up opened over an exclusive full-screen game");
+            if (held != 1) throw new InvalidOperationException($"{held} pop-ups waiting, not 1");
+            if (string.IsNullOrEmpty(sound)) throw new InvalidOperationException("no sound noted for the held unlock");
+        }, 1800);
+        await Step("pop-up shown once the game left", () =>
+        {
+            if (AchievementPopup.CurrentHandle is null) throw new InvalidOperationException("the held pop-up never showed");
+            if (!string.IsNullOrEmpty(AchievementPopup.LastSound)) throw new InvalidOperationException("the held unlock's sound played twice");
+            AchievementPopup.CloseAll();
+        }, 300);
         // The way people try it: Settings → Achievements → "Try it", pressed again while one shows, then every look picked in a row.
         await Step("pop-up settings", () => OpenSettings("achievements"), 1200);
         // Achievements → Sounds, under the pop-ups: what plays, volume, a .wav per rarity.
         await Step("pop-up settings sounds", () => (Shown as SettingsPage)?.SelfTestSounds(), 900);
-        await SelfTestSoundsAsync(Step);
+        await SelfTestSoundsAsync((w, a, ms) => Step(w, a, ms));
         await Step("pop-up settings try it", () => (Shown as SettingsPage ?? throw new InvalidOperationException("Settings is not open")).SelfTestTryPopup(), 400);
         await Step("pop-up settings try it again", () => (Shown as SettingsPage)?.SelfTestTryPopup(), 1500);
         await Step("pop-up settings try it see-through", AchievementPopup.CheckSeeThrough, 50);
@@ -3065,7 +3189,7 @@ public sealed partial class MainWindow : Window
         // HL_SELFTEST_ULTRA=1 (fake game folders only): real Ultra+ installs, an older version first so the update shows, then
         // Update all, then each one removed again, so the folders end as they began.
         if (Environment.GetEnvironmentVariable("HL_SELFTEST_ULTRA") == "1" && (only.Length == 0 || only.Any(o => "ultra".StartsWith(o, StringComparison.OrdinalIgnoreCase))))
-            failures += await SelfTestUltraAsync(Step);
+            failures += await SelfTestUltraAsync((w, a, ms) => Step(w, a, ms));
         // HL_SELFTEST_TRAILER=<video file>: a trailer opened and stopped again and again at random moments, as when games are
         // switched while a trailer loads. Up to rc.2 this froze the window for good (see docs: a MediaPlayer made on the UI
         // thread and disposed off it); a freeze shows as the self-test never finishing.
@@ -3092,10 +3216,39 @@ public sealed partial class MainWindow : Window
                 try { await play; } catch (Exception ex) { Log.Warn($"Self-test trailer round {i}: {ex.Message}"); }
             }
             player.Stop();
+            await Step($"trailer churn ({rounds} rounds, {watch.Elapsed.TotalSeconds:0.0} s)", () => { }, 300);
+            // 2.3-rc.6: started by a page (not a click), it waits for its buffer and then plays by itself, with no play button
+            // shown while it waits, and moves on steadily once playing.
+            // In the background a page's trailer rightly waits (MediaPolicy): the window comes to the front first.
+            Activate();
+            await Task.Delay(500);
+            if (MediaPolicy.InBackground) Log.Info("Self-test: trailer start not tried, the window could not come to the front (the PC is in use)");
+            else
+            {
+                var started = player.PlayAsync(uri, hls: false);
+                await Step("trailer waits, no play button", () =>
+                {
+                    if (player.SelfTestBigPlayShown) throw new InvalidOperationException("the play button showed while the trailer was buffering");
+                }, 150);
+                await started;
+                await Task.Delay(4000);
+                await Step("trailer plays by itself", () =>
+                {
+                    if (!player.SelfTestPlaying) throw new InvalidOperationException($"the trailer is {player.SelfTestState} 4 s after it was started");
+                }, 0);
+                TimeSpan p0 = player.SelfTestPosition;
+                await Task.Delay(2000);
+                await Step("trailer moves on", () =>
+                {
+                    double moved = (player.SelfTestPosition - p0).TotalSeconds;
+                    if (moved < 1.6) throw new InvalidOperationException($"only {moved:0.00} s of video in 2 s");
+                    Log.Info($"Trailer moved {moved:0.00} s in 2 s");
+                }, 0);
+            }
+            player.Stop();
             MediaPolicy.SetWindowHidden(wasHidden);
             layer.IsOpen = false;
             layer.Child = null;
-            await Step($"trailer churn ({rounds} rounds, {watch.Elapsed.TotalSeconds:0.0} s)", () => { }, 300);
         }
         // HL_SELFTEST_PLAY=<exe>: a game that closes a moment after Play and starts itself again (like a launcher exe or Steam's
         // DRM wrapper) is still the game launched here: the window must go to the notification area while it runs and come back

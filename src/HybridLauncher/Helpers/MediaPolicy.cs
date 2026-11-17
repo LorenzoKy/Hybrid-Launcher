@@ -9,8 +9,8 @@ namespace HybridLauncher.Helpers;
 /// <summary>
 /// When Hybrid Launcher's videos (trailers, the looping clips of store descriptions) may play by themselves. A game launcher must not
 /// take GPU time from the game it started, so nothing plays while a game runs or while the window is minimized or in the
-/// notification area. A trailer the user paused keeps the other trailers paused until they play one again (for the session, like
-/// the trailer's sound); the looping clips of descriptions keep moving. With hardware acceleration off nothing plays by itself and the GPU effects are left out.
+/// notification area. A trailer the user paused keeps the other trailers paused until they play one again (kept in the
+/// settings, so also after a restart); the looping clips of descriptions keep moving. With hardware acceleration off nothing plays by itself and the GPU effects are left out.
 /// </summary>
 public static class MediaPolicy
 {
@@ -22,7 +22,7 @@ public static class MediaPolicy
     public static event Action? Changed;
 
     /// <summary>The user paused a video: the others wait until they play one again.</summary>
-    public static bool UserPaused { get; private set; }
+    public static bool UserPaused => AppState.Settings.TrailersPaused;
 
     /// <summary>A game started from Hybrid Launcher (or seen running) is on: no video plays.</summary>
     public static bool GameRunning { get; private set; }
@@ -93,7 +93,9 @@ public static class MediaPolicy
     public static void SetUserPaused(bool paused)
     {
         if (paused == UserPaused) return;
-        UserPaused = paused;
+        // Kept in the settings (2.3): a pause holds after Hybrid Launcher is closed and started again.
+        AppState.Settings.TrailersPaused = paused;
+        SettingsStore.Save();
         Raise();
     }
 

@@ -785,10 +785,17 @@ public sealed partial class OverviewView : UserControl
         _viewer.Failed += reason =>
         {
             Log.Warn($"Trailer: {reason}");
-            if (_userPicked)
+            // The user's own pick goes to Steam; one the page started falls back to the screenshot, and is not tried again on
+            // a return to the tab.
+            if (_playingByUser)
             {
                 App.Window?.ShowInfo(L.T("This trailer could not be played here. Opening it on Steam instead."));
                 if (_data.Store.IsCompletedSuccessfully && _data.Store.Result is { } s) Ui.Open(s.StoreUrl);
+            }
+            else
+            {
+                _lastTrailer = null;
+                ShowFirstShot();
             }
         };
         Build();
@@ -814,8 +821,6 @@ public sealed partial class OverviewView : UserControl
         "languages" => (_languagesPanel, _languagesPanel, null),
         _ => null,
     };
-
-    bool _userPicked;
 
     static void LayoutPair(Grid grid, bool sideBySide)
     {
@@ -915,6 +920,20 @@ public sealed partial class OverviewView : UserControl
     public void StopTrailer() => _viewer.Stop();
 
     StoreMovie? _pendingTrailer;
+    Border? _pendingThumb;
+    // The first screenshot and its thumbnail: what the page shows while no trailer plays (2.3-rc.2: the page showed it with
+    // the trailer's thumbnail marked, when the trailer was held back, still to come or could not play).
+    Border? _firstShotThumb;
+    string? _firstShotUrl;
+    // Goes up whenever the user picks a thumbnail: a trailer the page started late must not take the mark from their pick.
+    int _pickGen;
+
+    void ShowFirstShot()
+    {
+        if (_firstShotUrl is null || _firstShotThumb is null) return;
+        ShowPicture(_firstShotUrl);
+        Select(_firstShotThumb);
+    }
 
     /// <summary>The overview is on screen (its tab open): the first trailer may start by itself.</summary>
     public bool Live { get; private set; }
@@ -923,12 +942,32 @@ public sealed partial class OverviewView : UserControl
     public void Show()
     {
         Live = true;
-        if (_pendingTrailer is { } movie)
+        if (_pendingTrailer is { } movie && _pendingThumb is { } thumb)
         {
             _pendingTrailer = null;
-            PlayTrailer(movie);
+            _pendingThumb = null;
+            StartTrailer(movie, thumb);
+        }
+        // 2.3-rc.3: back on a page that stopped its trailer (shown again from the cache, or prepared ahead of time and only now
+        // shown): the trailer it showed starts again. Before, only a trailer still waiting started, and a page prepared ahead
+        // (most pages) had its trailer stopped when the preparation ended: it opened on a screenshot.
+        else if (!_viewer.IsPlaying && !_starting && !_onShot && _lastTrailer is { } last && _lastThumb is { } lastThumb
+            && !(HybridLauncher.Helpers.MediaPolicy.UserPaused && _firstShotUrl is not null))
+        {
+            if (_firstShotThumb is not null) Select(_firstShotThumb);
+            StartTrailer(last, lastThumb);
         }
     }
+
+    // The trailer last put in the player (by the page or by the user) and its thumbnail: what a return to the tab plays again.
+    StoreMovie? _lastTrailer;
+    Border? _lastThumb;
+    // The user picked a screenshot: a return to the tab leaves it on screen.
+    bool _onShot;
+    // The page's start of a trailer is on its way (the player is made off the UI thread).
+    bool _starting;
+    // The trailer in the player was picked by the user (not started by the page).
+    bool _playingByUser;
 
     /// <summary>Another tab or game is shown: nothing plays unseen.</summary>
     public void Hide()
@@ -1039,22 +1078,36 @@ public sealed partial class OverviewView : UserControl
         if (store.Screenshots.Count == 0 && store.Movies.Count == 0) return;
         _media.Visibility = Visibility.Visible;
         var movies = store.Movies.Take(8).ToList();
-        foreach (var movie in movies) _thumbs.Add(Thumb(movie.Thumbnail, true, () => { _userPicked = true; PlayTrailer(movie); }));
-        foreach (var shot in store.Screenshots) _thumbs.Add(Thumb(shot.Thumbnail, false, () => ShowPicture(shot.Full)));
-        // First look: the first trailer, playing muted (Steam / Hydra style); the first screenshot when there is none.
-        if (movies.FirstOrDefault(m => m.Hls is not null) is { } first)
+        foreach (var movie in movies)
         {
-            if (store.Screenshots.Count > 0) ShowPicture(store.Screenshots[0].Full);
-            Select(_thumbs[movies.IndexOf(first)].Wrapper);
+            (Border Wrapper, Grid Box) made = default;
+            made = Thumb(movie.Thumbnail, true, () => { _onShot = false; _lastTrailer = movie; _lastThumb = made.Wrapper; PlayTrailer(movie); });
+            _thumbs.Add(made);
+        }
+        foreach (var shot in store.Screenshots) _thumbs.Add(Thumb(shot.Thumbnail, false, () => { _onShot = true; ShowPicture(shot.Full); }));
+        if (store.Screenshots.Count > 0)
+        {
+            _firstShotUrl = store.Screenshots[0].Full;
+            _firstShotThumb = _thumbs[movies.Count].Wrapper;
+        }
+        // First look: the first trailer, playing muted (Steam / Hydra style); the first screenshot when there is none or the
+        // user paused trailers (kept after a restart). The mark goes on the trailer only once it is really in the player:
+        // until then the screenshot is shown and marked.
+        var first = movies.FirstOrDefault(m => m.Hls is not null);
+        if (first is not null && !(HybridLauncher.Helpers.MediaPolicy.UserPaused && _firstShotUrl is not null))
+        {
+            var thumb = _thumbs[movies.IndexOf(first)].Wrapper;
+            if (_firstShotUrl is not null) ShowFirstShot();
+            else Select(thumb);
             // Made ahead of time (the page's idle warm-up) or behind another tab: it starts when the overview is on screen.
-            if (Live) PlayTrailer(first);
-            else _pendingTrailer = first;
+            if (Live) StartTrailer(first, thumb);
+            else
+            {
+                _pendingTrailer = first;
+                _pendingThumb = thumb;
+            }
         }
-        else if (store.Screenshots.Count > 0)
-        {
-            ShowPicture(store.Screenshots[0].Full);
-            Select(_thumbs[movies.Count].Wrapper);
-        }
+        else if (_firstShotUrl is not null) ShowFirstShot();
         else if (store.Movies.Count > 0) ShowPicture(store.Movies[0].Thumbnail);
     }
 
@@ -1075,7 +1128,7 @@ public sealed partial class OverviewView : UserControl
         }
         var frame = new Border { Child = grid, BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent), Padding = new Thickness(1) };
         var button = new Button { Content = frame, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        button.Click += (_, _) => { Select(frame); Ui.Safe(click); };
+        button.Click += (_, _) => { _pickGen++; Select(frame); Ui.Safe(click); };
         // The frame's border and padding (3 px a side) sit outside the picture: the wrapper is what the row lays out.
         var wrapper = new Border { Child = button, Margin = new Thickness(-3) };
         return (wrapper, grid);
@@ -1098,14 +1151,29 @@ public sealed partial class OverviewView : UserControl
         _viewer.ShowPicture(uri, width);
     }
 
-    async void PlayTrailer(StoreMovie movie)
+    /// <summary>The page's own start of the first trailer: its thumbnail is marked once the trailer is in the player.</summary>
+    async void StartTrailer(StoreMovie movie, Border thumb)
+    {
+        int gen = _pickGen;
+        _lastTrailer = movie;
+        _lastThumb = thumb;
+        _starting = true;
+        try { await PlayTrailerAsync(movie, user: false); }
+        finally { _starting = false; }
+        if (gen == _pickGen && _viewer.IsPlaying) Select(thumb);
+    }
+
+    async void PlayTrailer(StoreMovie movie) => await PlayTrailerAsync(movie, user: true);
+
+    async Task PlayTrailerAsync(StoreMovie movie, bool user)
     {
         if (movie.Hls is null || !Uri.TryCreate(movie.Hls, UriKind.Absolute, out var uri)) return;
-        try { await _viewer.PlayAsync(uri, movie.Hls.Contains(".m3u8", StringComparison.OrdinalIgnoreCase), user: _userPicked); }
+        _playingByUser = user;
+        try { await _viewer.PlayAsync(uri, movie.Hls.Contains(".m3u8", StringComparison.OrdinalIgnoreCase), user: user); }
         catch (Exception ex)
         {
             Log.Warn($"Trailer {movie.Name}: {ex.Message}");
-            if (_userPicked) App.Window?.ShowError(L.T("Could not play the trailer"), ex.Message, ex);
+            if (user) App.Window?.ShowError(L.T("Could not play the trailer"), ex.Message, ex);
             _viewer.Stop();
         }
     }

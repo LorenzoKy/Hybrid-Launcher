@@ -253,16 +253,30 @@ public sealed partial class TrailerPlayer : UserControl
             if (hls)
             {
                 var adaptive = await Windows.Media.Streaming.Adaptive.AdaptiveMediaSource.CreateFromUriAsync(uri);
-                source = adaptive.Status == Windows.Media.Streaming.Adaptive.AdaptiveMediaSourceCreationStatus.Success
-                    ? Windows.Media.Core.MediaSource.CreateFromAdaptiveMediaSource(adaptive.MediaSource)
-                    : Windows.Media.Core.MediaSource.CreateFromUri(uri);
+                if (adaptive.Status == Windows.Media.Streaming.Adaptive.AdaptiveMediaSourceCreationStatus.Success)
+                {
+                    // 2.3: from the first frame at the best quality the stream has, as Steam's own page and Hydra do: the
+                    // adaptive source started at its lowest level and climbed for seconds (a blurry start, then steps up). It
+                    // may come down one step on a slow line, not more: a short wait is better than a blurred trailer.
+                    var ms = adaptive.MediaSource;
+                    var rates = ms.AvailableBitrates.OrderByDescending(r => r).ToList();
+                    if (rates.Count > 0)
+                    {
+                        ms.InitialBitrate = rates[0];
+                        ms.DesiredMinBitrate = rates.Count > 1 ? rates[1] : rates[0];
+                    }
+                    source = Windows.Media.Core.MediaSource.CreateFromAdaptiveMediaSource(ms);
+                }
+                else source = Windows.Media.Core.MediaSource.CreateFromUri(uri);
             }
             else source = Windows.Media.Core.MediaSource.CreateFromUri(uri);
             var p = new MediaPlayer();
             // No Windows media flyout for a trailer, and none of the command manager's handlers (their release was the call
             // into the UI thread in that freeze).
             p.CommandManager.IsEnabled = false;
-            p.AutoPlay = start;
+            // 2.3-rc.6: never plays on open. Started at once at the best quality, it ran on less than a second of video and
+            // stuttered while the buffer caught up; it now starts once ~2 s are ready (StartWhenBuffered).
+            p.AutoPlay = false;
             p.Volume = level;
             p.IsMuted = muted;
             p.Source = source;
@@ -291,12 +305,60 @@ public sealed partial class TrailerPlayer : UserControl
         UpdateMute();
         _tick.Start();
         ShowControls();
+        if (start) StartWhenBuffered(player, gen);
+    }
+
+    internal bool SelfTestPlaying => _player?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing;
+    internal string SelfTestState => _player?.PlaybackSession.PlaybackState.ToString() ?? "gone";
+    internal TimeSpan SelfTestPosition => _player?.PlaybackSession.Position ?? TimeSpan.Zero;
+    internal bool SelfTestBigPlayShown => _bigPlay.Visibility == Visibility.Visible;
+
+    /// <summary>Waiting for the buffer before the first frame plays: the big play button stays hidden meanwhile.</summary>
+    bool _priming;
+
+    /// <summary>
+    /// Plays once about two seconds of video are buffered ahead (at most 2.5 s of waiting), unless meanwhile it was replaced,
+    /// paused or played by the user, scrolled out of view or held back by Hybrid Launcher (a game started, the window hidden).
+    /// </summary>
+    void StartWhenBuffered(MediaPlayer player, int gen)
+    {
+        _priming = true;
+        _ = Task.Run(async () =>
+        {
+            var since = System.Diagnostics.Stopwatch.StartNew();
+            while (since.ElapsedMilliseconds < 2500)
+            {
+                await Task.Delay(100);
+                if (gen != _gen) return;
+                try
+                {
+                    var s = player.PlaybackSession;
+                    if (s.PlaybackState is MediaPlaybackState.Playing) return; // the user pressed play
+                    if (s.PlaybackState is MediaPlaybackState.Opening or MediaPlaybackState.None) continue;
+                    var pos = s.Position;
+                    if (s.GetBufferedRanges().Any(r => r.Start <= pos + TimeSpan.FromMilliseconds(200) && r.End - pos >= TimeSpan.FromSeconds(2))) break;
+                }
+                catch { break; }
+            }
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (gen != _gen || _player != player) return;
+                bool waited = _priming;
+                _priming = false;
+                if (!waited || player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing) { UpdatePlayState(); return; }
+                if (Helpers.MediaPolicy.UserPaused || !Helpers.MediaPolicy.MayAutoplay || Resting) { _autoPaused = !Helpers.MediaPolicy.UserPaused; UpdatePlayState(); return; }
+                if (_offscreen) { _offscreenPaused = true; UpdatePlayState(); return; }
+                Log.Info($"Trailer started after {since.ElapsedMilliseconds} ms of buffering");
+                player.Play();
+            });
+        });
     }
 
     /// <summary>Stops a trailer (another picture, another tab or page): its sound must not keep going.</summary>
     public void Stop()
     {
         _gen++;
+        _priming = false;
         _offscreenPaused = false;
         _tick.Stop();
         _hide.Stop();
@@ -324,6 +386,7 @@ public sealed partial class TrailerPlayer : UserControl
     {
         if (_player is null) return;
         _offscreenPaused = false;
+        _priming = false;
         // The user's choice holds for every video of the session, like the trailer's sound.
         _autoPaused = false;
         if (_player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
@@ -359,7 +422,7 @@ public sealed partial class TrailerPlayer : UserControl
         if (_player is null) return;
         bool playing = _player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing;
         ((FontIcon)_play.Content).Glyph = playing ? "" : "";
-        _bigPlay.Visibility = !playing && _player.PlaybackSession.PlaybackState == MediaPlaybackState.Paused ? Visibility.Visible : Visibility.Collapsed;
+        _bigPlay.Visibility = !playing && !_priming && _player.PlaybackSession.PlaybackState == MediaPlaybackState.Paused ? Visibility.Visible : Visibility.Collapsed;
         if (playing) ShowControls();
         else { _hide.Stop(); FadeControls(1); }
     }

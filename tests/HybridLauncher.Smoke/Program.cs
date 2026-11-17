@@ -1063,6 +1063,10 @@ switch (cmd)
             var parsed = AppUpdates.Parse(Release("v99.0.0"));
             Check(parsed?.Version == new Version(99, 0, 0) && parsed.ZipUrl == zip, "release parsed (tag, zip for this processor)");
             Check(AppUpdates.Parse(Release("v99.0.0", draft: true)) is null, "drafts are never offered");
+            // 2.3: achievements in Windows' display language, by Steam's language names.
+            string SteamLang(string c) => HybridLauncher.Core.Achievements.AchievementLanguage.SteamName(System.Globalization.CultureInfo.GetCultureInfo(c));
+            Check(SteamLang("it-IT") == "italian" && SteamLang("pt-BR") == "brazilian" && SteamLang("es-MX") == "latam" && SteamLang("zh-TW") == "tchinese"
+                && SteamLang("ko-KR") == "koreana" && SteamLang("en-GB") == "english" && SteamLang("sw-KE") == "english", "achievement languages map to Steam's names");
             var feed = Path.Combine(dir, "latest.json");
             File.WriteAllText(feed, Release("v0.0.1"));
             Environment.SetEnvironmentVariable("HL_UPDATE_FEED", feed);

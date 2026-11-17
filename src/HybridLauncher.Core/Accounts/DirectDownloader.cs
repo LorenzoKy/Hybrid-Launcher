@@ -186,7 +186,9 @@ public static class DirectDownloader
         {
         foreach (var file in files)
         {
-            if (done.Contains(file.Path) && File.Exists(Full(root, file.Path)) || skipped.Contains(file.Path)) continue;
+            bool finished;
+            lock (stateLock) finished = done.Contains(file.Path);
+            if (finished && File.Exists(Full(root, file.Path)) || skipped.Contains(file.Path)) continue;
             ct.ThrowIfCancellationRequested();
             var path = Full(root, file.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);

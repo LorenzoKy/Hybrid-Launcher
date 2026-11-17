@@ -76,9 +76,10 @@ public static class OwnedCovers
         finally { Gate.Release(); }
     }
 
-    /// <summary>Epic's pictures come at full size (often 2-3 MB): its image server sends them at cover size when asked.</summary>
+    /// <summary>Epic's pictures come at full size (often 2-3 MB): its image server sends them at cover size when asked
+    /// (720 wide since 2.3-rc.2: the library's zoom goes up to 480 px covers).</summary>
     static string Small(string url) =>
-        url.Contains(".epicgames.com/", StringComparison.OrdinalIgnoreCase) && !url.Contains('?') ? url + "?h=660&w=440&resize=1&quality=high" : url;
+        url.Contains(".epicgames.com/", StringComparison.OrdinalIgnoreCase) && !url.Contains('?') ? url + "?h=1080&w=720&resize=1&quality=high" : url;
 
     static string Ext(string url)
     {

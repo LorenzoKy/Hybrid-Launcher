@@ -38,7 +38,7 @@ public static class ConfigSync
     /// <summary>Top-level settings that describe this PC, not the user: never sent, never taken.</summary>
     static readonly HashSet<string> MachineKeys = new(StringComparer.Ordinal)
     {
-        "Version", "SidebarWidth", "WindowWidth", "WindowHeight", "WindowMaximized", "LastGameId", "CacheWarmed", "HdrRestore", "GameTab",
+        "Version", "SidebarWidth", "WindowWidth", "WindowHeight", "WindowMaximized", "LastGameId", "CacheWarmed", "HdrRestore", "LauncherUpdates", "GameTab",
         "SettingsTab", "Accounts", "SteamGridDbKey", "GameLibraries", "CustomGames", "DirectInstalls", "InstallRoot", "InstallRoots", "Cloud",
         "CustomBuildsDir", "ModBackups", "BackupGameFiles", "LocalAchievementFolders", "AchScreenshotDir", "StartWithWindows", "HardwareAcceleration",
         "ModsPathDefaultApplied", "TourSeen", "LastVersionSeen", "FeaturesChosen", "OptiSeen", "UltraPlusSeen", "SkippedAppUpdate",
@@ -516,7 +516,8 @@ public static class ConfigSync
             if (File.Exists(AppInfo.SettingsFile)) return ReadObject(File.ReadAllText(AppInfo.SettingsFile));
         }
         catch (Exception ex) { Log.Warn($"Config sync settings: {ex.Message}"); }
-        return JsonSerializer.SerializeToNode(SettingsStore.Current, HybridJson.Default.AppSettings) as JsonObject ?? new JsonObject();
+        var current = SettingsStore.Current;
+        lock (current) return JsonSerializer.SerializeToNode(current, HybridJson.Default.AppSettings) as JsonObject ?? new JsonObject();
     }
 
     /// <summary>The settings both sides last agreed on (kept with tokenised paths), expanded for this PC; null before the first sync.</summary>

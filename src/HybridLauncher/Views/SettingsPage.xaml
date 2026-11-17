@@ -111,10 +111,20 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Theme" Style="{StaticResource RowHeader}" />
-                        <TextBlock x:Name="PaletteHint" Text="The window's background and accent colour together: Windows (your Windows accent), Total Dark, Dark, Gray or Hybrid." Style="{StaticResource RowDescription}" />
+                        <TextBlock x:Name="PaletteHint" Text="The window's background and accent colour together: Windows (your Windows accent), Total Dark, Dark, Gray, Hybrid or My colours." Style="{StaticResource RowDescription}" />
                     </StackPanel>
                     <ComboBox x:Name="PaletteCombo" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Palette_Changed" />
                 </Grid>
+            </Border>
+            <!-- 2.3: "My colours" is back. Each colour of the theme picked by hand; the chips are made in code (FillMyColours). -->
+            <Border Style="{StaticResource RowStyle}">
+                <StackPanel Spacing="12">
+                    <StackPanel>
+                        <TextBlock Text="My colours" Style="{StaticResource RowHeader}" />
+                        <TextBlock Text="Pick each colour of the theme yourself: the accent, the glow behind the window, the background and the text. Any change switches the theme to My colours. The background always stays dark and the text light, so everything stays readable." Style="{StaticResource RowDescription}" />
+                    </StackPanel>
+                    <Border x:Name="MyColoursHost" />
+                </StackPanel>
             </Border>
             <Border Style="{StaticResource RowStyle}">
                 <Grid ColumnSpacing="16">

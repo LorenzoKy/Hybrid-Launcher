@@ -13,8 +13,8 @@ public static class SettingsKeys
     // What the app writes by itself while merely used: the window, the tab and game opened last, and the "already seen / already done"
     // marks of update checks, notifications and first-start steps (no page shows them).
     static readonly string[] Volatile = ["LastGameId", "GameTab", "SettingsTab", "WindowWidth", "WindowHeight", "WindowMaximized", "SidebarWidth", "LastVersionSeen",
-        "OptiSeen", "UltraPlusSeen", "CacheWarmed", "AppUpdatePopupShown", "SkippedAppUpdate", "TourSeen", "FeaturesChosen", "ModsPathDefaultApplied", "HdrRestore",
-        "Profiles", "ActiveProfile", "SteamGridDbKey",
+        "OptiSeen", "UltraPlusSeen", "CacheWarmed", "AppUpdatePopupShown", "SkippedAppUpdate", "TourSeen", "FeaturesChosen", "ModsPathDefaultApplied", "HdrRestore", "LauncherUpdates",
+        "Profiles", "ActiveProfile", "SteamGridDbKey", "TrailersPaused",
         // Folds are applied in place where they are shown (LibraryPage.ApplyFold, the game page's cards): a fold must not
         // rebuild a whole page (2.1-rc.3 audit). The side list's own filters only redraw the list (2.1-rc.4).
         "CollapsedGroups", "CollapsedCards", "ListFilter", "HiddenFromStats"];
@@ -36,7 +36,9 @@ public static class SettingsKeys
         var parts = new Dictionary<string, int>(StringComparer.Ordinal);
         try
         {
-            if (System.Text.Json.JsonSerializer.SerializeToNode(settings, HybridJson.Default.AppSettings) is JsonObject node)
+            JsonNode? whole;
+            lock (settings) whole = System.Text.Json.JsonSerializer.SerializeToNode(settings, HybridJson.Default.AppSettings);
+            if (whole is JsonObject node)
             {
                 foreach (var name in Volatile) node.Remove(name);
                 if (node["Library"] is JsonObject lib) lib.Remove("TileSize");

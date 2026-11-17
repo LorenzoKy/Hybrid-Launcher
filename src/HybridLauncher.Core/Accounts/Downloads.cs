@@ -263,6 +263,8 @@ public static class Downloads
             {
                 Store = game.Store, Id = game.Id, Name = game.Name, Cover = game.Cover, FromApp = true, Direct = true, State = DownloadState.Waiting,
             };
+            // Already downloading (a second click, an update found meanwhile): that download goes on as it is (2.3).
+            if (job.State == DownloadState.Downloading) return job;
             job.Source = game;
             job.Root = root;
             job.IsUpdate = updateFolder is not null;

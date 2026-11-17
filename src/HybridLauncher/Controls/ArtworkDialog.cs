@@ -11,10 +11,16 @@ using Microsoft.UI.Xaml.Media.Imaging;
 namespace HybridLauncher.Controls;
 
 /// <summary>
-/// "Edit artwork" (2.1), after Hydra Launcher's artwork picker: one tab per picture of the game (cover, banner, logo, icon),
-/// each with SteamGridDB's community pictures in a grid. A click on one makes it the game's at once (a copy in the data folder);
-/// a picture of the user's own works too, and "Use the store's" goes back. The game is matched on SteamGridDB by its Steam id
-/// or its name; "Not this game?" searches another. SteamGridDB needs the user's own free API key: the dialog asks for it once.
+/// "Edit artwork". 2.3: a window almost as large as the app's. On the left the game's four pictures (cover, banner, logo,
+/// icon) with the one being edited shown large, where it comes from and the buttons; on the right SteamGridDB's community
+/// pictures in a grid that fills the rest and scrolls on its own to the end, the next page asked for well before the end.
+/// A click on a picture makes it the game's at once (a copy in the data folder); a picture of the user's own works too, and
+/// "Use the store's" goes back. The game is matched on SteamGridDB by its Steam id or its name; the search finds another.
+/// SteamGridDB needs the user's own free API key: the window asks for it once.
+///
+/// Pictures load fast (2.3): only the rows in view and the next ones ask for their thumbnail, through the app's own
+/// downloader (<see cref="SteamGridDb.ThumbAsync"/>: a few at a time, kept on disk for a month), decoded at the tile's size
+/// and kept in memory for the session, so scrolling back or opening the window again shows them at once.
 /// </summary>
 public static class ArtworkDialog
 {
@@ -22,92 +28,188 @@ public static class ArtworkDialog
     public static Func<bool>? GridFits { get; private set; }
     /// <summary>Self-test: the numbers behind the last <see cref="GridFits"/>.</summary>
     public static string GridFitsDetail { get; private set; } = "";
+    /// <summary>Self-test: scrolls the open dialog's grid to this share of its length (the soft edges show in the picture).</summary>
+    public static Action<double>? ScrollForTest { get; private set; }
 
-    sealed record KindInfo(ArtKind Kind, string Name, string Hint, double TileW, double TileH, Stretch Stretch);
+    sealed record KindInfo(ArtKind Kind, string Name, string Hint, string Glyph, double TileW, double TileH, Stretch Stretch);
 
     static readonly KindInfo[] Kinds =
     [
-        new(ArtKind.Cover, "Cover", "The library tile (portrait, 2:3)", 132, 198, Stretch.UniformToFill),
-        new(ArtKind.Banner, "Banner", "The wide picture at the top of the game's page", 300, 97, Stretch.UniformToFill),
-        new(ArtKind.Logo, "Logo", "The title drawn on the banner", 196, 92, Stretch.Uniform),
-        new(ArtKind.Icon, "Icon", "The small picture in the game list", 76, 76, Stretch.Uniform),
+        new(ArtKind.Cover, "Cover", "The library tile (portrait, 2:3)", "", 140, 210, Stretch.UniformToFill),
+        new(ArtKind.Banner, "Banner", "The wide picture at the top of the game's page", "", 300, 97, Stretch.UniformToFill),
+        new(ArtKind.Logo, "Logo", "The title drawn on the banner", "", 196, 98, Stretch.Uniform),
+        new(ArtKind.Icon, "Icon", "The small picture in the game list", "", 84, 84, Stretch.Uniform),
     ];
+
+    /// <summary>One picture of the grid: its image, filled only once its row comes near the view.</summary>
+    sealed class Slot(Image image, string thumb)
+    {
+        public Image Image { get; } = image;
+        public string Thumb { get; } = thumb;
+        public bool Requested;
+    }
+
+    // Thumbnails decoded this session, by address and size: a tab or the window opened again shows them in the first frame.
+    static readonly Dictionary<string, BitmapImage> Decoded = new(StringComparer.Ordinal);
+    static readonly Queue<string> DecodedOrder = new();
+    const int DecodedMax = 600;
+
+    static void Remember(string key, BitmapImage image)
+    {
+        if (Decoded.ContainsKey(key)) return;
+        Decoded[key] = image;
+        DecodedOrder.Enqueue(key);
+        while (DecodedOrder.Count > DecodedMax) Decoded.Remove(DecodedOrder.Dequeue());
+    }
+
+    const double Gap = 12, PageSize = 50, PreviewHeight = 128, FadeTop = 36, FadeBottom = 52;
 
     public static async Task ShowAsync(XamlRoot root, ElementTheme theme, Game game, ArtKind start = ArtKind.Cover)
     {
-        double width = Math.Clamp(root.Size.Width - 120, 420, 1000);
-        double height = Math.Max(300, root.Size.Height - 300);
+        // 2.3, after Hydra's: one column, as wide as a comfortable read and no wider: the pictures' tabs, the picture in use
+        // (click it to choose a file of your own, or drop one on it; your own one clicked goes back to the store's), then
+        // SteamGridDB's pictures filling the rest of the height.
+        // 2.3-rc.2: larger (it was at most 1040 x 900 with wide margins round it): up to 1560 x 1280.
+        double width = Math.Clamp(root.Size.Width - 96, 600, 1560);
+        double height = Math.Clamp(root.Size.Height - 48, 480, 1280);
+        double scale = root.RasterizationScale > 0 ? root.RasterizationScale : 1;
         var cts = new CancellationTokenSource();
         var kind = Kinds.First(k => k.Kind == start);
         SgdbGame? match = null;
         int page = 0;
+        bool hasMore = false;
         string? steamAppId = game.SteamAppId;
+        ContentDialog? dialog = null;
 
-        var panel = new StackPanel { Spacing = 16, Width = width };
         var accent = Ui.Brush("AccentFillColorDefaultBrush");
+        var accentColor = (accent as SolidColorBrush)?.Color ?? Windows.UI.Color.FromArgb(0xFF, 0xF0, 0x5A, 0x64);
+        var accentSoft = new SolidColorBrush(Windows.UI.Color.FromArgb(0x38, accentColor.R, accentColor.G, accentColor.B));
+        var onAccent = Ui.Brush("TextOnAccentFillColorPrimaryBrush");
         var muted = Ui.Brush("TextFillColorSecondaryBrush");
+        var subtle = Ui.Brush("SubtleFillColorSecondaryBrush");
+        var card = Ui.Brush("CardBackgroundFillColorDefaultBrush");
         var floor = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x16, 0x16, 0x1B));
         var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
-        // 2.1-rc.9, after Hydra's: the four pictures as pills, a large preview of the one in use with where it comes from, then
-        // SteamGridDB's pictures in a grid that fills the width, the one picked ringed in the accent.
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var tabButtons = new List<Button>();
+        // No padding at the foot (2.3-rc.2): the grid runs to the window's bottom edge and fades out there, no empty band under it.
+        var rootGrid = new Grid { Width = width, Height = height, Padding = new Thickness(24, 20, 8, 0), RowSpacing = 14 };
+        for (int i = 0; i < 7; i++) rootGrid.RowDefinitions.Add(new RowDefinition { Height = i == 6 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
+        void Place(FrameworkElement e, int row, Thickness? margin = null)
+        {
+            Grid.SetRow(e, row);
+            e.Margin = margin ?? new Thickness(0, 0, 16, 0);
+            rootGrid.Children.Add(e);
+        }
+
+        // Row 0: the title and Done.
+        var head = new Grid { ColumnSpacing = 12 };
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titles = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
+        titles.Children.Add(new TextBlock { Text = L.T("Artwork").ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, CharacterSpacing = 80, Foreground = muted });
+        titles.Children.Add(new TextBlock { Text = game.Title, FontSize = 20, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        head.Children.Add(titles);
+        var done = new Button { Content = L.T("Done"), Style = Ui.Style("AccentButtonStyle"), MinWidth = 96, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(done, 1);
+        head.Children.Add(done);
+        Place(head, 0);
+
+        // Row 1: the four pictures as tabs, each saying where its picture comes from.
+        var tabs = new Grid { ColumnSpacing = 8 };
+        var kindRows = new List<(KindInfo Info, Button Button, Border GlyphBox, FontIcon Glyph, TextBlock Source)>();
         foreach (var k in Kinds)
         {
-            var b = new Button
+            tabs.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var glyph = new FontIcon { Glyph = k.Glyph, FontSize = 14 };
+            var glyphBox = new Border { Width = 30, Height = 30, CornerRadius = new CornerRadius(8), Background = subtle, Child = glyph };
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = L.T(k.Name), FontWeight = FontWeights.SemiBold });
+            var source = new TextBlock { FontSize = 11, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis };
+            text.Children.Add(source);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            row.Children.Add(glyphBox);
+            row.Children.Add(text);
+            var button = new Button
             {
-                Content = L.T(k.Name), Tag = k.Kind, CornerRadius = new CornerRadius(16), Padding = new Thickness(16, 6, 16, 7),
-                BorderThickness = new Thickness(0), FontWeight = FontWeights.SemiBold,
+                Content = row, Tag = k.Kind, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(8, 7, 10, 7), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(0), Background = card,
             };
-            tabButtons.Add(b);
-            tabs.Children.Add(b);
+            Grid.SetColumn(button, tabs.Children.Count);
+            tabs.Children.Add(button);
+            kindRows.Add((k, button, glyphBox, glyph, source));
         }
-        panel.Children.Add(tabs);
+        Place(tabs, 1);
 
-        // The picture in use: a large preview on a dark floor, its name, where it comes from, and the buttons.
-        var nowPic = new Border { CornerRadius = new CornerRadius(8), Background = floor, VerticalAlignment = VerticalAlignment.Center };
-        var nowTitle = new TextBlock { FontSize = 18, FontWeight = FontWeights.SemiBold };
-        var nowHint = new TextBlock { Foreground = muted, TextWrapping = TextWrapping.Wrap };
+        // Row 2: the picture in use. A click on it chooses a file (or, for your own picture, goes back to the store's); a picture
+        // dropped on it is used as it is.
+        var nowPic = new Border { CornerRadius = new CornerRadius(10), Background = floor, Height = PreviewHeight };
+        var overlayIcon = new FontIcon { Glyph = "", FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
+        var overlayText = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        var overlayStack = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8) };
+        overlayStack.Children.Add(overlayIcon);
+        overlayStack.Children.Add(overlayText);
+        var overlay = new Border
+        {
+            CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xA8, 0x0C, 0x0C, 0x10)), Opacity = 0, IsHitTestVisible = false,
+            OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(120) }, Child = overlayStack,
+        };
+        var dropZone = new Grid();
+        dropZone.Children.Add(nowPic);
+        dropZone.Children.Add(overlay);
+        var pickButton = new Button { Content = dropZone, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = clear, CornerRadius = new CornerRadius(10), AllowDrop = true, VerticalAlignment = VerticalAlignment.Top };
+        pickButton.PointerEntered += (_, _) => overlay.Opacity = 1;
+        pickButton.PointerExited += (_, _) => overlay.Opacity = 0;
+        pickButton.GotFocus += (_, _) => { if (pickButton.FocusState == FocusState.Keyboard) overlay.Opacity = 1; };
+        pickButton.LostFocus += (_, _) => overlay.Opacity = 0;
+
         var nowSourceText = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold };
         var nowSource = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(9, 2, 9, 3), HorizontalAlignment = HorizontalAlignment.Left, Child = nowSourceText };
+        var nowHint = new TextBlock { Foreground = muted, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         var own = new Button { Content = L.T("Choose a file…"), Style = Ui.Style("AccentButtonStyle") };
         var reset = new Button { Content = L.T("Use the store's") };
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        buttons.Children.Add(own);
-        buttons.Children.Add(reset);
-        var nowText = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 6 };
-        nowText.Children.Add(nowTitle);
+        var nowButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        nowButtons.Children.Add(own);
+        nowButtons.Children.Add(reset);
+        var nowText = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         nowText.Children.Add(nowSource);
         nowText.Children.Add(nowHint);
-        nowText.Children.Add(buttons);
-        var nowRow = new Grid { ColumnSpacing = 20 };
+        nowText.Children.Add(nowButtons);
+        nowText.Children.Add(new TextBlock { Text = L.T("Or drop a picture on the preview."), FontSize = 12, Foreground = muted });
+        var nowRow = new Grid { ColumnSpacing = 20, Padding = new Thickness(14), CornerRadius = new CornerRadius(12), Background = card };
         nowRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         nowRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        nowRow.Children.Add(nowPic);
+        nowRow.Children.Add(pickButton);
         Grid.SetColumn(nowText, 1);
         nowRow.Children.Add(nowText);
-        panel.Children.Add(new Border
-        {
-            Background = Ui.Brush("CardBackgroundFillColorDefaultBrush"), CornerRadius = new CornerRadius(12), Padding = new Thickness(16), Child = nowRow,
-        });
+        Place(nowRow, 2);
 
-        // SteamGridDB: the game it was matched to, and a search for another.
-        var sgdbHead = new Grid { ColumnSpacing = 12 };
+        // Row 3: SteamGridDB, the game it was matched to, the credit, the key and a search for another (2.3-rc.2: the credit and
+        // the key had a row of their own under the grid, an empty band at the foot of the window).
+        var sgdbHead = new Grid { ColumnSpacing = 8 };
         sgdbHead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        sgdbHead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Min(320, width * 0.4)) });
-        var sgdbTitle = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-        sgdbTitle.Children.Add(new TextBlock { Text = L.T("From SteamGridDB"), FontSize = 15, FontWeight = FontWeights.SemiBold });
+        sgdbHead.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        sgdbHead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Min(300, width * 0.36)) });
+        var title = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
+        title.Children.Add(new TextBlock { Text = L.T("From SteamGridDB"), FontSize = 16, FontWeight = FontWeights.SemiBold });
         var matchText = new TextBlock { Foreground = muted, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
-        sgdbTitle.Children.Add(matchText);
-        sgdbHead.Children.Add(sgdbTitle);
+        title.Children.Add(matchText);
+        title.Children.Add(new TextBlock { Text = L.T("Pictures by the SteamGridDB community."), FontSize = 11, Foreground = muted, Opacity = 0.8 });
+        sgdbHead.Children.Add(title);
+        var changeKey = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE8D7", FontSize = 14 }, Padding = new Thickness(9, 8, 9, 8), Background = clear, BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(changeKey, L.T("Change the SteamGridDB key"));
+        Grid.SetColumn(changeKey, 1);
+        sgdbHead.Children.Add(changeKey);
         var search = new AutoSuggestBox { PlaceholderText = L.T("Search another game"), QueryIcon = new SymbolIcon(Symbol.Find), VerticalAlignment = VerticalAlignment.Center };
         ToolTipService.SetToolTip(search, L.T("Not this game? Search SteamGridDB"));
-        Grid.SetColumn(search, 1);
+        Grid.SetColumn(search, 2);
         sgdbHead.Children.Add(search);
-        panel.Children.Add(sgdbHead);
+        Place(sgdbHead, 3, new Thickness(0, 6, 16, 0));
 
-        // The key, asked for once.
+        // Row 4: the key, asked for once.
         var keyBox = new PasswordBox { PlaceholderText = L.T("Paste your SteamGridDB API key"), Width = Math.Min(340, width * 0.45) };
         var keySave = new Button { Content = L.T("Save key"), Style = Ui.Style("AccentButtonStyle") };
         var keyLink = new HyperlinkButton { Content = L.T("Get a free key"), NavigateUri = new Uri(SteamGridDb.KeyPage) };
@@ -122,69 +224,67 @@ public static class ArtworkDialog
             TextWrapping = TextWrapping.Wrap, Style = Ui.Style("RowDescription"),
         });
         keyPanel.Children.Add(keyRow);
-        panel.Children.Add(keyPanel);
+        Place(keyPanel, 4);
 
-        // The pictures: as many columns as fit, each tile as wide as the row allows (no ragged gap on the right).
-        const double Gap = 12;
-        double gridWidth = width - 16;
+        // Row 5: a message (no key, nothing found, an error).
         var status = new TextBlock { Style = Ui.Style("RowDescription"), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-        panel.Children.Add(status);
+        Place(status, 5);
+
+        // Row 6: the grid, as many columns as fit, each tile as wide as the row allows. Below it, while SteamGridDB has more, a row
+        // that stays the same height whether the next page is coming or not: the grid only ever grows under the view (2.3: the
+        // last rows were cut and scrolling jumped as placeholders came and went at the end).
+        double gridWidth = width - 24 - 8 - 16 - 2;
         var wrap = new WrapPanel(Gap, []);
-        var more = new Button { Content = L.T("More"), HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0) };
-        var gridPanel = new StackPanel { Spacing = 6 };
+        var loader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, Height = 64, Visibility = Visibility.Collapsed, Padding = new Thickness(0, 20, 0, 0) };
+        loader.Children.Add(new ProgressRing { IsActive = true, Width = 18, Height = 18 });
+        loader.Children.Add(new TextBlock { Text = L.T("Loading more pictures…"), Foreground = muted, VerticalAlignment = VerticalAlignment.Center });
+        // Room at the top and the foot of the content (2.3-rc.2): at rest the first row starts clear of the top fade and the last
+        // one ends clear of the bottom fade; in between, rows pass softly under both instead of being cut by a hard edge.
+        var gridPanel = new StackPanel { Margin = new Thickness(0, FadeTop * 0.5, 16, FadeBottom) };
         gridPanel.Children.Add(wrap);
-        gridPanel.Children.Add(more);
-        var scroller = new ScrollViewer { Content = gridPanel, Height = height, Padding = new Thickness(0, 4, 16, 0) };
-        panel.Children.Add(scroller);
-        // The app's own smooth wheel (2.1.4), and the next page asked for on its own near the end.
-        SmoothWheel.Attach(scroller);
+        gridPanel.Children.Add(loader);
+        // A ScrollView moved by the compositor (2.3-rc.2), as the pages are: the wheel glides at the display's refresh even
+        // while tiles are added or pictures decode on the UI thread (the ScrollViewer stepped from the UI thread and hitched).
+        var scroller = new ScrollView
+        {
+            Content = gridPanel, HorizontalScrollMode = ScrollingScrollMode.Disabled, ContentOrientation = ScrollingContentOrientation.Vertical,
+            VerticalScrollBarVisibility = ScrollingScrollBarVisibility.Auto,
+        };
+        CompositorWheel.Attach(scroller);
+        // The soft edges: the window's own colour fading into the grid, shown only where there is more to scroll to.
+        var fadeTop = new Border { Height = FadeTop, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false, Opacity = 0, Margin = new Thickness(0, 0, 16, 0), OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) } };
+        var fadeBottom = new Border { Height = FadeBottom, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false, Opacity = 0, Margin = new Thickness(0, 0, 16, 0), OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) } };
+        var gridCell = new Grid();
+        gridCell.Children.Add(scroller);
+        gridCell.Children.Add(fadeTop);
+        gridCell.Children.Add(fadeBottom);
+        Place(gridCell, 6, new Thickness(0, -10, 0, 0));
+        void PaintFades(Windows.UI.Color c)
+        {
+            LinearGradientBrush Fade(bool down)
+            {
+                var b = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
+                // Eased (more stops than two): a straight ramp shows a faint line where it ends.
+                for (int i = 0; i <= 6; i++)
+                {
+                    double t = i / 6.0, a = Math.Pow(1 - t, 2.2);
+                    b.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb((byte)Math.Round(c.A * a), c.R, c.G, c.B), Offset = down ? t : 1 - t });
+                }
+                return b;
+            }
+            fadeTop.Background = Fade(true);
+            fadeBottom.Background = Fade(false);
+        }
+        void UpdateFades()
+        {
+            fadeTop.Opacity = scroller.VerticalOffset > 2 ? 1 : 0;
+            fadeBottom.Opacity = scroller.ScrollableHeight - scroller.VerticalOffset > 2 ? 1 : 0;
+        }
+
         bool loading = false;
         int run = 0;
+        var slots = new List<Slot>();
         var skeletons = new List<FrameworkElement>();
-        scroller.ViewChanged += (_, _) =>
-        {
-            if (!loading && more.Visibility == Visibility.Visible && scroller.VerticalOffset > scroller.ScrollableHeight - 600) _ = LoadAsync(true);
-        };
-
-        // The grid takes what the dialog shows below the rest (2.1.4): a fixed "window minus 300" was taller than that, so the
-        // dialog's own scroller hid the grid's last row and the grid could not be scrolled to its end.
-        bool outerHooked = false;
-        void Fit()
-        {
-            ScrollViewer? outer = null;
-            for (DependencyObject? d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(panel); d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
-                if (d is ScrollViewer sv) { outer = sv; break; }
-            if (outer is null || outer.ViewportHeight <= 0) return;
-            if (!outerHooked) { outerHooked = true; outer.SizeChanged += (_, _) => Fit(); }
-            // Where the grid starts inside what the dialog shows (its title, padding and the rows above it), and what follows it.
-            double top = scroller.TransformToVisual(outer).TransformPoint(new Windows.Foundation.Point(0, 0)).Y + outer.VerticalOffset;
-            double after = 0;
-            bool below = false;
-            foreach (var child in panel.Children)
-            {
-                if (child == scroller) { below = true; continue; }
-                if (below && child.Visibility == Visibility.Visible && child is FrameworkElement fe) after += fe.ActualHeight + panel.Spacing;
-            }
-            double fit = Math.Floor(outer.ViewportHeight - top - after - 4);
-            // A very short window keeps a usable grid and lets the dialog scroll as before.
-            bool fits = fit >= 200;
-            fit = Math.Max(200, fit);
-            if (Math.Abs(scroller.Height - fit) >= 1) scroller.Height = fit;
-            outer.VerticalScrollBarVisibility = fits ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-        }
-        panel.Loaded += (_, _) => Fit();
-        GridFits = () =>
-        {
-            for (DependencyObject? d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(panel); d is not null; d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d))
-                if (d is ScrollViewer sv)
-                {
-                    var bottom = scroller.TransformToVisual(sv).TransformPoint(new Windows.Foundation.Point(0, scroller.ActualHeight)).Y;
-                    GridFitsDetail = $"grid bottom {bottom:0}, viewport {sv.ViewportHeight:0}, scrollable {sv.ScrollableHeight:0}, grid {scroller.ActualHeight:0}";
-                    return bottom <= sv.ViewportHeight + 1 && sv.ScrollableHeight < 1;
-                }
-            return false;
-        };
-        foreach (var child in panel.Children) if (child != scroller && child is FrameworkElement fe) fe.SizeChanged += (_, _) => Fit();
 
         (double W, double H) TileSize()
         {
@@ -192,6 +292,7 @@ public static class ArtworkDialog
             double w = Math.Floor((gridWidth - Gap * (cols - 1)) / cols);
             return (w, Math.Round(w * kind.TileH / kind.TileW));
         }
+        int Columns() => Math.Max(1, (int)((gridWidth + Gap) / (TileSize().W + Gap)));
 
         void Status(string? text)
         {
@@ -199,88 +300,110 @@ public static class ArtworkDialog
             status.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        void ShowTabs()
+        // A thumbnail for a tile: from this session's memory at once, else the disk copy or a download, then decoded at the
+        // tile's size off the UI thread (BitmapImage decodes on its own).
+        async void Fill(Slot slot, double tileWidth)
         {
-            foreach (var b in tabButtons)
+            slot.Requested = true;
+            int px = (int)Math.Ceiling(tileWidth * scale);
+            var key = slot.Thumb + "|" + px;
+            if (Decoded.TryGetValue(key, out var ready))
             {
-                bool on = b.Tag is ArtKind k && k == kind.Kind;
-                b.Background = on ? accent : Ui.Brush("SubtleFillColorSecondaryBrush");
-                b.Foreground = on ? Ui.Brush("TextOnAccentFillColorPrimaryBrush") : Ui.Brush("TextFillColorPrimaryBrush");
+                slot.Image.Source = ready;
+                slot.Image.Opacity = 1;
+                return;
             }
+            string? file = null;
+            try { file = await Task.Run(() => SteamGridDb.ThumbAsync(slot.Thumb, cts.Token)); }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { Log.Info($"SteamGridDB thumbnail: {ex.Message}"); }
+            if (cts.IsCancellationRequested) return;
+            var bitmap = new BitmapImage { DecodePixelWidth = px };
+            bitmap.ImageOpened += (_, _) =>
+            {
+                Remember(key, bitmap);
+                Motion.FadeIn(slot.Image, 160);
+            };
+            try { bitmap.UriSource = new Uri(file ?? slot.Thumb); }
+            catch (UriFormatException) { return; }
+            slot.Image.Source = bitmap;
         }
 
-        void ShowNow()
+        // The rows in view, one above and two screens below ask for their pictures (in that order); the rest wait.
+        void Realize()
         {
-            var path = ArtOverrides.Get(game.Id, kind.Kind);
-            nowTitle.Text = L.T(kind.Name);
-            nowHint.Text = L.T(kind.Hint) + ".";
-            bool mine = path is not null;
-            nowSourceText.Text = mine ? L.T("Your pick") : L.T("From the store");
-            nowSourceText.Foreground = mine ? Ui.Brush("TextOnAccentFillColorPrimaryBrush") : Ui.Brush("TextFillColorPrimaryBrush");
-            nowSource.Background = mine ? accent : Ui.Brush("SubtleFillColorSecondaryBrush");
-            reset.IsEnabled = mine;
-            // Large enough to judge it: the banner wide, the cover tall, the logo and icon on their floor.
-            double h = kind.Kind switch { ArtKind.Banner => 120, ArtKind.Cover => 150, ArtKind.Logo => 100, _ => 96 };
-            double w = Math.Min(Math.Round(h * kind.TileW / kind.TileH), width * 0.5);
-            h = Math.Round(w * kind.TileH / kind.TileW);
-            nowPic.Width = w;
-            nowPic.Height = h;
-            nowPic.Child = path is null ? new FontIcon { Glyph = "", FontSize = 22, Opacity = 0.45 }
-                : new Image { Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = (int)(w * 2) }, Stretch = kind.Stretch, Margin = kind.Stretch == Stretch.Uniform ? new Thickness(8) : new Thickness(0) };
+            if (slots.Count == 0) return;
+            var (tw, th) = TileSize();
+            int cols = Columns();
+            double rowH = th + Gap;
+            double top = scroller.VerticalOffset - rowH;
+            double bottom = scroller.VerticalOffset + Math.Max(scroller.ViewportHeight, 400) * 2;
+            int first = Math.Max(0, (int)Math.Floor(top / rowH)) * cols;
+            int last = Math.Min(slots.Count - 1, ((int)Math.Ceiling(bottom / rowH) + 1) * cols - 1);
+            for (int i = first; i <= last; i++) if (!slots[i].Requested) Fill(slots[i], tw);
         }
 
-        FrameworkElement Tile(SgdbAsset asset)
+        scroller.ViewChanged += (_, _) =>
+        {
+            Realize();
+            UpdateFades();
+            // The next page is asked for a screen and a half before the end, so it is there when the view gets there.
+            if (hasMore && !loading && scroller.VerticalOffset > scroller.ScrollableHeight - scroller.ViewportHeight * 1.5) _ = LoadAsync(true);
+        };
+        scroller.SizeChanged += (_, _) => { Realize(); UpdateFades(); };
+        gridPanel.SizeChanged += (_, _) => UpdateFades();
+
+        (FrameworkElement Tile, Slot Slot) Tile(SgdbAsset asset)
         {
             var (tw, th) = TileSize();
-            var image = new Image { Stretch = kind.Stretch, Opacity = 0, Margin = kind.Stretch == Stretch.Uniform ? new Thickness(10) : new Thickness(0) };
-            image.Source = new BitmapImage { UriSource = new Uri(asset.Thumb), DecodePixelWidth = (int)(tw * 1.5) };
-            image.ImageOpened += (_, _) => Motion.FadeIn(image, 200);
+            var image = new Image { Stretch = kind.Stretch, Opacity = 0, Margin = kind.Stretch == Stretch.Uniform ? new Thickness(12) : new Thickness(0) };
             var busy = new ProgressRing { IsActive = false, Width = 24, Height = 24 };
-            var radius = new CornerRadius(kind.Kind == ArtKind.Icon ? 14 : 10);
+            var radius = new CornerRadius(kind.Kind == ArtKind.Icon ? 16 : 10);
             var face = new Grid { Width = tw, Height = th, CornerRadius = radius, Background = floor };
             face.Children.Add(image);
             face.Children.Add(busy);
-            // A lighter wash under the pointer, and the accent ring of the picture picked, both over the picture.
             var wash = new Border { CornerRadius = radius, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)), Opacity = 0, IsHitTestVisible = false, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(120) } };
             var picked = new Grid { Visibility = Visibility.Collapsed, IsHitTestVisible = false, Tag = "picked" };
             picked.Children.Add(new Border { CornerRadius = radius, BorderBrush = accent, BorderThickness = new Thickness(3) });
             var check = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Background = accent, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8) };
-            check.Child = new FontIcon { Glyph = "", FontSize = 13, Foreground = Ui.Brush("TextOnAccentFillColorPrimaryBrush") };
+            check.Child = new FontIcon { Glyph = "", FontSize = 13, Foreground = onAccent };
             picked.Children.Add(check);
             face.Children.Add(wash);
-            // Who made it, over the foot of the picture while the pointer is on it.
+            // Who made it and its size, over the foot of the picture while the pointer is on it.
             UIElement? caption = null;
-            if (asset.Author is { Length: > 0 } author && th >= 90)
+            if (th >= 80)
             {
                 var shade = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(0, 1) };
                 shade.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0, 0, 0, 0), Offset = 0 });
                 shade.GradientStops.Add(new GradientStop { Color = Windows.UI.Color.FromArgb(0xCC, 0, 0, 0), Offset = 1 });
-                var foot = new Border
+                var text = new StackPanel { Spacing = 0 };
+                if (asset.Author is { Length: > 0 } author)
+                    text.Children.Add(new TextBlock { Text = L.F("by {0}", author), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), TextTrimming = TextTrimming.CharacterEllipsis });
+                text.Children.Add(new TextBlock { Text = $"{asset.Width} × {asset.Height}", FontSize = 11, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)) });
+                var footBar = new Border
                 {
                     VerticalAlignment = VerticalAlignment.Bottom, Padding = new Thickness(10, 18, 10, 8), Background = shade, CornerRadius = new CornerRadius(0, 0, radius.BottomRight, radius.BottomLeft),
-                    Opacity = 0, IsHitTestVisible = false, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) },
-                    Child = new TextBlock { Text = L.F("by {0}", author), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), TextTrimming = TextTrimming.CharacterEllipsis },
+                    Opacity = 0, IsHitTestVisible = false, OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) }, Child = text,
                 };
-                face.Children.Add(foot);
-                caption = foot;
+                face.Children.Add(footBar);
+                caption = footBar;
             }
             face.Children.Add(picked);
             face.ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(150) };
             var button = new Button { Content = face, Padding = new Thickness(0), CornerRadius = radius, BorderThickness = new Thickness(0), Background = clear };
             ToolTipService.SetToolTip(button, asset.Author is { } by ? L.F("{0} × {1}, by {2}", asset.Width, asset.Height, by) : $"{asset.Width} × {asset.Height}");
-            button.PointerEntered += (_, _) =>
+            void Hover(bool on)
             {
-                wash.Opacity = 1;
-                if (caption is not null) caption.Opacity = 1;
+                wash.Opacity = on ? 1 : 0;
+                if (caption is not null) caption.Opacity = on ? 1 : 0;
                 face.CenterPoint = new((float)(tw / 2), (float)(th / 2), 0);
-                face.Scale = new(1.03f, 1.03f, 1);
-            };
-            button.PointerExited += (_, _) =>
-            {
-                wash.Opacity = 0;
-                if (caption is not null) caption.Opacity = 0;
-                face.Scale = new(1, 1, 1);
-            };
+                face.Scale = on ? new(1.03f, 1.03f, 1) : new(1, 1, 1);
+            }
+            button.PointerEntered += (_, _) => Hover(true);
+            button.PointerExited += (_, _) => Hover(false);
+            // A controller or the keyboard on a tile shows it the same way.
+            button.GotFocus += (_, _) => { if (button.FocusState == FocusState.Keyboard) Hover(true); };
+            button.LostFocus += (_, _) => Hover(false);
             // The tile's own kind: a tab changed while its picture downloads must not file it under the new tab's kind (2.1-rc.3 audit).
             var tileKind = kind;
             button.Click += async (_, _) =>
@@ -309,7 +432,7 @@ public static class ArtworkDialog
                     button.IsEnabled = true;
                 }
             };
-            return button;
+            return (button, new Slot(image, asset.Thumb));
         }
 
         void ClearPicked()
@@ -319,14 +442,14 @@ public static class ArtworkDialog
                     foreach (var r in g.Children.OfType<Grid>().Where(x => x.Tag as string == "picked")) r.Visibility = Visibility.Collapsed;
         }
 
-        // Placeholders the size of the tiles while SteamGridDB answers (2.1.4), gently pulsing; replaced by the pictures.
+        // Placeholders the size of the tiles while SteamGridDB answers the first page, gently pulsing.
         void ShowSkeletons(int count)
         {
             var (tw, th) = TileSize();
-            var radius = new CornerRadius(kind.Kind == ArtKind.Icon ? 14 : 10);
+            var radius = new CornerRadius(kind.Kind == ArtKind.Icon ? 16 : 10);
             for (int i = 0; i < count; i++)
             {
-                var sk = new Border { Width = tw, Height = th, CornerRadius = radius, Background = Ui.Brush("SubtleFillColorSecondaryBrush"), IsHitTestVisible = false };
+                var sk = new Border { Width = tw, Height = th, CornerRadius = radius, Background = subtle, IsHitTestVisible = false };
                 Motion.Pulse(sk);
                 skeletons.Add(sk);
                 wrap.Children.Add(sk);
@@ -337,35 +460,44 @@ public static class ArtworkDialog
             foreach (var sk in skeletons) wrap.Children.Remove(sk);
             skeletons.Clear();
         }
-        int Columns() => Math.Max(1, (int)((gridWidth + Gap) / (TileSize().W + Gap)));
 
         async Task LoadAsync(bool append)
         {
             int mine = ++run;
             loading = true;
-            HideSkeletons();
-            if (!append) { wrap.Children.Clear(); page = 0; scroller.ChangeView(null, 0, null, true); }
-            // "More" asks for the next page; the page count moves only once it came (a failed try is not skipped).
-            int wanted = append ? page + 1 : 0;
-            more.Visibility = Visibility.Collapsed;
-            Status(null);
-            if (!SteamGridDb.HasKey)
-            {
-                keyPanel.Visibility = Visibility.Visible;
-                matchText.Text = "";
-                search.IsEnabled = false;
-                return;
-            }
-            keyPanel.Visibility = Visibility.Collapsed;
-            search.IsEnabled = true;
-            ShowSkeletons(Columns() * (append ? 1 : 3));
             try
             {
+                HideSkeletons();
+                if (!append)
+                {
+                    wrap.Children.Clear();
+                    slots.Clear();
+                    page = 0;
+                    hasMore = false;
+                    scroller.ScrollTo(0, 0, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+                }
+                // The next page is asked for; the page count moves only once it came (a failed try is not skipped).
+                int wanted = append ? page + 1 : 0;
+                Status(null);
+                if (!SteamGridDb.HasKey)
+                {
+                    keyPanel.Visibility = Visibility.Visible;
+                    matchText.Text = "";
+                    search.IsEnabled = false;
+                    hasMore = false;
+                    return;
+                }
+                search.IsEnabled = true;
+                if (!append)
+                {
+                    keyPanel.Visibility = Visibility.Collapsed;
+                    ShowSkeletons(Columns() * 4);
+                }
                 if (match is null)
                 {
                     // A game matched by hand before needs no Steam app id (that look-up can take a while).
-                    bool picked = AppState.Settings.Games.TryGetValue(game.Id, out var pgs) && pgs.SgdbGameId is not null;
-                    if (!picked) steamAppId ??= await GameInfo.SteamAppIdAsync(game, cts.Token);
+                    bool chosen = AppState.Settings.Games.TryGetValue(game.Id, out var pgs) && pgs.SgdbGameId is not null;
+                    if (!chosen) steamAppId ??= await GameInfo.SteamAppIdAsync(game, cts.Token);
                     match = await SteamGridDb.FindAsync(game, steamAppId, cts.Token);
                     // The other tabs' pictures are asked meanwhile: switching shows them at once.
                     if (match is not null) SteamGridDb.Prefetch(match.Id);
@@ -382,14 +514,23 @@ public static class ArtworkDialog
                 if (mine != run) return;
                 page = wanted;
                 HideSkeletons();
-                // Added in turns of a row or two (docs/snappy.md: big content in turns), each turn on its own frame.
+                // Added in turns of a couple of rows (docs/snappy.md: big content in turns), each turn on its own frame; the
+                // rows in view ask for their pictures as soon as they are there.
                 int turn = Math.Max(6, Columns() * 2), added = 0;
                 foreach (var a in assets)
                 {
-                    wrap.Children.Add(Tile(a));
-                    if (++added % turn == 0) { await Task.Delay(16); if (mine != run) return; }
+                    var (tile, slot) = Tile(a);
+                    wrap.Children.Add(tile);
+                    slots.Add(slot);
+                    if (++added % turn == 0)
+                    {
+                        Realize();
+                        await Task.Delay(16, cts.Token);
+                        if (mine != run) return;
+                    }
                 }
-                more.Visibility = assets.Count >= 50 ? Visibility.Visible : Visibility.Collapsed;
+                hasMore = assets.Count >= PageSize;
+                Realize();
                 if (wrap.Children.Count == 0) Status(L.F("No {0} for this game on SteamGridDB yet.", L.T(kind.Name).ToLowerInvariant()));
             }
             catch (SteamGridDb.KeyRefusedException)
@@ -405,40 +546,152 @@ public static class ArtworkDialog
             }
             finally
             {
-                if (mine == run) { HideSkeletons(); loading = false; }
+                if (mine == run)
+                {
+                    HideSkeletons();
+                    loading = false;
+                    loader.Visibility = hasMore ? Visibility.Visible : Visibility.Collapsed;
+                }
             }
         }
 
-        foreach (var b in tabButtons)
-            b.Click += (_, _) =>
+        // The store's own picture of a kind, shown while the user has not picked one.
+        async Task<string?> StoreArtAsync(ArtKind k)
+        {
+            try
             {
-                if (b.Tag is not ArtKind k || k == kind.Kind) return;
-                kind = Kinds.First(x => x.Kind == k);
-                ShowTabs();
+                switch (k)
+                {
+                    case ArtKind.Cover: return await GameInfo.GetCoverAsync(game, cts.Token);
+                    case ArtKind.Banner: return (await GameInfo.GetAsync(game, cts.Token)).HeroImage;
+                    case ArtKind.Logo: return (await GameInfo.GetAsync(game, cts.Token)).LogoImage;
+                    default:
+                        return game.IconPath is { } icon && Path.GetExtension(icon).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".ico" or ".webp" ? icon : null;
+                }
+            }
+            catch (Exception) { return null; }
+        }
+
+        void ShowKinds()
+        {
+            foreach (var (info, button, glyphBox, glyph, source) in kindRows)
+            {
+                bool on = info.Kind == kind.Kind;
+                button.Background = on ? accentSoft : card;
+                glyphBox.Background = on ? accent : subtle;
+                glyph.Foreground = on ? onAccent : Ui.Brush("TextFillColorPrimaryBrush");
+                source.Text = ArtOverrides.Get(game.Id, info.Kind) is not null ? L.T("Your pick") : L.T("From the store");
+            }
+        }
+
+        async void ShowNow()
+        {
+            var k = kind;
+            ShowKinds();
+            var path = ArtOverrides.Get(game.Id, k.Kind);
+            bool mine = path is not null;
+            nowHint.Text = L.T(k.Hint) + ".";
+            nowSourceText.Text = mine ? L.T("Your pick") : L.T("From the store");
+            nowSourceText.Foreground = mine ? onAccent : Ui.Brush("TextFillColorPrimaryBrush");
+            nowSource.Background = mine ? accent : subtle;
+            reset.IsEnabled = mine;
+            // As tall as the row, as wide as the picture's shape: the cover stands, the banner lies wide.
+            double h = PreviewHeight, w = Math.Min(Math.Round(h * k.TileW / k.TileH), 420);
+            overlayIcon.Glyph = mine ? "" : "";
+            overlayText.Text = mine ? L.T("Use the store's") : L.T("Choose a file…");
+            nowPic.Width = w;
+            nowPic.Height = h;
+            nowPic.Child = new FontIcon { Glyph = k.Glyph, FontSize = 26, Opacity = 0.4 };
+            var shown = path ?? await StoreArtAsync(k.Kind);
+            if (kind != k || shown is null) return;
+            try
+            {
+                var image = new Image
+                {
+                    Source = new BitmapImage { UriSource = new Uri(shown), DecodePixelWidth = (int)Math.Ceiling(w * scale) },
+                    Stretch = k.Stretch, Margin = k.Stretch == Stretch.Uniform ? new Thickness(12) : new Thickness(0), Opacity = 0,
+                };
+                image.ImageOpened += (_, _) => Motion.FadeIn(image, 160);
+                nowPic.Child = image;
+            }
+            catch (UriFormatException) { }
+        }
+
+        foreach (var row in kindRows)
+            row.Button.Click += (_, _) =>
+            {
+                if (row.Info.Kind == kind.Kind) return;
+                kind = row.Info;
                 ShowNow();
                 _ = LoadAsync(false);
             };
-        more.Click += (_, _) => _ = LoadAsync(true);
-        own.Click += async (_, _) =>
+        void UseFile(ArtKind pickedKind, string picked)
+        {
+            try
+            {
+                ArtOverrides.Import(game.Id, pickedKind, picked);
+                Log.Info($"Artwork for {game.Name}: own {pickedKind} {Path.GetFileName(picked)}");
+                ClearPicked();
+                if (kind.Kind == pickedKind) ShowNow(); else ShowKinds();
+            }
+            catch (Exception ex) { Status(ex.Message); }
+        }
+        pickButton.Click += (_, _) =>
+        {
+            if (ArtOverrides.Get(game.Id, kind.Kind) is null) { _ = PickAsync(); return; }
+            ArtOverrides.Set(game.Id, kind.Kind, null);
+            ClearPicked();
+            ShowNow();
+        };
+        pickButton.DragOver += (_, e) =>
+        {
+            if (!e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
+            e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
+            e.DragUIOverride.Caption = L.T("Use this picture");
+            overlayIcon.Glyph = "";
+            overlayText.Text = L.T("Use this picture");
+            overlay.Opacity = 1;
+        };
+        pickButton.DragLeave += (_, _) =>
+        {
+            overlay.Opacity = 0;
+            bool mineNow = ArtOverrides.Get(game.Id, kind.Kind) is not null;
+            overlayIcon.Glyph = mineNow ? "" : "";
+            overlayText.Text = mineNow ? L.T("Use the store's") : L.T("Choose a file…");
+        };
+        pickButton.Drop += async (_, e) =>
+        {
+            overlay.Opacity = 0;
+            var pickedKind = kind.Kind;
+            try
+            {
+                var items = await e.DataView.GetStorageItemsAsync();
+                var file = items.OfType<Windows.Storage.StorageFile>().FirstOrDefault(f => Path.GetExtension(f.Path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp");
+                if (file is null) { Status(L.T("Drop a PNG, JPG, WebP or BMP picture.")); return; }
+                UseFile(pickedKind, file.Path);
+            }
+            catch (Exception ex) { Status(ex.Message); }
+        };
+        async Task PickAsync()
         {
             if (App.Window is not { } window) return;
             // The tab the picker was opened for (2.1 audit): another tab chosen while the picker was open must not get the file.
             var pickedKind = kind.Kind;
             var picked = await Pickers.PickFileAsync(window, ".png", ".jpg", ".jpeg", ".webp", ".bmp");
             if (picked is null) return;
-            try
-            {
-                ArtOverrides.Import(game.Id, pickedKind, picked);
-                Log.Info($"Artwork for {game.Name}: own {pickedKind} {Path.GetFileName(picked)}");
-                if (kind.Kind == pickedKind) ShowNow();
-            }
-            catch (Exception ex) { Status(ex.Message); }
-        };
+            UseFile(pickedKind, picked);
+        }
+        own.Click += (_, _) => _ = PickAsync();
         reset.Click += (_, _) =>
         {
             ArtOverrides.Set(game.Id, kind.Kind, null);
             ClearPicked();
             ShowNow();
+        };
+        changeKey.Click += (_, _) =>
+        {
+            keyPanel.Visibility = keyPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            if (keyPanel.Visibility == Visibility.Visible) keyBox.Focus(FocusState.Programmatic);
         };
         keySave.Click += async (_, _) =>
         {
@@ -454,6 +707,9 @@ public static class ArtworkDialog
             AppState.Settings.SteamGridDbKey = key;
             SettingsStore.Save();
             SteamGridDb.ForgetAnswers();
+            keyBox.Password = "";
+            keyPanel.Visibility = Visibility.Collapsed;
+            match = null;
             await LoadAsync(false);
         };
         search.TextChanged += async (s, e) =>
@@ -491,24 +747,65 @@ public static class ArtworkDialog
             await LoadAsync(false);
         };
 
-        var dialog = new ContentDialog
+        // The dialog's own scroller never scrolls: the window is exactly as tall as the content, the grid scrolls by itself.
+        ScrollViewer? Outer()
+        {
+            for (DependencyObject? d = VisualTreeHelper.GetParent(rootGrid); d is not null; d = VisualTreeHelper.GetParent(d))
+                if (d is ScrollViewer sv) return sv;
+            return null;
+        }
+        rootGrid.Loaded += (_, _) =>
+        {
+            // The fades are the window's own colour thinning out, never a darker or lighter band: the colour is read from what
+            // the dialog really draws under the content (its template's surface), once it is on screen.
+            var windowColor = Windows.UI.Color.FromArgb(0xFF, 0x2B, 0x2B, 0x2B);
+            for (DependencyObject? d = VisualTreeHelper.GetParent(rootGrid); d is not null; d = VisualTreeHelper.GetParent(d))
+            {
+                var fill = d switch { Border b => b.Background, Panel p => p.Background, Control c => c.Background, _ => null };
+                if (fill is SolidColorBrush { Color.A: 0xFF, Opacity: >= 1 } solid) { windowColor = solid.Color; break; }
+            }
+            rootGrid.Background = new SolidColorBrush(windowColor);
+            rootGrid.CornerRadius = new CornerRadius(16);
+            PaintFades(windowColor);
+            if (Outer() is { } outer)
+            {
+                outer.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                outer.VerticalScrollMode = ScrollMode.Disabled;
+            }
+            Realize();
+        };
+        ScrollForTest = share =>
+        {
+            scroller.ScrollTo(0, scroller.ScrollableHeight * share, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+            Log.Info($"Artwork test: offset {scroller.VerticalOffset:0} of {scroller.ScrollableHeight:0}, fades {fadeTop.Opacity}/{fadeBottom.Opacity} {fadeTop.ActualWidth:0}x{fadeTop.ActualHeight:0}, colour {(fadeTop.Background as LinearGradientBrush)?.GradientStops[0].Color}");
+        };
+        GridFits = () =>
+        {
+            if (!scroller.IsLoaded) return false;
+            var bottom = scroller.TransformToVisual(rootGrid).TransformPoint(new Windows.Foundation.Point(0, scroller.ActualHeight)).Y;
+            var outer = Outer();
+            double shown = outer?.ViewportHeight ?? rootGrid.ActualHeight;
+            GridFitsDetail = $"grid bottom {bottom:0}, window {rootGrid.ActualHeight:0}, shown {shown:0}, outer scrollable {outer?.ScrollableHeight ?? 0:0}";
+            return bottom <= rootGrid.ActualHeight + 1 && shown >= rootGrid.ActualHeight - 1 && (outer is null || outer.ScrollableHeight < 1);
+        };
+
+        dialog = new ContentDialog
         {
             XamlRoot = root,
             RequestedTheme = theme,
-            Title = L.F("Artwork of {0}", game.Title),
-            CornerRadius = new CornerRadius(14),
-            Content = panel,
-            CloseButtonText = L.T("Done"),
-            DefaultButton = ContentDialogButton.Close,
+            CornerRadius = new CornerRadius(16),
+            BorderThickness = new Thickness(0),
+            Content = rootGrid,
         };
-        // The dialog's own padding (24 a side) and its scroll bar's lane on top of the content's width: with only 48 the right
-        // edge of the content was cut (2.1-rc.3: "Use the store's" and the search box).
-        dialog.Resources["ContentDialogMaxWidth"] = width + 96;
-        dialog.Resources["ContentDialogMaxHeight"] = root.Size.Height;
-        // The open tab takes the focus as a click would: no keyboard ring on a pill the moment the window opens.
-        dialog.Opened += (_, _) => Fit();
-        dialog.Opened += (_, _) => tabButtons.FirstOrDefault(b => b.Tag is ArtKind k && k == kind.Kind)?.Focus(FocusState.Pointer);
-        ShowTabs();
+        // No title or buttons of the dialog's own and no padding: the content is the whole window (its own "Done").
+        dialog.Resources["ContentDialogPadding"] = new Thickness(0);
+        dialog.Resources["ContentDialogMaxWidth"] = width + 4;
+        dialog.Resources["ContentDialogMinWidth"] = width;
+        dialog.Resources["ContentDialogMaxHeight"] = height + 4;
+        dialog.Resources["ContentDialogMinHeight"] = height;
+        done.Click += (_, _) => dialog.Hide();
+        // The picture being edited takes the focus as a click would: no keyboard ring the moment the window opens.
+        dialog.Opened += (_, _) => kindRows.FirstOrDefault(r => r.Info.Kind == kind.Kind).Button?.Focus(FocusState.Pointer);
         ShowNow();
         _ = LoadAsync(false);
         try { await dialog.ShowOnceAsync(); }

@@ -1293,7 +1293,7 @@ public sealed partial class LibraryPage : Page
                     var path = own ?? await GameInfo.GetCoverAsync(game, ct);
                     if (path is null || ct.IsCancellationRequested) return;
                     // Games without a portrait capsule get their landscape header: shown whole, centred on the tile.
-                    bool portrait = own is not null || path.EndsWith("-cover.jpg", StringComparison.OrdinalIgnoreCase);
+                    bool portrait = own is not null || HybridLauncher.Core.Media.GameInfo.IsSteamCover(path);
                     // Decoded once for the biggest zoom (480 px, and 1.5x that on high-DPI screens; Steam's capsule is 600 px wide anyway).
                     source = new BitmapImage { DecodePixelWidth = (int)(MaxZoom * (portrait ? 1.5 : 2)), UriSource = new Uri(path) };
                     Covers[game.Id] = source;

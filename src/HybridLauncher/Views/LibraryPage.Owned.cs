@@ -73,7 +73,7 @@ public sealed partial class LibraryPage
             _width = width;
             _layout.MinItemWidth = width;
             // The art (2:3) and the two lines of text under it.
-            _layout.MinItemHeight = Math.Round(width * 1.5) + 52;
+            _layout.MinItemHeight = Math.Round(width * 1.5) + 58;
             foreach (var host in _made)
                 if (host.Content is FrameworkElement tile) OwnedLibrary.ResizeTile(tile, width);
         }

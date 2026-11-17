@@ -35,6 +35,10 @@ public partial class App : Application
     static Mutex? _singleInstance;
     static EventWaitHandle _showSignal = null!;
     static EventWaitHandle _launchSignal = null!;
+    static EventWaitHandle _shownSignal = null!;
+    // Set once the window exists: a "show yourself" from another copy that comes while this one is still starting is kept here.
+    static volatile Microsoft.UI.Dispatching.DispatcherQueue? _ui;
+    static volatile bool _showAsked;
     static string LaunchFile => Path.Combine(AppInfo.DataRoot, "launch-request.txt");
 
     /// <summary>Starts Hybrid Launcher again (a new language takes effect at start) and closes this instance.</summary>
@@ -98,6 +102,17 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // 2.3-rc.2: whatever stops the start is said in a message (with the log's place), not a window that never comes.
+        try { Launch(); }
+        catch (Exception ex)
+        {
+            Helpers.StartupGuard.Failed(ex);
+            Environment.Exit(3);
+        }
+    }
+
+    void Launch()
+    {
         // The copy of a new version that updates the app's folder: it does only that, then starts the updated app.
         if (Environment.GetCommandLineArgs().Contains(AppUpdates.ApplySwitch, StringComparer.OrdinalIgnoreCase))
         {
@@ -127,14 +142,36 @@ public partial class App : Application
             }
             // Started by Windows at sign-in a second time (two start-up entries, a scheduled task): nothing to show.
             if (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase)) { Exit(); return; }
-            // The other Hybrid Launcher may be hidden in the notification area (no window to find): ask it to show itself.
-            if (EventWaitHandle.TryOpenExisting(name + "-show", out var show)) using (show) show.Set();
-            else Helpers.SingleInstance.FocusOther();
-            Exit();
-            return;
+            // The other Hybrid Launcher may be hidden in the notification area (no window to find): ask it to show itself, and
+            // wait for it to say it did (2.3-rc.2: it could not come to the front, so the first double-click did nothing).
+            if (Helpers.StartupGuard.HandOver(name)) { Exit(); return; }
+            // No answer: a copy closed a moment ago is still ending (its lock goes with it), or a copy is stuck.
+            Log.Warn("Start: the running copy did not answer, waiting for its lock");
+            if (!Helpers.StartupGuard.TakeOver(_singleInstance, TimeSpan.FromSeconds(8)) && !Helpers.StartupGuard.AskToEndStuckCopy(_singleInstance))
+            {
+                Exit();
+                return;
+            }
+            Log.Info("Start: took over from a copy that had ended");
         }
         _showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-show");
         _launchSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-launch");
+        _shownSignal = new EventWaitHandle(false, EventResetMode.AutoReset, name + "-shown");
+        {
+            // Listened to from now on, before the slow part of the start: another copy asking now is answered at once (the window
+            // will open), and a start meant for the notification area opens the window instead.
+            var signal = _showSignal;
+            var shown = _shownSignal;
+            new Thread(() =>
+            {
+                while (signal.WaitOne())
+                {
+                    if (_ui is not { } q) { _showAsked = true; shown.Set(); continue; }
+                    // Answered from the UI thread once the window is up: a stuck UI thread gives no answer.
+                    if (!q.TryEnqueue(() => { Window?.ShowFromTray(); shown.Set(); })) shown.Set();
+                }
+            }) { IsBackground = true, Name = "Hybrid Launcher show signal" }.Start();
+        }
 
         Log.Info($"{AppInfo.Name} {AppUpdates.DisplayVersion} starting, data in {AppInfo.DataRoot}");
         if (Helpers.UiRecovery.IsRecovery(Environment.GetCommandLineArgs())) Log.Warn("Started again: the previous copy's UI thread had stopped");
@@ -152,15 +189,19 @@ public partial class App : Application
         // Started with Windows: only the icon in the notification area, the window opens from there.
         // From a desktop shortcut: the game starts, Hybrid Launcher stays in the notification area to watch it.
         bool tray = launch is not null || Helpers.UiRecovery.StartedHidden(Environment.GetCommandLineArgs()) || (Environment.GetCommandLineArgs().Contains("--tray", StringComparer.OrdinalIgnoreCase) && !AppState.Settings.StartOpensWindow);
+        if (_showAsked && launch is null) tray = false;
+        // Tests only (a separate data folder): HL_POPUP_TEST=<seconds> starts in the notification area and shows one unlock after
+        // that many seconds, to try the pop-up over a game being played without any window coming up over it.
+        int popupTest = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")) ? 0
+            : int.TryParse(Environment.GetEnvironmentVariable("HL_POPUP_TEST"), out int pt) ? pt : 0;
+        if (popupTest > 0) tray = true;
         if (tray) Window.StartInTray();
         else Window.ShowAtStart();
         Helpers.MediaPolicy.Attach(Window, hidden: tray);
         var ui = Window.DispatcherQueue;
-        var signal = _showSignal;
-        new Thread(() =>
-        {
-            while (signal.WaitOne()) ui.TryEnqueue(() => Window?.ShowFromTray());
-        }) { IsBackground = true, Name = "Hybrid Launcher show signal" }.Start();
+        _ui = ui;
+        // Asked while the window was being made: shown now.
+        if (_showAsked && tray) ui.TryEnqueue(() => Window?.ShowFromTray());
         var launchSignal = _launchSignal;
         new Thread(() =>
         {
@@ -176,6 +217,12 @@ public partial class App : Application
         if (Environment.GetEnvironmentVariable("HL_TEST_UI_STOP") == "1" && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HL_DATA")) && !Helpers.UiRecovery.IsRecovery(Environment.GetCommandLineArgs()))
             Helpers.Later.Run(ui, TimeSpan.FromSeconds(8), () => { Log.Warn("Test: stopping the UI thread"); Log.Flush(); Thread.Sleep(Timeout.Infinite); });
         if (Environment.GetCommandLineArgs().Contains("--selftest", StringComparer.OrdinalIgnoreCase)) _ = Window.RunSelfTestAsync();
+        if (popupTest > 0)
+            Helpers.Later.Run(ui, TimeSpan.FromSeconds(popupTest), () =>
+            {
+                Log.Info("Pop-up test: unlock now");
+                AchievementPopup.Show(new Toast("Test unlock", "A pop-up over the game being played.", null, "Game: Pop-up test", 10));
+            });
         // Steam's sign-in from inside the shipped (trimmed) app, where it can fail although the smoke test passes: logged.
         if (Environment.GetCommandLineArgs().Contains("--steamprobe", StringComparer.OrdinalIgnoreCase))
         {

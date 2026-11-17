@@ -65,12 +65,14 @@ public static class FloorMirror
                 BoxBlur(px, cw, rows, Radius, horizontal: false);
             }
 
-            // Faded out downwards: full at the art's edge, about half way at 45 %, gone at the bottom (premultiplied: every channel).
+            // Faded out downwards on one smooth curve (2.3-rc.2: it had a corner at 45 % and a black shade over it): full at the
+            // art's edge, gone at the bottom with no edge of its own (premultiplied: every channel, so it fades to see-through).
             var outPx = new byte[cw * rows * 4];
             for (int y = 0; y < rows; y++)
             {
                 double t = (double)y / (rows - 1);
-                double fade = t < 0.45 ? 1 - t / 0.45 * 0.44 : 0.56 * (1 - (t - 0.45) / 0.55);
+                double fade = 1 - t * t * (3 - 2 * t);
+                fade *= fade;
                 for (int i = y * cw * 4; i < (y + 1) * cw * 4; i++) outPx[i] = (byte)Math.Clamp(px[i] * fade, 0, 255);
             }
             return (outPx, cw, rows);

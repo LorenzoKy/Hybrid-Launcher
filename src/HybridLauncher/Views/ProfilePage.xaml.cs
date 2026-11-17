@@ -529,7 +529,7 @@ public sealed partial class ProfilePage : Page
             // rc.10's "no longer on the page" check dropped exactly those (Most played showed empty tiles). A Border that left
             // the page meanwhile never draws, so its picture is never decoded: setting it costs nothing.
             if (path is null) return;
-            bool portrait = ArtOverrides.Get(game.Id, ArtKind.Cover) is not null || path.EndsWith("-cover.jpg", StringComparison.OrdinalIgnoreCase);
+            bool portrait = ArtOverrides.Get(game.Id, ArtKind.Cover) is not null || HybridLauncher.Core.Media.GameInfo.IsSteamCover(path);
             var source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = decode };
             if (portrait) { target.Child = Smooth.Art(source, target.CornerRadius, Stretch.UniformToFill, fadeMs: 240); return; }
             // A landscape header (no portrait capsule): whole and centred, over a dim, filled copy of itself, so the cover has

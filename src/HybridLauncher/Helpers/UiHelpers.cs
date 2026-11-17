@@ -370,7 +370,42 @@ public static class Palettes
         new("Dark", "Dark", "Soft near-black background, silver accent", C(0xC9, 0xCE, 0xD6), C(0x5A, 0x60, 0x6A), (C(0x14, 0x14, 0x18), C(0x07, 0x07, 0x09))),
         new("Gray", "Gray", "Graphite grey background, steel blue accent", C(0x8F, 0xB4, 0xE6), C(0x6A, 0x7C, 0x96), (C(0x2B, 0x2D, 0x32), C(0x1B, 0x1C, 0x20))),
         new("Hybrid", "Hybrid", "Night crimson background, the logo's red accent", C(0xE8, 0x23, 0x4A), C(0xB0, 0x10, 0x30), (C(0x1C, 0x09, 0x0F), C(0x08, 0x03, 0x05))),
+        new("Custom", "My colours", "Your own accent, glow, background and text colours (Settings, Look)", C(0x9A, 0x5C, 0xFF), C(0x8A, 0x4D, 0xFF)),
     ];
+
+    /// <summary>
+    /// "My colours" (back in 2.3, removed in 2.1): the accent, the glow behind the window, an own background and an own text
+    /// colour picked in Settings. Kept readable whatever is picked: the background stays dark (lightness at most 0.20), the text
+    /// light (at least 0.72), so no pick can make the app unreadable.
+    /// </summary>
+    public static Palette Custom()
+    {
+        var s = AppState.Settings;
+        var accent = ParseHex(s.CustomAccent) ?? C(0x9A, 0x5C, 0xFF);
+        var tint = ParseHex(s.CustomTint) ?? accent;
+        (Color, Color)? backdrop = null;
+        if (s.CustomBackdrop && ParseHex(s.CustomBackground) is { } bg)
+        {
+            bg = KeepDark(bg);
+            backdrop = (bg, Mix(bg, Colors.Black, 0.6));
+        }
+        Color? text = s.CustomTextOn && ParseHex(s.CustomText) is { } t ? KeepLight(t) : null;
+        return All.First(p => p.Key == "Custom") with { Accent = accent, Tint = tint, Backdrop = backdrop, Text = text };
+    }
+
+    /// <summary>A background colour as "My colours" uses it: never lighter than 0.20 lightness.</summary>
+    public static Color KeepDark(Color c)
+    {
+        RgbToHsl(c, out var h, out var sat, out var l);
+        return l <= 0.20 ? c : HslToRgb(h, sat, 0.20, 255);
+    }
+
+    /// <summary>A text colour as "My colours" uses it: never darker than 0.72 lightness.</summary>
+    public static Color KeepLight(Color c)
+    {
+        RgbToHsl(c, out var h, out var sat, out var l);
+        return l >= 0.72 ? c : HslToRgb(h, sat, 0.72, 255);
+    }
 
     /// <summary>The look of a new install.</summary>
     public const string DefaultKey = "Windows";
@@ -380,7 +415,7 @@ public static class Palettes
         // 2.1: every earlier theme was dropped. The dark plain ones carry on as Dark.
         if (key is "Graphite" or "Cozy") key = "Dark";
         var p = All.FirstOrDefault(p => p.Key == key) ?? All.First(p => p.Key == DefaultKey);
-        return p.Key == "Windows" ? WindowsLook() : p;
+        return p.Key switch { "Windows" => WindowsLook(), "Custom" => Custom(), _ => p };
     }
 
     static Palette? _windows;

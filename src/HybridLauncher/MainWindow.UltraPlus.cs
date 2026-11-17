@@ -5,12 +5,13 @@ using HybridLauncher.Views;
 namespace HybridLauncher;
 
 /// <summary>
-/// Ultra+ in the background: the installed mods are looked at once the library is read, then every three hours (Ultra+'s lists
+/// Ultra+ in the background: the installed mods are looked at once the library is read, then every hour on the clock and when the window comes back (Ultra+'s lists
 /// read again from its server). With notifications on (a game's Ultra+ tab), each new build raises one Windows notification from the icon by the clock, and a click opens the game's Ultra+ tab.
 /// </summary>
 public sealed partial class MainWindow
 {
-    static readonly TimeSpan UltraCheckEvery = TimeSpan.FromHours(3);
+    // On the wall clock (2.3, Helpers.WallClock): Task.Delay did not count the PC's sleep.
+    static readonly TimeSpan UltraCheckEvery = TimeSpan.FromHours(1), UltraCheckOnReturn = TimeSpan.FromMinutes(20);
     CancellationTokenSource? _ultraChecks;
 
     /// <summary>Starts (or, with the check turned off, stops) the background look at the installed mods.</summary>
@@ -22,6 +23,7 @@ public sealed partial class MainWindow
             _ultraChecks = null;
             return;
         }
+        HookWallClock();
         if (_ultraChecks is not null) return;
         var cts = _ultraChecks = new CancellationTokenSource();
         _ = UltraChecksAsync(cts.Token);
@@ -48,7 +50,7 @@ public sealed partial class MainWindow
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { Log.Warn($"Ultra+ update check: {ex.Message}"); }
                 force = true;
-                await Task.Delay(UltraCheckEvery, ct);
+                await WallClock.WaitAsync(DateTime.UtcNow, UltraCheckEvery, UltraCheckOnReturn, ct);
             }
         }
         catch (OperationCanceledException) { }

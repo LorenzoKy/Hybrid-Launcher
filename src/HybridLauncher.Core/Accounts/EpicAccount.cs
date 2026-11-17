@@ -387,8 +387,7 @@ public sealed class EpicManifest
         for (int i = 0; i < count; i++) guids[i] = Guid(b);
         var hashes = new ulong[count];
         for (int i = 0; i < count; i++) hashes[i] = b.ReadUInt64();
-        var sha1s = new string[count];
-        for (int i = 0; i < count; i++) sha1s[i] = Convert.ToHexString(b.ReadBytes(20));
+        b.BaseStream.Position += 20L * count; // the chunks' SHA-1s (not needed)
         var groups = new byte[count];
         for (int i = 0; i < count; i++) groups[i] = b.ReadByte();
         for (int i = 0; i < count; i++) m.Chunks[guids[i]] = new Chunk(guids[i], hashes[i], groups[i]);
@@ -402,7 +401,9 @@ public sealed class EpicManifest
         var names = new string[count];
         for (int i = 0; i < count; i++) names[i] = ReadString(b);
         for (int i = 0; i < count; i++) ReadString(b); // symlink targets
-        b.BaseStream.Position += 20L * count; // sha1s
+        // The files' own SHA-1s (2.3: the chunks' were used before, so every file failed its check and was fetched again).
+        var fileSha1s = new string[count];
+        for (int i = 0; i < count; i++) fileSha1s[i] = Convert.ToHexString(b.ReadBytes(20));
         b.BaseStream.Position += count; // flags
         for (int i = 0; i < count; i++)
         {
@@ -423,7 +424,7 @@ public sealed class EpicManifest
                 list.Add(new Part(guid, offset, length));
                 b.BaseStream.Position = partStart + partSize;
             }
-            m.Files.Add(new FileEntry(names[i], list, sha1s[i]));
+            m.Files.Add(new FileEntry(names[i], list, fileSha1s[i]));
         }
         b.BaseStream.Position = start + size;
         _ = dataVersion;

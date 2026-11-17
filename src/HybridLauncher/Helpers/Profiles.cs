@@ -141,7 +141,7 @@ public static class Profiles
             if (picked is not null)
             {
                 if (cropper is null || pickedNew && previewHost.Child != cropper) previewHost.Child = cropper = new Controls.AvatarCropper(picked);
-                hint.Text = L.T("Drag the picture to move it; scroll or use the slider to zoom.");
+                hint.Text = L.T("Drag the picture to move it; scroll or use the slider to zoom. Double-click to start over.");
                 return;
             }
             var p = new UserProfile { Name = name.Text.Trim().Length > 0 ? name.Text.Trim() : "?", Picture = picked };
@@ -186,8 +186,9 @@ public static class Profiles
                 // A copy in the data folder (a new name each time, the old picture may still be decoded in memory): the framed
                 // square as a PNG, or the file itself when the cropper could not read it.
                 var target = System.IO.Path.Combine(AppInfo.ProfilesDir, $"{profile.Id}-{DateTime.UtcNow:yyyyMMddHHmmssfff}.png");
-                if (cropper is not null) await cropper.SaveAsync(target);
-                else File.Copy(picked, target = System.IO.Path.ChangeExtension(target, System.IO.Path.GetExtension(picked).ToLowerInvariant()), overwrite: true);
+                // 2.3-rc.6: a picture the cropper could not read is copied with its own extension (it was written as a .png).
+                if (cropper is null || !await cropper.SaveAsync(target))
+                    File.Copy(picked, target = System.IO.Path.ChangeExtension(target, System.IO.Path.GetExtension(picked).ToLowerInvariant()), overwrite: true);
                 var old = profile.Picture;
                 profile.Picture = target;
                 if (old is not null && !old.Equals(target, StringComparison.OrdinalIgnoreCase)) DeletePicture(old);

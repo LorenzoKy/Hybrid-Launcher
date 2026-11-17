@@ -76,6 +76,27 @@ public static class CompositorWheel
     }
 
     /// <summary>
+    /// The controller (2.3-rc.3): moves the page by <paramref name="dy"/> px through the wheel's own glide, on the compositor. A
+    /// stick or a held trigger pushes a little every frame (one long glide, as a wheel spun fast), a page button a page at once.
+    /// Before, the controller set the offset itself every frame, from an offset the ScrollView had not updated yet, cutting the
+    /// glide each time: it stuttered where the wheel was smooth.
+    /// </summary>
+    public static void Push(ScrollView sv, double dy)
+    {
+        if (sv.VerticalScrollMode == ScrollingScrollMode.Disabled || sv.ScrollableHeight <= 0 || dy == 0) return;
+        try { Glide.For(sv).Notch(dy); }
+        catch (Exception ex) { Log.Warn($"Compositor wheel: {ex.Message}"); }
+    }
+
+    /// <summary>A held trigger or stick (2.3-rc.4): the page moves at <paramref name="pxPerSecond"/> (0 lets go and eases out).</summary>
+    public static void Drive(ScrollView sv, double pxPerSecond)
+    {
+        if (pxPerSecond != 0 && (sv.VerticalScrollMode == ScrollingScrollMode.Disabled || sv.ScrollableHeight <= 0)) return;
+        try { Glide.For(sv).Drive(pxPerSecond); }
+        catch (Exception ex) { Log.Warn($"Compositor wheel: {ex.Message}"); }
+    }
+
+    /// <summary>
     /// Whether the wheel event was handled by a scroller inside <paramref name="page"/> that cannot scroll vertically towards
     /// <paramref name="up"/> (sideways only, or at that end): the page then takes the notch. Anything else that handled it (a
     /// list that scrolled, a slider, a combo box) keeps it.
@@ -105,6 +126,9 @@ public static class CompositorWheel
         static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ScrollView, Glide> All = new();
         readonly ScrollView _sv;
         double _target;
+        // The target before it is put on a whole pixel: small steps (a controller's, a few px a frame) add up instead of each
+        // being rounded away.
+        double _raw;
         int _lastId = -1;
         /// <summary>A glide is on (from the first notch until the view is set at its end or something else moves it).</summary>
         bool _running;
@@ -135,7 +159,7 @@ public static class CompositorWheel
                 e.Animation = follow;
                 _following = true;
                 _segMs = 0;
-                MoveTo(_target, e.StartPosition.Y);
+                if (_driving) MoveLinear(_target, e.StartPosition.Y); else MoveTo(_target, e.StartPosition.Y);
             };
             // Ended, or interrupted by anything else moving the view (scroll bar, keys, a jump to a section).
             sv.ScrollCompleted += (_, e) => { if (e.CorrelationId == _lastId) _running = _following = false; };
@@ -143,10 +167,8 @@ public static class CompositorWheel
 
         public static Glide For(ScrollView sv) => All.GetValue(sv, s => new Glide(s));
 
-        public void Notch(double step)
+        void Arm()
         {
-            if (!_running) _target = _sv.VerticalOffset;
-            _target = Snap(_sv, Math.Clamp(_target + step, 0, _sv.ScrollableHeight));
             if (_end is null)
             {
                 // Weak (2.0.0-rc.12): a handler holding the glide held its ScrollView, and through it the whole page, for good.
@@ -155,6 +177,90 @@ public static class CompositorWheel
             _end.Stop();
             _end.Interval = TimeSpan.FromMilliseconds(GlideMs + 60);
             _end.Start();
+        }
+
+        // ---- the controller's held scroll (2.3-rc.4) ----
+        // A held trigger or a stick is a speed, not a series of notches: each poll made a new ease-out piece towards a target a few
+        // pixels on, and the speed breathed with every piece. Here one straight piece at the asked speed runs on the compositor
+        // and is only renewed every ~140 ms (or when the speed changes by a tenth), so the page moves at a steady pace; letting go
+        // eases out from that speed.
+        const double DriveMs = 300, DriveRestartMs = 140;
+        bool _driving, _segLinear;
+        double _driveV;
+        long _driveAt;
+        ExpressionAnimation? _lin;
+
+        public void Drive(double v)
+        {
+            if (v == 0) { Release(); return; }
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool fresh = !_running;
+            if (fresh) _raw = _sv.VerticalOffset;
+            _driving = true;
+            if (!fresh && _following && Math.Sign(v) == Math.Sign(_driveV) && System.Diagnostics.Stopwatch.GetElapsedTime(_driveAt, now).TotalMilliseconds < DriveRestartMs
+                && Math.Abs(v - _driveV) <= 0.1 * Math.Abs(_driveV)) return;
+            _driveV = v;
+            _driveAt = now;
+            double from = _following && _segMs > 0 ? Model().p : _sv.VerticalOffset;
+            _raw = Math.Clamp(from + v * DriveMs / 1000, 0, _sv.ScrollableHeight);
+            _target = Snap(_sv, _raw);
+            Arm();
+            if (_following) { MoveLinear(_target, from); return; }
+            if (_running) return;
+            _running = true;
+            _lastId = _sv.ScrollTo(_sv.HorizontalOffset, _target, new ScrollingScrollOptions(ScrollingAnimationMode.Enabled, ScrollingSnapPointsMode.Ignore));
+        }
+
+        /// <summary>The held scroll ends: the page eases out from the speed it has.</summary>
+        void Release()
+        {
+            if (!_driving) return;
+            _driving = false;
+            if (!_running) return;
+            double max = _sv.ScrollableHeight;
+            if (!_following || _segMs <= 0)
+            {
+                _raw = Math.Clamp(_sv.VerticalOffset + 0.5 * _driveV * GlideMs / 1000, 0, max);
+                _target = Snap(_sv, _raw);
+                Arm();
+                return;
+            }
+            var (p, v) = Model();
+            _raw = Math.Clamp(p + 0.5 * v * GlideMs, 0, max);
+            _target = Snap(_sv, _raw);
+            Arm();
+            MoveTo(_target, p);
+        }
+
+        void MoveLinear(double target, double from)
+        {
+            if (_props is null) return;
+            var c = _props.Compositor;
+            _linear ??= c.CreateLinearEasingFunction();
+            double d = target - from;
+            double ms = Math.Abs(_driveV) > 0 ? Math.Clamp(Math.Abs(d) / Math.Abs(_driveV) * 1000, 16, DriveMs) : DriveMs;
+            double s0 = Math.Clamp(LeadFrames * Math.Clamp(FrameSync.PeriodMs, 2, 34) / ms, 0, 0.4);
+            var time = c.CreateScalarKeyFrameAnimation();
+            time.InsertKeyFrame(0f, (float)s0, _linear);
+            time.InsertKeyFrame(1f, 1f, _linear);
+            time.Duration = TimeSpan.FromMilliseconds(Math.Max(1, ms * (1 - s0)));
+            _props.InsertScalar("T", (float)s0);
+            _props.StartAnimation("T", time);
+            _lin ??= c.CreateExpressionAnimation("this.StartingValue + (q.Target - this.StartingValue) * q.T");
+            _lin.SetReferenceParameter("q", _props);
+            _props.InsertScalar("Target", (float)target);
+            _props.StartAnimation("Y", _lin);
+            _segStart = System.Diagnostics.Stopwatch.GetTimestamp() - (long)(s0 * ms * System.Diagnostics.Stopwatch.Frequency / 1000);
+            _segFrom = from; _segTo = target; _segM = 0; _segMs = ms; _segLinear = true;
+        }
+
+        public void Notch(double step)
+        {
+            _driving = false;
+            if (!_running) _raw = _sv.VerticalOffset;
+            _raw = Math.Clamp(_raw + step, 0, _sv.ScrollableHeight);
+            _target = Snap(_sv, _raw);
+            Arm();
             if (_following) { MoveTo(_target, _target); return; }
             // The follow is being set up: ScrollAnimationStarting starts towards the latest target.
             if (_running) return;
@@ -165,6 +271,12 @@ public static class CompositorWheel
         void End()
         {
             if (!_running) return;
+            if (_driving)
+            {
+                // The poll stopped without letting go (page changed): stop where the view is, not at the end of the straight piece.
+                _driving = false;
+                if (_following && _segMs > 0) _target = Snap(_sv, Model().p);
+            }
             _running = _following = false;
             try { _lastId = _sv.ScrollTo(_sv.HorizontalOffset, _target, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore)); }
             catch (Exception ex) { Log.Warn($"Compositor wheel: {ex.Message}"); }
@@ -181,6 +293,7 @@ public static class CompositorWheel
             if (s >= 1) return (_segTo, 0);
             s = Math.Max(s, 0);
             double d = _segTo - _segFrom;
+            if (_segLinear) return (_segFrom + d * s, d / _segMs);
             return (_segFrom + d * H01(s) + _segM * H10(s), (d * (6 * s - 6 * s * s) + _segM * (3 * s * s - 4 * s + 1)) / _segMs);
         }
 
@@ -213,7 +326,7 @@ public static class CompositorWheel
             // From the value the view really has on screen when this piece starts (StartingValue), not the model's.
             _props.StartAnimation("Y", _curve);
             _segStart = System.Diagnostics.Stopwatch.GetTimestamp() - (long)(s0 * GlideMs * System.Diagnostics.Stopwatch.Frequency / 1000);
-            _segFrom = pNow; _segTo = target; _segM = m; _segMs = GlideMs;
+            _segFrom = pNow; _segTo = target; _segM = m; _segMs = GlideMs; _segLinear = false;
         }
     }
 

@@ -39,7 +39,9 @@ public static class SettingsStore
         lock (Gate)
         {
             Version++;
-            try { json = JsonSerializer.Serialize(Current, HybridJson.Default.AppSettings); }
+            // Background work changes its lists under lock (Current) (own installs, launcher update marks): the snapshot waits for it.
+            var current = Current;
+            try { lock (current) json = JsonSerializer.Serialize(current, HybridJson.Default.AppSettings); }
             catch (Exception ex)
             {
                 Log.Error("Saving settings failed", ex);
@@ -348,6 +350,7 @@ public static class SettingsStore
         s.CustomAccent ??= "#9A5CFF";
         s.CustomTint ??= "#8A4DFF";
         s.CustomBackground ??= "#16121F";
+        s.CustomText ??= "#ECE8F4";
         s.Popup ??= new PopupSettings();
         s.Popup.LookColours = CI(s.Popup.LookColours);
         s.Controller ??= new ControllerSettings();

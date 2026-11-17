@@ -30,6 +30,11 @@ public sealed partial class MainWindow
     readonly HashSet<PadKey> _padNow = [];
     PadKey? _padDir;
     DateTime _padRepeat;
+    /// <summary>When a button that scrolls a page (LT / RT by default) went down: held, it keeps scrolling.</summary>
+    DateTime _padScrollSince;
+    PadKey? _padScrollKey;
+    /// <summary>How long a page button is held before it scrolls on by itself (a tap stays one page).</summary>
+    const double HoldScrollAfterMs = 150;
     /// <summary>The ms since the last reading: the right stick scrolls by time, the same speed at any refresh rate.</summary>
     double _padMs = 1000.0 / 60;
 
@@ -106,8 +111,9 @@ public sealed partial class MainWindow
         On((b & GamepadButtons.LeftThumbstick) != 0, PadKey.L3);
         On((b & GamepadButtons.RightThumbstick) != 0, PadKey.R3);
 
-        // Buttons act once per press.
-        foreach (var k in now)
+        // Buttons act once per press. On a copy: a press can run a poll again inside Pad (2.3-rc.6, seen as "Collection was
+        // modified" when A was pressed on the pop-up settings), which refills the shared list mid-loop.
+        foreach (var k in now.ToArray())
             if (k > PadKey.Right && !_padHeld.Contains(k)) Pad(k);
 
         // A direction acts on press, then repeats after a short pause, faster when the stick is pushed all the way (as on consoles).
@@ -123,12 +129,82 @@ public sealed partial class MainWindow
         _padHeld.Clear();
         _padHeld.UnionWith(now);
 
+        // 2.3-rc.2: a page button (LT / RT by default) held down keeps scrolling, once per frame, until it is let go: a tap is
+        // one page, holding it glides on, faster the longer it is held (and, for a trigger, the deeper it is pressed).
+        PadKey? scrollKey = null;
+        int scrollSign = 0;
+        double trigRate = 0;
+        foreach (var k in now)
+        {
+            var action = PadActions.ActionOf(k);
+            if (action is PadAction.PageUp or PadAction.PageDown) { scrollKey = k; scrollSign = action == PadAction.PageDown ? 1 : -1; break; }
+        }
+        if (scrollKey != _padScrollKey) { _padScrollKey = scrollKey; _padScrollSince = t; }
+        else if (scrollKey is { } held && (t - _padScrollSince).TotalMilliseconds >= HoldScrollAfterMs)
+        {
+            double heldMs = (t - _padScrollSince).TotalMilliseconds - HoldScrollAfterMs;
+            double depth = held switch
+            {
+                PadKey.LT => Math.Clamp((r.LeftTrigger - 0.6) / 0.4, 0, 1),
+                PadKey.RT => Math.Clamp((r.RightTrigger - 0.6) / 0.4, 0, 1),
+                _ => 1,
+            };
+            // From 1400 px/s up to 3600 px/s after a second and a half (eased in, no step); a trigger only just past its
+            // click point goes at 60%.
+            double ramp = Math.Clamp(heldMs / 1500, 0, 1);
+            double speed = (1400 + 2200 * ramp * ramp * (3 - 2 * ramp)) * (0.75 + 0.25 * depth);
+            trigRate = scrollSign * speed;
+        }
+
         // A hand on the controller: the frame clock stays at the display's rate, as for the mouse (Helpers.FrameWarmth).
-        bool stick = Math.Abs(r.RightThumbstickY) > 0.2 || Math.Abs(r.RightThumbstickX) > 0.2;
+        bool stick = Math.Abs(r.RightThumbstickY) > StickDead || Math.Abs(r.RightThumbstickX) > StickDead;
         if (now.Count > 0 || stick) Helpers.FrameWarmth.Poke();
-        // The right stick scrolls what is under the focus, smoothly, a little each frame.
-        if (stick)
-            Scroll(-r.RightThumbstickY * 26 * _padMs / (1000.0 / 60), r.RightThumbstickX * 26 * _padMs / (1000.0 / 60), animate: false);
+        // The right stick scrolls what is under the focus, a little each frame, through the same glide as the mouse wheel. The
+        // speed grows smoothly from the dead zone (no jump when the stick leaves it) up to 2400 px/s at full tilt.
+        // 2.3-rc.4: what is held is a speed (px/s) for the page's glide, not a few pixels pushed each poll: the page moves at a
+        // steady pace on the compositor and eases out when let go (Glide.Drive).
+        double rate = trigRate + (stick ? -StickSpeed(r.RightThumbstickY) : 0);
+        if (rate != 0 || _padDriving) DriveVertical(rate);
+        if (stick && Math.Abs(r.RightThumbstickX) > StickDead) Scroll(0, StickSpeed(r.RightThumbstickX) * _padMs / 1000);
+    }
+
+    bool _padDriving;
+    WeakReference<DependencyObject>? _padDriven;
+
+    /// <summary>Held vertical scroll at <paramref name="rate"/> px/s (0 lets go, easing out).</summary>
+    void DriveVertical(double rate)
+    {
+        DependencyObject? target = null;
+        if (rate == 0) { _padDriven?.TryGetTarget(out target); _padDriving = false; _padDriven = null; }
+        else
+        {
+            if (RootGrid.XamlRoot is not { } root) return;
+            target = PadTarget(root, vertical: true);
+            // The scroller changed under a held scroll (focus moved): the old one is let go.
+            if (_padDriven is not null && _padDriven.TryGetTarget(out var old) && !ReferenceEquals(old, target)) DriveOn(old, 0);
+            _padDriving = target is not null;
+            _padDriven = target is null ? null : new WeakReference<DependencyObject>(target);
+        }
+        if (target is not null) DriveOn(target, rate);
+    }
+
+    static void DriveOn(DependencyObject target, double rate)
+    {
+        switch (target)
+        {
+            case ScrollViewer sv: Helpers.SmoothWheel.Drive(sv, rate); break;
+            case ScrollView view: Helpers.CompositorWheel.Drive(view, rate); break;
+        }
+    }
+
+    const double StickDead = 0.18;
+
+    /// <summary>Pixels per second for a stick axis: 0 at the edge of the dead zone, 2400 at full tilt, finer in between.</summary>
+    static double StickSpeed(double axis)
+    {
+        double a = (Math.Abs(axis) - StickDead) / (1 - StickDead);
+        if (a <= 0) return 0;
+        return Math.Sign(axis) * 2400 * Math.Pow(Math.Min(a, 1), 1.7);
     }
 
     /// <summary>One controller press (also the self-test's way in): a direction moves, a button does its action.</summary>
@@ -165,8 +241,8 @@ public sealed partial class MainWindow
                 else if (Shown is SettingsPage s) s.StepTab(by);
                 else StepSection(by);
                 break;
-            case PadAction.PageUp: Scroll(-0.85, 0, animate: true, pages: true); break;
-            case PadAction.PageDown: Scroll(0.85, 0, animate: true, pages: true); break;
+            case PadAction.PageUp: Scroll(-0.85, 0, pages: true); break;
+            case PadAction.PageDown: Scroll(0.85, 0, pages: true); break;
             case PadAction.GameList:
                 if ((Nav.SelectedItem as Control ?? Nav.MenuItems.OfType<Control>().FirstOrDefault()) is { } item) item.Focus(FocusState.Keyboard);
                 break;
@@ -214,14 +290,22 @@ public sealed partial class MainWindow
             SendKey(arrow);
             return;
         }
-        if (focused is null or MainWindow || focused is FrameworkElement { Visibility: Visibility.Collapsed } || ReferenceEquals(focused, RootGrid))
+        if (focused is null or MainWindow || focused is FrameworkElement { Visibility: Visibility.Collapsed } || ReferenceEquals(focused, RootGrid) || IsPageHolder(focused))
         {
             FocusFirst();
             return;
         }
+        // Downloads' covers move as a grid (2.3-rc.6).
+        if (focused is CoverCell cover && Shown is DownloadsPage downloads && downloads.PadMove(cover, direction)) return;
         var options = new FindNextElementOptions { SearchRoot = RootGrid };
         if (!FocusManager.TryMoveFocus(direction, options)) SendKey(arrow);
+        // 2.3-rc.6: the frame that holds the pages takes the focus (it keeps it off the search box) and was the nearest control
+        // right of the pane: the stick stopped on it and never got into Downloads. It hands the focus on to the page's first control.
+        else if (IsPageHolder(Focused(root))) FocusFirst();
     }
+
+    /// <summary>The frame that holds the pages, or the page itself: focusable, but nothing to press, and arrows from it go nowhere.</summary>
+    bool IsPageHolder(object? focused) => ReferenceEquals(focused, ContentFrame) || focused is Page && ReferenceEquals(focused, Shown);
 
     /// <summary>The first control of what is on screen: the open page's, else the game list.</summary>
     public void FocusFirst()
@@ -236,6 +320,15 @@ public sealed partial class MainWindow
         if (RootGrid.XamlRoot is not { } root) return;
         var focused = Focused(root);
         if (focused is null) { FocusFirst(); return; }
+        // 2.3-rc.4: the three sections of the pane open by selecting them, not by an Enter sent to whatever window is in front
+        // (when that key went elsewhere the controller's A did nothing on Downloads).
+        if (focused is NavigationViewItem { Tag: string sec } nav && (sec == HardwareTag || sec == LibraryTag || sec == DownloadsTag))
+        {
+            Nav.SelectedItem = nav;
+            return;
+        }
+        // 2.3-rc.6: a Downloads cover opens its game directly, for the same reason.
+        if (focused is CoverCell cover && cover.Open()) return;
         SendKey(focused is ToggleSwitch or CheckBox or RadioButton or ToggleButton and not AppBarToggleButton ? VirtualKey.Space : VirtualKey.Enter);
     }
 
@@ -259,27 +352,85 @@ public sealed partial class MainWindow
         SendKey(VirtualKey.Application);
     }
 
-    /// <summary>Scrolls the list or page around the focus (or the open page's own): by pixels, or by a share of its height.</summary>
-    void Scroll(double down, double right, bool animate, bool pages = false)
+    /// <summary>
+    /// Scrolls the list or page around the focus (or the open page's own): by pixels, or by a share of its height. Pages scroll
+    /// in a ScrollView since 2.0 (CompositorWheel), lists in a ScrollViewer: both are looked for (2.3: LT / RT and the right
+    /// stick looked for ScrollViewers only and did nothing on the pages). A scroller that cannot move the asked way (a sideways
+    /// strip of covers for an up / down scroll) is passed over for the one around it.
+    /// </summary>
+    // The scroller the controller moved last, with the focus it was found from: looked for again only when the focus changes
+    // or now and then (walking the page's tree every frame of a held stick cost frames of its own).
+    WeakReference<DependencyObject>? _padScroller;
+    object? _padScrollerFocus;
+    bool _padScrollerVertical;
+    long _padScrollerAt;
+
+    /// <summary>
+    /// Scrolls what is under the focus (else the page) by down / right px, or by that share of a page with pages. Vertical
+    /// moves go through the mouse wheel's glide (2.3-rc.3), so the controller scrolls as smoothly as the wheel.
+    /// </summary>
+    void Scroll(double down, double right, bool pages = false)
     {
         if (RootGrid.XamlRoot is not { } root) return;
-        ScrollViewer? sv = null;
-        for (DependencyObject? d = Focused(root) as DependencyObject; d is not null && sv is null; d = VisualTreeHelper.GetParent(d))
-            if (d is ScrollViewer s && (s.ScrollableHeight > 0 || s.ScrollableWidth > 0)) sv = s;
-        sv ??= FindScroller(Shown as DependencyObject);
-        if (sv is null) return;
-        double dy = pages ? down * sv.ViewportHeight : down, dx = pages ? right * sv.ViewportWidth : right;
-        sv.ChangeView(sv.HorizontalOffset + dx, sv.VerticalOffset + dy, null, !animate);
+        bool vertical = Math.Abs(down) >= Math.Abs(right);
+        var target = PadTarget(root, vertical);
+        switch (target)
+        {
+            case ScrollViewer sv:
+            {
+                double dy = pages ? down * sv.ViewportHeight : down, dx = pages ? right * sv.ViewportWidth : right;
+                if (vertical) Helpers.SmoothWheel.Push(sv, dy);
+                else sv.ChangeView(sv.HorizontalOffset + dx, null, null, !pages);
+                break;
+            }
+            case ScrollView view:
+            {
+                double dy = pages ? down * view.ViewportHeight : down, dx = pages ? right * view.ViewportWidth : right;
+                if (vertical) Helpers.CompositorWheel.Push(view, dy);
+                else view.ScrollTo(Math.Clamp(view.HorizontalOffset + dx, 0, view.ScrollableWidth), view.VerticalOffset,
+                    new ScrollingScrollOptions(pages ? ScrollingAnimationMode.Enabled : ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+                break;
+            }
+        }
     }
 
-    static ScrollViewer? FindScroller(DependencyObject? root)
+    /// <summary>The scroller the controller moves now: around the focus, else the open page's (remembered a moment).</summary>
+    DependencyObject? PadTarget(XamlRoot root, bool vertical)
+    {
+        bool Fits(DependencyObject d) => d switch
+        {
+            ScrollViewer s => vertical ? s.ScrollableHeight > 0 && s.VerticalScrollMode != ScrollMode.Disabled : s.ScrollableWidth > 0,
+            ScrollView v => vertical ? v.ScrollableHeight > 0 : v.ScrollableWidth > 0,
+            _ => false,
+        };
+        var focused = Focused(root);
+        long nowTs = System.Diagnostics.Stopwatch.GetTimestamp();
+        DependencyObject? target = null;
+        if (_padScroller is not null && _padScroller.TryGetTarget(out var known) && ReferenceEquals(focused, _padScrollerFocus)
+            && _padScrollerVertical == vertical && System.Diagnostics.Stopwatch.GetElapsedTime(_padScrollerAt, nowTs).TotalMilliseconds < 400
+            && known is FrameworkElement { IsLoaded: true } && Fits(known))
+            target = known;
+        if (target is null)
+        {
+            for (DependencyObject? d = focused as DependencyObject; d is not null && target is null; d = VisualTreeHelper.GetParent(d))
+                if (Fits(d)) target = d;
+            target ??= FindScroller(Shown as DependencyObject, Fits);
+            _padScroller = target is null ? null : new WeakReference<DependencyObject>(target);
+            _padScrollerFocus = focused;
+            _padScrollerVertical = vertical;
+            _padScrollerAt = nowTs;
+        }
+        return target;
+    }
+
+    static DependencyObject? FindScroller(DependencyObject? root, Func<DependencyObject, bool> fits)
     {
         if (root is null) return null;
         var queue = new Queue<DependencyObject>([root]);
         while (queue.Count > 0)
         {
             var d = queue.Dequeue();
-            if (d is ScrollViewer { ScrollableHeight: > 0 } s) return s;
+            if (fits(d)) return d;
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++) queue.Enqueue(VisualTreeHelper.GetChild(d, i));
         }
         return null;

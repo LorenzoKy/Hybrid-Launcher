@@ -100,7 +100,8 @@ public static class SteamEmulator
             string Str(JsonElement a, string prop) =>
                 a.TryGetProperty(prop, out var v) ? v.ValueKind == JsonValueKind.String ? v.GetString() ?? ""
                     // Some dumps keep every language: {"english": "...", ...}.
-                    : v.ValueKind == JsonValueKind.Object && v.TryGetProperty("english", out var en) ? en.GetString() ?? "" : "" : "";
+                    : v.ValueKind == JsonValueKind.Object ? (v.TryGetProperty(Achievements.AchievementLanguage.Steam, out var own) ? own.GetString() : null)
+                        ?? (v.TryGetProperty("english", out var en) ? en.GetString() : null) ?? "" : "" : "";
 
             var items = new List<Achievement>();
             foreach (var a in schema.RootElement.EnumerateArray())

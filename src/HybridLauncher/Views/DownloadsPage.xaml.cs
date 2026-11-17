@@ -209,18 +209,44 @@ public static class OwnedLibrary
         tile is Panel { Children.Count: > 0 } p && p.Children[0] is FrameworkElement art && Drawn.TryGetValue(art, out _);
 
     // The parts of a cover that follow its width (the library's zoom).
-    sealed class TileParts(Grid stage, Grid art, CoverFx fx)
+    sealed class TileParts(Grid stage, Grid art)
     {
+        /// <summary>Self-test: the cover as under the pointer (or back).</summary>
+        public Action<bool>? Hover;
+        /// <summary>The cover's right-click menu (2.3-rc.6: also from the controller's X and the menu key on a focused cell).</summary>
+        public Action? Menu;
         public Grid Stage { get; } = stage;
         public Grid Art { get; } = art;
-        public CoverFx Fx { get; } = fx;
         // Install / Play at the cover's size: made again on a zoom (never scaled, so it stays sharp), as the library's.
         public Grid? Launch;
         public FrameworkElement? Chip;
         public double ChipHeight;
         public Func<double, FrameworkElement>? MakeChip;
+        // The picture, decoded for the width it was made at: a zoom to a larger cover decodes it again (2.3-rc.2: it was
+        // stretched from the small decode and looked squeezed and soft).
+        public BitmapImage? Bitmap;
     }
+
+    /// <summary>How wide a cover's picture is decoded for a cover <paramref name="width"/> wide (logical px; room for the pop).</summary>
+    static int DecodeWidth(double width) => (int)Math.Min(720, Math.Ceiling(width * 1.6 / 80) * 80);
     static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FrameworkElement, TileParts> Parts = new();
+
+    /// <summary>Self-test: a cover as under the pointer (or back).</summary>
+    internal static void SelfTestHover(FrameworkElement tile, bool on) => Hover(tile, on);
+
+    /// <summary>A cover as under the pointer (or back): its lift, outline and Install / Play pill. Also the focus's look.</summary>
+    public static void Hover(FrameworkElement tile, bool on)
+    {
+        if (tile is StackPanel root && Parts.TryGetValue(root, out var parts)) parts.Hover?.Invoke(on);
+    }
+
+    /// <summary>Opens a cover's right-click menu, when it has one.</summary>
+    public static bool ShowMenu(FrameworkElement tile)
+    {
+        if (tile is not StackPanel root || !Parts.TryGetValue(root, out var parts) || parts.Menu is not { } menu) return false;
+        menu();
+        return true;
+    }
 
     /// <summary>A cover made by <see cref="Tile"/> at another width (the library's zoom): resized in place.</summary>
     public static void ResizeTile(FrameworkElement tile, double width)
@@ -229,8 +255,7 @@ public static class OwnedLibrary
         root.Width = width;
         parts.Art.Width = width;
         parts.Art.Height = Math.Round(width * 1.5);
-        parts.Fx.Resize(parts.Art.Width, parts.Art.Height);
-        if (parts.Stage.Children[0] is Border contact) contact.Margin = new Thickness(Math.Round(width * 0.08), 0, Math.Round(width * 0.08), -14);
+        if (parts.Bitmap is { } bmp && DecodeWidth(width) is var want && want > bmp.DecodePixelWidth) bmp.DecodePixelWidth = want;
         if (parts is { Launch: { } launch, Chip: { } old, MakeChip: { } make } && Math.Clamp(Math.Round(width * 0.19), 36, 46) is var h && h != parts.ChipHeight)
         {
             parts.ChipHeight = h;
@@ -245,20 +270,6 @@ public static class OwnedLibrary
     // The library covers' chip (LibraryPage.CoverTile): near-black, no glass, soft corners.
     static SolidColorBrush ChipFill => _chipFill ??= new(Color.FromArgb(0xE0, 0x0E, 0x0E, 0x12));
 
-    static RadialGradientBrush? _halo;
-    static RadialGradientBrush HaloBrush
-    {
-        get
-        {
-            if (_halo is not null) return _halo;
-            _halo = new RadialGradientBrush();
-            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x8C, 0, 0, 0), Offset = 0 });
-            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x55, 0, 0, 0), Offset = 0.45 });
-            _halo.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0x00, 0, 0, 0), Offset = 1 });
-            return _halo;
-        }
-    }
-
     /// <summary>A chip on the cover as the library draws its tags: a small white mark (and a word) on the dark fill.</summary>
     static Border CoverChip(FrameworkElement mark, string? text = null)
     {
@@ -270,7 +281,9 @@ public static class OwnedLibrary
     }
 
     /// <param name="withMenu">False when the caller gives the cover its own right-click menu (the library's): one menu, not two.</param>
-    public static FrameworkElement Tile(OwnedGame game, double width, Action? started = null, bool withMenu = true)
+    /// <param name="cellTakesFocus">The cover's cell takes the keyboard and controller focus (Downloads, 2.3-rc.6): the pill in
+    /// the middle is then left out of Tab and the D-pad, so the focus moves from cover to cover and A opens the game's page.</param>
+    public static FrameworkElement Tile(OwnedGame game, double width, Action? started = null, bool withMenu = true, bool cellTakesFocus = false)
     {
         var installedGame = AppState.Find(game.Id) is { Installing: false, NotInstalled: false } g ? g : null;
         // 2.1: the library's cover (LibraryPage.CoverTile) for games owned but not installed too: the picture with its light
@@ -287,7 +300,7 @@ public static class OwnedLibrary
         // left the cover empty).
         var own = HybridLauncher.Core.Media.ArtOverrides.Get(game.Id, HybridLauncher.Core.Media.ArtKind.Cover)
             ?? HybridLauncher.Core.Media.OwnedCovers.KnownPath(game.Id);
-        var bmp = new BitmapImage { DecodePixelWidth = (int)Math.Min(440, width * 1.6), DecodePixelType = DecodePixelType.Logical };
+        var bmp = new BitmapImage { DecodePixelWidth = DecodeWidth(width), DecodePixelType = DecodePixelType.Logical };
         if (own is not null) bmp.UriSource = new Uri(own);
         else
         {
@@ -296,16 +309,20 @@ public static class OwnedLibrary
             {
                 // No picture anywhere: the name stays on the cover, and the cover is kept as it is (not made again and again).
                 var file = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
-                ui.TryEnqueue(() => { if (file is not null) bmp.UriSource = new Uri(file); else Drawn.AddOrUpdate(stage, Done); });
+                ui.TryEnqueue(() =>
+                {
+                    // The window may be gone (shutdown): a late cover is dropped, never a crash.
+                    try { if (file is not null) bmp.UriSource = new Uri(file); else Drawn.AddOrUpdate(stage, Done); }
+                    catch (Exception ex) { Log.Warn($"Cover late: {ex.Message}"); }
+                });
             }, TaskScheduler.Default);
         }
         pic.Children.Add(Smooth.Art(bmp, new CornerRadius(10), fadeMs: 200,
             opened: () => Drawn.AddOrUpdate(stage, Done),
             failed: () => Drawn.AddOrUpdate(stage, Done)));
-        pic.Children.Add(new Border { Background = CoverFx.Gloss, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
-        pic.Children.Add(new Border { Background = CoverFx.Floor, CornerRadius = new CornerRadius(10), IsHitTestVisible = false });
-        var fxHost = new Border();
-        pic.Children.Add(fxHost);
+        // 2.3-rc.3 (the user): no light or shade laid over the picture here, and no zoom: the cover as it is.
+        // 2.3-rc.4: the cell's height holds the cover AND its two text lines (58 px, see MinItemHeight): too short, the tile's root was clipped to
+        // its slot and clipped the lifted cover and the outline with it (top corners and sides cut).
 
         // The launcher's mark top left and Installed top right, as the library's tags.
         var top = new Grid { Margin = new Thickness(6), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
@@ -324,7 +341,6 @@ public static class OwnedLibrary
 
         var job = Downloads.Find(game.Id);
         bool active = job is { State: DownloadState.Downloading or DownloadState.Waiting or DownloadState.Paused };
-        var corners = new List<(FrameworkElement, int, int)> { (top, 0, -1) };
         if (active)
         {
             // The download's bar along the bottom of the cover.
@@ -336,7 +352,6 @@ public static class OwnedLibrary
             bottom.Children.Add(bar);
             pic.Children.Add(shade);
             art.Children.Add(bottom);
-            corners.Add((bottom, 0, 1));
             // The bar follows the download while the cover is on screen (the cover itself is not made again).
             void Follow()
             {
@@ -352,14 +367,28 @@ public static class OwnedLibrary
             art.Unloaded += (_, _) => Downloads.Changed -= Follow;
         }
 
-        // The pop of the library's covers: a contact shadow under it, the spring, the light and the accent glow (CoverFx).
-        var glowHost = new Border();
-        var contact = new Border { Height = 26, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(Math.Round(width * 0.08), 0, Math.Round(width * 0.08), -14), Background = CoverFx.ContactShadow, IsHitTestVisible = false };
-        stage.Children.Add(contact);
-        stage.Children.Add(glowHost);
+        // Under the pointer (2.3-rc.3, the user): only a thin blue outline round the cover and a very light bump up, in place of
+        // the library's pop (zoom, sweep of light, accent glow, contact shadow).
+        var outline = new Border
+        {
+            CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(2), Margin = new Thickness(-2),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4C, 0x9A, 0xFF)),
+            Opacity = 0, IsHitTestVisible = false,
+            OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(120) },
+        };
+        art.Children.Add(outline);
         stage.Children.Add(art);
-        var fx = new CoverFx(art, pic, fxHost, glowHost, [.. corners]);
-        fx.Resize(art.Width, art.Height);
+        void Bump(bool on)
+        {
+            var c = Microsoft.UI.Xaml.Media.CompositionTarget.GetCompositorForCurrentThread();
+            var spring = c.CreateSpringVector3Animation();
+            spring.Target = "Translation";
+            // As the library's lift (CoverFx.Lift): the whole cover, with its tags, bar and outline, moves up as one.
+            spring.FinalValue = new System.Numerics.Vector3(0, on ? -5 : 0, 0);
+            spring.DampingRatio = 0.6f;
+            spring.Period = TimeSpan.FromMilliseconds(55);
+            art.StartAnimation(spring);
+        }
 
         // Install (or Play, installed) in the middle as the library's pill, on its dark halo; it comes up under the pointer.
         Grid? launch = null;
@@ -372,6 +401,7 @@ public static class OwnedLibrary
                 : new Controls.LaunchChip(AsGame(game), withLabel: true, size: size, install: () => Install(game, started));
             c.HorizontalAlignment = HorizontalAlignment.Center;
             c.VerticalAlignment = VerticalAlignment.Center;
+            if (cellTakesFocus) c.IsTabStop = false;
             // Keyboard: the pill stays reachable with Tab and shows while it has focus.
             c.GotFocus += (_, _) => Show(true);
             c.LostFocus += (_, _) => Show(false);
@@ -380,14 +410,12 @@ public static class OwnedLibrary
         if (!active)
         {
             chip = MakeChip(h);
-            var halo = new Ellipse { IsHitTestVisible = false, Fill = HaloBrush, Margin = new Thickness(-h * 1.1, -h * 0.9, -h * 1.1, -h * 0.9) };
             launch = new Grid
             {
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 Opacity = 0, IsHitTestVisible = false,
                 OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(140) },
             };
-            launch.Children.Add(halo);
             launch.Children.Add(chip);
             art.Children.Add(launch);
         }
@@ -410,7 +438,8 @@ public static class OwnedLibrary
                 DependencyObject? up = stage;
                 while (up is not null && VisualTreeHelper.GetParent(up) is { } parent && parent is not ItemsRepeater) up = parent;
                 if (up is UIElement item && VisualTreeHelper.GetParent(up) is ItemsRepeater) Canvas.SetZIndex(item, on ? 10 : 0);
-                fx.Hover(on);
+                outline.Opacity = on ? 1 : 0;
+                Bump(on);
             }
             catch (Exception ex) { Log.Warn($"Cover pop: {ex.Message}"); }
         }
@@ -422,7 +451,7 @@ public static class OwnedLibrary
 
         var root = new StackPanel { Width = width, Tag = game.Id };
         root.Children.Add(stage);
-        Parts.AddOrUpdate(root, new TileParts(stage, art, fx) { Launch = launch, Chip = chip, ChipHeight = h, MakeChip = launch is null ? null : MakeChip });
+        Parts.AddOrUpdate(root, new TileParts(stage, art) { Hover = Pop, Launch = launch, Chip = chip, ChipHeight = h, MakeChip = launch is null ? null : MakeChip, Bitmap = bmp });
         // A click on the cover (not on its button) opens the game's page, like the library.
         art.Tapped += (_, e) =>
         {
@@ -435,7 +464,7 @@ public static class OwnedLibrary
         root.Children.Add(new TextBlock { Text = StoreLogos.Label(game.Store), Margin = new Thickness(2, 0, 2, 2), Style = (Style)HybridLauncher.Helpers.ThemeRes.Current["RowDescription"] });
 
         // The menu is made on the first right-click: hundreds of covers do not each carry one they may never show.
-        if (withMenu) root.ContextRequested += (_, e) =>
+        void ShowMenu(Microsoft.UI.Xaml.Input.ContextRequestedEventArgs? e)
         {
             var menu = new MenuFlyout();
             if (installedGame is null && !active)
@@ -461,9 +490,15 @@ public static class OwnedLibrary
                 App.Window?.RefreshLibrary();
             };
             menu.Items.Add(hide);
-            if (e.TryGetPosition(root, out var at)) menu.ShowAt(root, at); else menu.ShowAt(root);
-            e.Handled = true;
-        };
+            if (e is not null && e.TryGetPosition(root, out var at)) menu.ShowAt(root, at);
+            else menu.ShowAt(root, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Bottom });
+            if (e is not null) e.Handled = true;
+        }
+        if (withMenu)
+        {
+            root.ContextRequested += (_, e) => ShowMenu(e);
+            if (Parts.TryGetValue(root, out var tp)) tp.Menu = () => ShowMenu(null);
+        }
         return root;
     }
 
@@ -521,6 +556,9 @@ public sealed partial class DownloadsPage : Page
     bool _signingIn;
 
     const double MinTile = 150, MaxTile = 230, Gap = 16;
+    // Room around each cover for its pop under the pointer (2.3): the cell was the cover's size, so the grown cover was cut by
+    // its cell (a zoom inside the frame instead of the library's pop). The gap between covers is now this room.
+    const double PopX = Gap / 2, PopTop = 14, PopBottom = 2;
 
     // Left-aligned with a margin worked out in Layout (2.2): centred, the ScrollView placed the column at half a pixel on some
     // window widths, and every text, icon and cover on the page was drawn soft.
@@ -533,7 +571,7 @@ public sealed partial class DownloadsPage : Page
     // records does not (0.17: the page could not open at all). Each id's game is looked up in _games.
     List<string> _items = [];
     readonly Dictionary<string, OwnedGame> _games = new(StringComparer.OrdinalIgnoreCase);
-    readonly UniformGridLayout _layout = new() { MinColumnSpacing = Gap, MinRowSpacing = Gap, ItemsJustification = UniformGridLayoutItemsJustification.Start };
+    readonly UniformGridLayout _layout = new() { MinColumnSpacing = 0, MinRowSpacing = Gap - PopTop - PopBottom, ItemsJustification = UniformGridLayoutItemsJustification.Start };
     readonly ItemsRepeater _grid;
     // Typing in the search waits for a short pause before the covers are filtered again.
     readonly DispatcherQueueTimer _searchDelay;
@@ -664,9 +702,9 @@ public sealed partial class DownloadsPage : Page
         _searchDelay.Tick += (_, _) => Restart();
         _search.TextChanged += (_, _) => { _searchDelay.Stop(); _searchDelay.Start(); };
         // Covers are made a few screens ahead (and kept a few behind), so scrolling meets covers that already exist.
-        _grid = new ItemsRepeater { Layout = _layout, ItemTemplate = new TileFactory(this), VerticalCacheLength = 4 };
-        _layout.MinItemWidth = _tile;
-        _layout.MinItemHeight = Math.Round(_tile * 1.5) + 48;
+        _grid = new ItemsRepeater { Layout = _layout, ItemTemplate = new TileFactory(this), VerticalCacheLength = 4, Margin = new Thickness(-PopX, -PopTop, -PopX, 0) };
+        _layout.MinItemWidth = _tile + 2 * PopX;
+        _layout.MinItemHeight = Math.Round(_tile * 1.5) + 58 + PopTop + PopBottom;
 
         // One toolbar: what to show and the launchers on the left, search and order on the right (wrapping on narrow windows).
         _search.Width = 240;
@@ -881,6 +919,8 @@ public sealed partial class DownloadsPage : Page
             Background = Ui.Brush("CardBackgroundFillColorDefaultBrush"), BorderBrush = Ui.Brush("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
         };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(bar, L.T("Your games"));
+        // 2.3-rc.6: down from the bar is the toolbar under it (the D-pad went straight to the right-hand cover past it).
+        if (_show.Children.FirstOrDefault() is UIElement firstShow) bar.XYFocusDown = firstShow;
         bar.Click += (_, _) =>
         {
             SetGamesOpen(!_gamesOpen);
@@ -900,6 +940,47 @@ public sealed partial class DownloadsPage : Page
     }
 
     /// <summary>Self-test: opens or closes your games as the bar's click does, and says whether covers are listed when open.</summary>
+    internal bool SelfTestHover(bool on)
+    {
+        if (_grid.TryGetElement(0) is not CoverCell { Child: FrameworkElement tile }) return false;
+        OwnedLibrary.SelfTestHover(tile, on);
+        return true;
+    }
+
+    /// <summary>Self-test: the focus is on one of the covers of your games.</summary>
+    /// <summary>
+    /// The controller (or an arrow key) on a cover (2.3-rc.6): the covers are walked as a grid, cover by cover and row by row,
+    /// scrolling the next one into view; WinUI's own move lost the focus at a row's end and could not reach covers not made yet.
+    /// Up from the first row and Left from the first column are left to WinUI (the toolbar, the pane). True when handled.
+    /// </summary>
+    internal bool PadMove(CoverCell cell, Microsoft.UI.Xaml.Input.FocusNavigationDirection direction)
+    {
+        int i = _grid.GetElementIndex(cell);
+        if (i < 0 || _items.Count == 0) return false;
+        double itemWidth = _layout.MinItemWidth + _layout.MinColumnSpacing;
+        int cols = Math.Max(1, (int)Math.Floor((_grid.ActualWidth + _layout.MinColumnSpacing + 0.5) / itemWidth));
+        int col = i % cols;
+        int next = direction switch
+        {
+            Microsoft.UI.Xaml.Input.FocusNavigationDirection.Left => col == 0 ? -1 : i - 1,
+            Microsoft.UI.Xaml.Input.FocusNavigationDirection.Right => col == cols - 1 || i + 1 >= _items.Count ? i : i + 1,
+            Microsoft.UI.Xaml.Input.FocusNavigationDirection.Up => i - cols,
+            // Down from a row with no full row under it lands on the last cover.
+            _ => i + cols < _items.Count ? i + cols : (i / cols < (_items.Count - 1) / cols ? _items.Count - 1 : i),
+        };
+        if (next < 0) return false;
+        if (next == i) return true;
+        if (_grid.GetOrCreateElement(next) is not CoverCell target) return false;
+        target.UpdateLayout();
+        target.Focus(FocusState.Keyboard);
+        target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true, VerticalAlignmentRatio = 0.5 });
+        return true;
+    }
+
+    /// The cell itself, never the Install pill inside it: A there would start a real install.
+    internal bool SelfTestFocusOnCover() =>
+        XamlRoot is not null && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) is CoverCell cell && VisualTreeHelper.GetParent(cell) == _grid;
+
     internal bool SelfTestGames(bool open)
     {
         if (_gamesOpen != open) SetGamesOpen(open);
@@ -1307,7 +1388,7 @@ public sealed partial class DownloadsPage : Page
             // Only the covers on screen exist: that one is made again in its cell, the others get the new state as they scroll in.
             int i = _items.FindIndex(x => x.Equals(id, StringComparison.OrdinalIgnoreCase));
             _tileCache.Remove(id);
-            if (i >= 0 && _grid.TryGetElement(i) is Border { Tag: string } cell && _games.TryGetValue(id, out var game))
+            if (i >= 0 && _grid.TryGetElement(i) is CoverCell { Tag: string } cell && _games.TryGetValue(id, out var game))
             {
                 cell.Child = null;
                 cell.Child = CachedTile(game);
@@ -1804,8 +1885,8 @@ public sealed partial class DownloadsPage : Page
     {
         _tileCache.Clear();
         _tileOrder.Clear();
-        _layout.MinItemWidth = _tile;
-        _layout.MinItemHeight = Math.Round(_tile * 1.5) + 48;
+        _layout.MinItemWidth = _tile + 2 * PopX;
+        _layout.MinItemHeight = Math.Round(_tile * 1.5) + 58 + PopTop + PopBottom;
         _items = [.. _items];
         _grid.ItemsSource = _items;
     }
@@ -1816,12 +1897,12 @@ public sealed partial class DownloadsPage : Page
         // Each cover sits in a cell tagged with its id, so one cover can be made again in place when its game changes.
         public UIElement GetElement(ElementFactoryGetArgs args) =>
             args.Data is string id && page._games.TryGetValue(id, out var g)
-                ? new Border { Tag = id, Child = page.CachedTile(g) } : new Border();
+                ? new CoverCell { Tag = id, Child = page.CachedTile(g), Padding = new Thickness(PopX, PopTop, PopX, PopBottom) } : new CoverCell();
 
         // The cell leaves the screen: its cover is let go (kept in the cache) so it can go into the next cell that shows it.
         public void RecycleElement(ElementFactoryRecycleArgs args)
         {
-            if (args.Element is Border cell) cell.Child = null;
+            if (args.Element is CoverCell cell) cell.Child = null;
         }
     }
 
@@ -1836,7 +1917,7 @@ public sealed partial class DownloadsPage : Page
             _tileOrder.AddLast(g.Id);
             return hit.Tile;
         }
-        var tile = OwnedLibrary.Tile(g, _tile, FillJobs);
+        var tile = OwnedLibrary.Tile(g, _tile, FillJobs, cellTakesFocus: true);
         _tileCache[g.Id] = (key, tile);
         _tileOrder.Remove(g.Id);
         _tileOrder.AddLast(g.Id);
@@ -1877,6 +1958,77 @@ public sealed partial class DownloadsPage : Page
                 ? (_showIndex == 0 ? why : L.F("No {0} game is installed. {1}", StoreLogos.Label(picked), why))
             : _showIndex == 0 ? L.T("Every game you own is installed.")
             : L.T("No games to show.");
+    }
+}
+
+/// <summary>
+/// One cover's cell in Downloads (2.3-rc.6): the control the keyboard and the controller focus, so the D-pad moves from cover to
+/// cover (the covers were panels, and only the hidden Install pill in their middle could take the focus). Focused, the cover
+/// lifts as under the pointer; Enter (the controller's A) opens the game's page, the menu key (X) its right-click menu.
+/// </summary>
+sealed partial class CoverCell : ContentControl
+{
+    readonly Border _frame = new();
+
+    public CoverCell()
+    {
+        IsTabStop = true;
+        UseSystemFocusVisuals = false;
+        HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        VerticalContentAlignment = VerticalAlignment.Stretch;
+        Content = _frame;
+        GotFocus += (_, e) => { if (ReferenceEquals(e.OriginalSource, this) && Child is FrameworkElement t) OwnedLibrary.Hover(t, true); };
+        LostFocus += (_, e) => { if (ReferenceEquals(e.OriginalSource, this) && Child is FrameworkElement t) OwnedLibrary.Hover(t, false); };
+        KeyDown += (_, e) =>
+        {
+            // The arrow keys walk the covers as the controller does (DownloadsPage.PadMove).
+            if (e.Key is Windows.System.VirtualKey.Left or Windows.System.VirtualKey.Right or Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down
+                && ReferenceEquals(e.OriginalSource, this))
+            {
+                var dir = e.Key switch
+                {
+                    Windows.System.VirtualKey.Left => Microsoft.UI.Xaml.Input.FocusNavigationDirection.Left,
+                    Windows.System.VirtualKey.Right => Microsoft.UI.Xaml.Input.FocusNavigationDirection.Right,
+                    Windows.System.VirtualKey.Up => Microsoft.UI.Xaml.Input.FocusNavigationDirection.Up,
+                    _ => Microsoft.UI.Xaml.Input.FocusNavigationDirection.Down,
+                };
+                for (DependencyObject? p = this; p is not null; p = VisualTreeHelper.GetParent(p))
+                    if (p is DownloadsPage page) { e.Handled = page.PadMove(this, dir); break; }
+                return;
+            }
+            if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space or Windows.System.VirtualKey.GamepadA)) return;
+            if (!ReferenceEquals(e.OriginalSource, this)) return;
+            e.Handled = Open();
+        };
+        ContextRequested += (_, e) =>
+        {
+            if (ReferenceEquals(e.OriginalSource, this) && Child is FrameworkElement t && OwnedLibrary.ShowMenu(t)) e.Handled = true;
+        };
+    }
+
+    /// <summary>
+    /// Opens the game's page. Also called straight from the controller's A (2.3-rc.6): an Enter sent through Windows goes to
+    /// whatever window is in front, which was the game being played when Hybrid Launcher was behind it.
+    /// </summary>
+    public bool Open()
+    {
+        if (Tag is not string id || OwnedLibrary.Find(id) is not { } game) return false;
+        if (Child is FrameworkElement t) OwnedLibrary.Hover(t, false);
+        OwnedLibrary.Open(game);
+        return true;
+    }
+
+    /// <summary>The cover (made by <see cref="OwnedLibrary.Tile"/>), with the room for its lift as padding.</summary>
+    public UIElement? Child
+    {
+        get => _frame.Child;
+        set => _frame.Child = value;
+    }
+
+    public new Thickness Padding
+    {
+        get => _frame.Padding;
+        set => _frame.Padding = value;
     }
 }
 

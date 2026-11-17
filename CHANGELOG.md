@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.3.0 — 2026-11-17 · A new artwork picker, the controller everywhere, achievements in your language
+
+**Hybrid Launcher 2.3** redoes the SteamGridDB artwork picker, lets the controller scroll and move through every page,
+shows achievements in Windows' language and brings back your own colours. If you have 2.1.0 to 2.2.0, the app offers this
+update by itself a few seconds after it starts.
+
+### ✨ New
+
+- **A new SteamGridDB artwork picker.** One window with a tab per picture (cover, banner, logo, icon), the picture in use
+  at the top and SteamGridDB's pictures below it. Click the picture in use to choose a file of your own, or drop one on
+  it. The window is larger, the grid runs to its bottom edge and fades softly at the top and foot, and the thumbnails load
+  faster: only the rows you see are fetched, and they are kept on disk for a month.
+- **Achievements in your language.** Names and descriptions follow Windows' display language for Steam, Epic, GOG and
+  Xbox games, when the store has them in that language.
+- **My colours is back.** *Settings → Look* has four colour chips (accent, glow, background, text) with a colour picker
+  and hex codes, and *Start from a theme* to begin from one of the built-in themes. Changes show as you make them.
+- **The controller scrolls every page.** LT / RT scroll a page at a time and keep scrolling while held, faster the longer
+  you hold them; the right stick scrolls at a speed that follows how far you push it. Both glide like the mouse wheel.
+- **The controller reaches Downloads.** Down from *Library* lands on it, and inside it the D-pad moves from cover to cover
+  as a grid; A opens the game's page, X its menu.
+- **Achievement pop-ups and full-screen games.** Over a game in exclusive full screen (older games such as Middle-earth:
+  Shadow of Mordor), a pop-up drawn on top made the game drop out of full screen, or did not show at all. The unlock sound
+  now plays at once and the pop-up shows as soon as you leave the game. Games in borderless or windowed mode show it on top
+  as before.
+- **The update window** shows the release notes formatted, with a count per section, the release date and a link to the
+  release on GitHub. Hybrid Launcher looks for its own updates every six hours, not only when it starts.
+- **New OptiScaler and Ultra+ releases are noticed while the app runs**: OptiScaler is checked every 30 minutes and Ultra+
+  every hour, and again when the window comes back after a while. Until now the checks ran only at start.
+- **Steam banners and logos follow the store.** When Steam changes a game's art, the game page shows the new banner and
+  logo; until now the first ones downloaded stayed for good.
+- **Trailers start at full quality**, without the blurry first seconds, and begin once enough of the video has loaded,
+  so they no longer stutter at the start.
+- **Covers in Downloads** lift under the pointer with a blue outline, in place of the zoom and light effects.
+- **Profile pictures** taken with a phone are framed upright, the mouse wheel zooms about the pointer, and a double-click
+  starts the framing over.
+
+### 🐛 Fixes
+
+- **The game page often opened on a screenshot instead of the trailer.** Pages prepared in the background stopped their
+  trailer and never started it again when you opened them.
+- **The first double-click on HybridLauncher.exe did nothing** while Hybrid Launcher was running in the notification
+  area; the second one opened the window. A start that failed closed without a word: it now says why.
+- **Epic games downloaded every file again** when they were updated or verified, and a game with more files than download
+  chunks could not be updated at all.
+- **The covers of games you own but have not installed were blurry** after zooming the Library to larger covers.
+- **A dark band showed under the game page's launch bar and around its tabs.** The tab strip now has the same glass as the
+  launch bar.
+- **The SteamGridDB window could cut off its last rows** and jumped while loading more pictures.
+- **Update all also tried the games that were running**, and *Check now* could start a second check while one was running.
+- **Closing the Steam sign-in window** did not cancel a sign-in with your password.
+- **A pop-up sound volume of 0 still played** the Windows notification sound.
+- **A profile picture Windows cannot read** was saved as a broken PNG; it is now kept as it is, and file names with `#`
+  in them load.
+
 ## 2.2.0 — 2026-11-15 · A new Downloads tab and game updates
 
 **Hybrid Launcher 2.2** redoes the Downloads tab, updates the games Steam, the Epic Games Launcher and GOG Galaxy
