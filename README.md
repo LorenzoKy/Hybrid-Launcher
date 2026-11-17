@@ -41,10 +41,6 @@ A launcher and a mod tool in one window, for several stores at once.
   <img src="docs/images/readme-game-page.webp" width="100%" alt="A game's page in Hybrid Launcher: the library sidebar, the banner with its upscalers, the Play button with last played, play time, HDR and cloud status, the tabs, the trailer and the Achievements card with the latest and rarest unlocks" />
 </p>
 
-> [!IMPORTANT]
-> **Not a beginner-first app.** It is meant for people with some modding experience: know the mods it handles and how
-> they change your game folder, and you will get much more out of it.
-
 ## Quick start
 
 1. **Download** `HybridLauncher-<version>-win-x64.zip` from [Releases](https://github.com/LorenzoKy/Hybrid-Launcher/releases/latest).
